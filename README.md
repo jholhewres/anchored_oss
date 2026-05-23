@@ -91,17 +91,5 @@ Cloud-only capabilities such as billing, hosted dashboard, and scheduled dream j
 
 ## Documentation
 
-- [PRD](docs/prd.md) — product requirements and MVP boundaries
-- [Architecture](docs/architecture.md) — system design, schema, API surface
-- [Execution Plan](docs/execution-plan.md) — implementation phases and acceptance criteria
-- [Implementation Plan](docs/implementation-plan.md) — compact phased checklist
-- [Session Handoff](docs/session-handoff.md) — context for continuing in a new session
-
-## License Direction
-
-Companies should be able to run Anchored OSS internally for their own teams. Third parties should not be able to repackage the project and sell a competing hosted Anchored service.
-
-The license decision is still open:
-
-- **AGPLv3** if OSI open source is more important.
-- **Source-available no-managed-service license** if explicitly blocking resale/hosted competitors is more important.
+- [Sync Protocol](docs/sync-protocol.md) — bidirectional sync protocol specification
+- [Error Codes](docs/error-codes.md) — API error codes and their meanings
