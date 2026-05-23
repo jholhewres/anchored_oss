@@ -2,13 +2,14 @@ package middleware
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/store"
 )
 
@@ -41,36 +42,37 @@ func Auth(st store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				jsonError(w, http.StatusUnauthorized, "unauthorized")
+				writeUnauthorized(w)
 				return
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				jsonError(w, http.StatusUnauthorized, "unauthorized")
+				writeUnauthorized(w)
 				return
 			}
 
-			rawKey := parts[1]
-			h := sha256.Sum256([]byte(rawKey))
-			keyHash := hex.EncodeToString(h[:])
-
+			keyHash := auth.HashAPIKey(parts[1])
 			apiKey, err := st.GetAPIKeyByHash(r.Context(), keyHash)
-			if err != nil || apiKey == nil {
-				logger.Warn("auth: key lookup failed", "error", err)
-				jsonError(w, http.StatusUnauthorized, "unauthorized")
+			if errors.Is(err, store.ErrNotFound) || apiKey == nil {
+				writeUnauthorized(w)
+				return
+			}
+			if err != nil {
+				logger.Error("auth: key lookup failed", "error", err)
+				writeUnauthorized(w)
 				return
 			}
 
 			if apiKey.RevokedAt != nil {
 				logger.Warn("auth: revoked key used", "key_id", apiKey.ID)
-				jsonError(w, http.StatusUnauthorized, "unauthorized")
+				writeUnauthorized(w)
 				return
 			}
 
 			if apiKey.ExpiresAt != nil && apiKey.ExpiresAt.Before(time.Now()) {
 				logger.Warn("auth: expired key used", "key_id", apiKey.ID)
-				jsonError(w, http.StatusUnauthorized, "unauthorized")
+				writeUnauthorized(w)
 				return
 			}
 
@@ -90,7 +92,7 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			s := GetScope(r.Context())
 			if s != scope && s != "admin" {
-				jsonError(w, http.StatusForbidden, "forbidden")
+				writeForbidden(w)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -98,9 +100,22 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 	}
 }
 
-// jsonError is a local copy to avoid importing handler (which would create a cycle).
-func jsonError(w http.ResponseWriter, status int, msg string) {
+func writeUnauthorized(w http.ResponseWriter) {
+	writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED")
+}
+
+func writeForbidden(w http.ResponseWriter) {
+	writeJSONError(w, http.StatusForbidden, "FORBIDDEN")
+}
+
+func writeJSONError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	w.Write([]byte(`{"error":"` + msg + `"}`))
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
+}
+
+// jsonError keeps the previous symbol available for legacy callers
+// within the middleware package; new code should use writeJSONError.
+func jsonError(w http.ResponseWriter, status int, msg string) {
+	writeJSONError(w, status, msg)
 }

@@ -115,6 +115,19 @@ The memory content matches known secret patterns: API keys, tokens, private keys
 }
 ```
 
+### not_found
+
+The memory ID in `tombstones` does not match any live memory in the project. Either it never existed on the server or it has already been deleted. Reported per-item; the rest of the sync request still succeeds.
+
+```json
+{
+  "id": "mem-deleted-already",
+  "status": "rejected",
+  "rule": "not_found",
+  "detail": "memory not found or already deleted"
+}
+```
+
 ### blocked_category
 
 The memory uses a category that is not allowed for remote sync. The blocked categories are:
@@ -177,3 +190,5 @@ An unexpected server-side failure. The client should log the error, keep its loc
 | `local_path_detected` | n/a | item | Content contains local paths (rejection rule) |
 | `secret_detected` | n/a | item | Content contains secret patterns (rejection rule) |
 | `blocked_category` | n/a | item | Category not allowed for sync (rejection rule) |
+| `not_found` | n/a | item | Tombstone targets a memory that does not exist (rejection rule) |
+| `internal_error` | n/a | item | Server failed to persist this specific item (rejection rule) |

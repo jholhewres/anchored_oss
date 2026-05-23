@@ -32,7 +32,7 @@ jobs:
           CGO_ENABLED: 0
           LDFLAGS: >-
             -s -w
-            -X main.versionFlag=${{ steps.vars.outputs.version }}
+            -X github.com/jholhewres/anchored_oss/internal/version.Version=${{ steps.vars.outputs.version }}
         run: |
           mkdir -p dist
 

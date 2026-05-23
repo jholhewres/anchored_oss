@@ -18,11 +18,19 @@ var localPathPatterns = []string{
 	"C:/Windows/",
 }
 
-func containsLocalPath(content string) (bool, string) {
+// ContainsLocalPath reports whether content includes a local filesystem
+// pattern (home dirs, temp dirs, Windows system paths). Returns the
+// matched pattern when found.
+func ContainsLocalPath(content string) (bool, string) {
 	for _, pattern := range localPathPatterns {
 		if strings.Contains(content, pattern) {
 			return true, pattern
 		}
 	}
 	return false, ""
+}
+
+// internal alias used by the existing ContentFilter implementation.
+func containsLocalPath(content string) (bool, string) {
+	return ContainsLocalPath(content)
 }

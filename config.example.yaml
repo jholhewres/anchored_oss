@@ -1,16 +1,22 @@
 # Anchored OSS Configuration
+#
+# Copy to config.yaml and edit. Environment variables PORT,
+# DATABASE_URL, and CORS_ALLOWED_ORIGINS override the matching fields.
+# At least database.dsn (or $DATABASE_URL) must be set.
 
 server:
   address: ":8080"
   read_timeout: 30s
-  write_timeout: 300s  # long for SSE
+  write_timeout: 300s
 
 database:
-  dsn: "postgres://localhost:5433/anchored_oss?sslmode=disable"
+  dsn: "postgres://anchored:anchored@localhost:5433/anchored_oss?sslmode=disable"
   max_open_conns: 10
   max_idle_conns: 5
   conn_max_lifetime: 5m
 
 cors:
-  allowed_origins:
-    - "*"
+  # List explicit origins for browser clients. Leave empty to disable CORS.
+  # Avoid "*" together with Authorization: it permits any origin to use
+  # cached bearer tokens.
+  allowed_origins: []

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -34,6 +36,9 @@ type CORSConfig struct {
 	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
+// DefaultConfig returns conservative defaults intended for local dev only.
+// CORS starts empty (no cross-origin access) and the DSN points at the
+// docker-compose port.
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -42,13 +47,13 @@ func DefaultConfig() *Config {
 			WriteTimeout: 300 * time.Second,
 		},
 		Database: DatabaseConfig{
-			DSN:             "postgres://localhost:5433/anchored_oss?sslmode=disable",
+			DSN:             "",
 			MaxOpenConns:    10,
 			MaxIdleConns:    5,
 			ConnMaxLifetime: 5 * time.Minute,
 		},
 		CORS: CORSConfig{
-			AllowedOrigins: []string{"*"},
+			AllowedOrigins: nil,
 		},
 	}
 }
@@ -68,29 +73,42 @@ func expandEnv(s string) string {
 	})
 }
 
+// Load reads a YAML config file with ${ENV} substitution, then merges
+// env-only overrides on top. Returns an error if neither a usable config
+// file nor a DATABASE_URL is available.
 func Load(path string) (*Config, error) {
 	_ = godotenv.Load()
 
+	cfg := DefaultConfig()
+	loadedFromFile := false
+
 	data, err := os.ReadFile(path)
-	if err != nil {
+	switch {
+	case err == nil:
+		expanded := expandEnv(string(data))
+		if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
+			return nil, fmt.Errorf("parse config file %s: %w", path, err)
+		}
+		loadedFromFile = true
+	case errors.Is(err, os.ErrNotExist):
+		// fall through to env overrides
+	default:
 		return nil, fmt.Errorf("read config file %s: %w", path, err)
 	}
 
-	expanded := expandEnv(string(data))
+	applyEnvOverrides(cfg)
 
-	cfg := DefaultConfig()
-	if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
-		return nil, fmt.Errorf("parse config file %s: %w", path, err)
+	if cfg.Database.DSN == "" {
+		return nil, fmt.Errorf("database dsn is required: set database.dsn in %s or DATABASE_URL", path)
 	}
 
+	if !loadedFromFile {
+		slog.Warn("config file not found; using env + defaults", "path", path)
+	}
 	return cfg, nil
 }
 
-func LoadFromEnv() (*Config, error) {
-	_ = godotenv.Load()
-
-	cfg := DefaultConfig()
-
+func applyEnvOverrides(cfg *Config) {
 	if port := os.Getenv("PORT"); port != "" {
 		cfg.Server.Address = ":" + port
 	}
@@ -100,8 +118,6 @@ func LoadFromEnv() (*Config, error) {
 	if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {
 		cfg.CORS.AllowedOrigins = parseCSV(origins)
 	}
-
-	return cfg, nil
 }
 
 func parseCSV(s string) []string {
@@ -114,4 +130,3 @@ func parseCSV(s string) []string {
 	}
 	return result
 }
-

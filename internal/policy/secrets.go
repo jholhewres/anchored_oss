@@ -1,79 +1,57 @@
 package policy
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
+// secretPrefixes are literal substrings that uniquely identify a known
+// secret format. Membership in this set is sufficient evidence.
+var secretPrefixes = []struct {
+	needle string
+	label  string
+}{
+	{"sk_live_", "stripe live key"},
+	{"sk_test_", "stripe test key"},
+	{"rk_live_", "stripe restricted key"},
+	{"ghp_", "github personal token"},
+	{"gho_", "github oauth token"},
+	{"ghu_", "github user token"},
+	{"ghs_", "github server token"},
+	{"xoxb-", "slack bot token"},
+	{"xoxp-", "slack user token"},
+	{"hooks.slack.com/services/T", "slack webhook"},
+	{"AMAZONS3ACCESSKEY", "aws s3 literal"},
+	{"-----BEGIN PRIVATE KEY-----", "pem private key"},
+	{"-----BEGIN RSA PRIVATE KEY-----", "pem rsa private key"},
+}
+
+var (
+	awsAccessKeyRe  = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
+	googleAPIKeyRe  = regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{35}\b`)
+	// Matches scheme://user:password@... for the common credential-bearing
+	// URI forms. Requires both a colon and an @ after the scheme.
+	credURIRe = regexp.MustCompile(`(?i)\b(mongodb|postgres|postgresql|mysql|redis)(\+srv)?:\/\/[^\s/@]*:[^\s/@]+@`)
+)
+
+// containsSecret reports whether content matches a known secret pattern.
+// Returns a short label describing the match.
 func containsSecret(content string) (bool, string) {
-	secretPrefixes := []string{
-		"sk_live_",
-		"sk_test_",
-		"rk_live_",
-		"ghp_",
-		"gho_",
-		"ghu_",
-		"ghs_",
-		"xoxb-",
-		"xoxp-",
-		"hooks.slack.com/services/T",
-		"AMAZONS3ACCESSKEY",
-		"-----BEGIN PRIVATE KEY-----",
-		"-----BEGIN RSA PRIVATE KEY-----",
-	}
-
-	for _, prefix := range secretPrefixes {
-		if strings.Contains(content, prefix) {
-			return true, prefix
+	for _, p := range secretPrefixes {
+		if strings.Contains(content, p.needle) {
+			return true, p.label
 		}
 	}
 
-	if strings.Contains(content, "AKIA") {
-		if idx := strings.Index(content, "AKIA"); idx+20 <= len(content) {
-			candidate := content[idx : idx+20]
-			if isAlphanumeric(candidate[4:]) {
-				return true, "AKIA... (AWS access key)"
-			}
-		}
+	if m := awsAccessKeyRe.FindString(content); m != "" {
+		return true, "aws access key"
 	}
-
-	if strings.Contains(content, "AIza") {
-		if idx := strings.Index(content, "AIza"); idx+39 <= len(content) {
-			candidate := content[idx : idx+39]
-			if isAlphanumeric(candidate[4:]) {
-				return true, "AIza... (Google API key)"
-			}
-		}
+	if m := googleAPIKeyRe.FindString(content); m != "" {
+		return true, "google api key"
 	}
-
-	connStringChecks := []struct {
-		prefix    string
-		indicator string
-		name      string
-	}{
-		{"mongodb://", ":", "mongodb:// with credentials"},
-		{"postgres://", "@", "postgres:// with credentials"},
-		{"postgresql://", "@", "postgresql:// with credentials"},
-		{"mysql://", ":", "mysql:// with credentials"},
-	}
-	for _, check := range connStringChecks {
-		if idx := strings.Index(content, check.prefix); idx >= 0 {
-			rest := content[idx:]
-			if strings.Contains(rest, check.indicator) {
-				return true, check.name
-			}
-		}
-	}
-
-	if strings.Contains(content, "redis://:") {
-		return true, "redis://: (Redis with password)"
+	if m := credURIRe.FindStringSubmatch(content); m != nil {
+		return true, m[1] + ":// with credentials"
 	}
 
 	return false, ""
-}
-
-func isAlphanumeric(s string) bool {
-	for _, r := range s {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
-			return false
-		}
-	}
-	return true
 }

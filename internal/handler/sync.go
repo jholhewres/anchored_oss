@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/model"
@@ -19,13 +23,10 @@ type SyncHandler struct {
 }
 
 func NewSyncHandler(engine *syncpkg.SyncEngine, st store.Store, logger *slog.Logger) *SyncHandler {
-	return &SyncHandler{
-		engine: engine,
-		store:  st,
-		logger: logger,
-	}
+	return &SyncHandler{engine: engine, store: st, logger: logger}
 }
 
+// ServeHTTP handles POST /v1/sync — the canonical bidirectional protocol.
 func (h *SyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req model.SyncRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -56,6 +57,185 @@ func (h *SyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, resp)
 }
 
+// --- Compat adapters for clients that speak the simpler split protocol -----
+
+// compatPushRequest mirrors the client's SyncPushRequest shape.
+type compatPushRequest struct {
+	ClientID  string              `json:"client_id"`
+	ProjectID string              `json:"project_id"`
+	Memories  []compatPushMemory  `json:"memories"`
+}
+
+type compatPushMemory struct {
+	ID               string `json:"id"`
+	Category         string `json:"category"`
+	Content          string `json:"content"`
+	Source           string `json:"source"`
+	PreferenceScope  string `json:"preference_scope,omitempty"`
+	RemoteProjectKey string `json:"remote_project_key,omitempty"`
+}
+
+type compatPushResponse struct {
+	Accepted int      `json:"accepted"`
+	Rejected int      `json:"rejected"`
+	Errors   []string `json:"errors,omitempty"`
+}
+
+type compatPullRequest struct {
+	ClientID  string `json:"client_id"`
+	ProjectID string `json:"project_id"`
+	Watermark string `json:"watermark,omitempty"`
+}
+
+type compatPullResponse struct {
+	Memories  []compatPullMemory `json:"memories"`
+	Watermark string             `json:"watermark"`
+}
+
+type compatPullMemory struct {
+	ID         string    `json:"id"`
+	Category   string    `json:"category"`
+	Content    string    `json:"content"`
+	Source     string    `json:"source,omitempty"`
+	AuthorName string    `json:"author_name,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// CompatPush adapts POST /api/v1/sync/push to the bidirectional engine.
+func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
+	var req compatPushRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Warn("compat push decode failed", "error", err)
+		jsonError(w, http.StatusBadRequest, "INVALID_REQUEST")
+		return
+	}
+	if req.ProjectID == "" {
+		jsonError(w, http.StatusBadRequest, "project_id is required")
+		return
+	}
+	if middleware.GetScope(r.Context()) == "readonly" {
+		jsonError(w, http.StatusForbidden, "FORBIDDEN")
+		return
+	}
+
+	accountID := middleware.GetAccountID(r.Context())
+	orgID := middleware.GetOrgID(r.Context())
+
+	authorName := "" // fall back to empty; engine treats empty as anonymous
+	if accountID != "" {
+		if acc, err := h.store.GetAccountByID(r.Context(), accountID); err == nil && acc != nil {
+			authorName = acc.DisplayName
+		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.logger.Warn("compat push: account lookup failed", "error", err)
+		}
+	}
+
+	now := time.Now().UTC()
+	pushes := make([]model.SyncMemory, 0, len(req.Memories))
+	for _, m := range req.Memories {
+		if m.PreferenceScope == "user" {
+			// Defense in depth: server-side blocklist for personal scope.
+			continue
+		}
+		hash := "sha256:" + sha256Hex(m.Content)
+		pushes = append(pushes, model.SyncMemory{
+			ID:          m.ID,
+			Category:    m.Category,
+			Content:     m.Content,
+			ContentHash: hash,
+			Source:      m.Source,
+			AuthorName:  authorName,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		})
+	}
+
+	sr := &model.SyncRequest{
+		ProjectID: req.ProjectID,
+		ClientID:  req.ClientID,
+		Pushes:    pushes,
+	}
+	resp, err := h.engine.Sync(r.Context(), accountID, orgID, sr)
+	if err != nil {
+		h.writeSyncError(w, err)
+		return
+	}
+
+	out := compatPushResponse{}
+	for _, r := range resp.Results {
+		switch r.Status {
+		case "accepted":
+			out.Accepted++
+		default:
+			out.Rejected++
+			detail := r.Detail
+			if detail == "" {
+				detail = r.Rule
+			}
+			out.Errors = append(out.Errors, "memory "+r.ID+" blocked: "+detail)
+		}
+	}
+	jsonResponse(w, http.StatusOK, out)
+}
+
+// CompatPull adapts POST /api/v1/sync/pull to the bidirectional engine.
+func (h *SyncHandler) CompatPull(w http.ResponseWriter, r *http.Request) {
+	var req compatPullRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "INVALID_REQUEST")
+		return
+	}
+	if req.ProjectID == "" {
+		jsonError(w, http.StatusBadRequest, "project_id is required")
+		return
+	}
+
+	accountID := middleware.GetAccountID(r.Context())
+	orgID := middleware.GetOrgID(r.Context())
+
+	sr := &model.SyncRequest{
+		ProjectID: req.ProjectID,
+		ClientID:  req.ClientID,
+	}
+	// Default watermark: epoch when client omits it, so the first pull
+	// returns everything in the project.
+	wm := time.Time{}
+	if strings.TrimSpace(req.Watermark) != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, req.Watermark)
+		if err != nil {
+			parsed, err = time.Parse(time.RFC3339, req.Watermark)
+			if err != nil {
+				jsonError(w, http.StatusBadRequest, "INVALID_REQUEST: watermark must be RFC3339")
+				return
+			}
+		}
+		wm = parsed
+	}
+	sr.Watermark = &wm
+
+	resp, err := h.engine.Sync(r.Context(), accountID, orgID, sr)
+	if err != nil {
+		h.writeSyncError(w, err)
+		return
+	}
+
+	out := compatPullResponse{
+		Memories:  make([]compatPullMemory, 0, len(resp.Pulls)),
+		Watermark: resp.Watermark.Format(time.RFC3339Nano),
+	}
+	for _, m := range resp.Pulls {
+		out.Memories = append(out.Memories, compatPullMemory{
+			ID:         m.ID,
+			Category:   m.Category,
+			Content:    m.Content,
+			Source:     m.Source,
+			AuthorName: m.AuthorName,
+			UpdatedAt:  m.UpdatedAt,
+		})
+	}
+	jsonResponse(w, http.StatusOK, out)
+}
+
 func (h *SyncHandler) writeSyncError(w http.ResponseWriter, err error) {
 	var se *syncpkg.SyncError
 	if errors.As(err, &se) {
@@ -64,4 +244,9 @@ func (h *SyncHandler) writeSyncError(w http.ResponseWriter, err error) {
 	}
 	h.logger.Error("sync failed", "error", err)
 	jsonError(w, http.StatusInternalServerError, "INTERNAL_ERROR")
+}
+
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }

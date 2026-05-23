@@ -3,10 +3,11 @@ package model
 import "time"
 
 type Account struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"display_name"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	DisplayName  string    `json:"display_name"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type Organization struct {
@@ -25,13 +26,14 @@ type Team struct {
 }
 
 type Project struct {
-	ID         string    `json:"id"`
-	OrgID      string    `json:"org_id"`
-	Name       string    `json:"name"`
-	Slug       string    `json:"slug"`
-	RemoteKey  string    `json:"remote_key"`
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        string     `json:"id"`
+	OrgID     string     `json:"org_id"`
+	Name      string     `json:"name"`
+	Slug      string     `json:"slug"`
+	RemoteKey string     `json:"remote_key"`
+	CreatedBy string     `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 type Memory struct {
@@ -84,4 +86,47 @@ type AuditFilters struct {
 	To         *time.Time `json:"to,omitempty"`
 	Limit      int       `json:"limit,omitempty"`
 	Offset     int       `json:"offset,omitempty"`
+}
+
+type AccountWithRole struct {
+	Account
+	Role string `json:"role"`
+}
+
+type TeamMember struct {
+	AccountID   string    `json:"account_id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+	AddedAt     time.Time `json:"added_at"`
+}
+
+type ProjectGrant struct {
+	ProjectID   string `json:"project_id"`
+	ProjectName string `json:"project_name"`
+	ProjectSlug string `json:"project_slug"`
+	Role        string `json:"role"`
+}
+
+type TeamDetail struct {
+	Team
+	Members       []TeamMember   `json:"members"`
+	ProjectGrants []ProjectGrant `json:"project_grants"`
+}
+
+type PushActivity struct {
+	ProjectID   string    `json:"project_id"`
+	ProjectName string    `json:"project_name"`
+	Count       int       `json:"count"`
+	LastPush    time.Time `json:"last_push"`
+}
+
+type DashboardStats struct {
+	Accounts        int            `json:"accounts"`
+	Organizations   int            `json:"organizations"`
+	Teams           int            `json:"teams"`
+	Projects        int            `json:"projects"`
+	MemoriesLive    int            `json:"memories_live"`
+	KeysActive      int            `json:"keys_active"`
+	AuditEntries24h int            `json:"audit_entries_24h"`
+	RecentPushes    []PushActivity `json:"recent_pushes"`
 }

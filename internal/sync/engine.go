@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/model"
 	"github.com/jholhewres/anchored_oss/internal/policy"
 	"github.com/jholhewres/anchored_oss/internal/store"
@@ -38,6 +40,10 @@ func (e *SyncEngine) Sync(ctx context.Context, accountID, orgID string, req *mod
 		return nil, err
 	}
 
+	// Capture the watermark before any reads so that writes happening
+	// concurrently with this request are picked up by the next sync.
+	watermark := time.Now().UTC()
+
 	var results []model.SyncResult
 
 	pushResults, err := e.handlePushes(ctx, accountID, orgID, projectID, req.Pushes)
@@ -57,9 +63,7 @@ func (e *SyncEngine) Sync(ctx context.Context, accountID, orgID string, req *mod
 		return nil, fmt.Errorf("pull: %w", err)
 	}
 
-	watermark := time.Now().UTC()
-
-	if len(results) == 0 {
+	if results == nil {
 		results = []model.SyncResult{}
 	}
 
@@ -74,8 +78,12 @@ func (e *SyncEngine) Sync(ctx context.Context, accountID, orgID string, req *mod
 func (e *SyncEngine) resolveProject(ctx context.Context, orgID, accountID string, req *model.SyncRequest) (string, error) {
 	if req.ProjectID != "" {
 		p, err := e.store.GetProjectByID(ctx, req.ProjectID)
-		if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
 			return "", &SyncError{Code: "PROJECT_NOT_FOUND", Status: 404, Msg: "project not found"}
+		}
+		if err != nil {
+			e.logger.Error("project lookup failed", "project_id", req.ProjectID, "error", err)
+			return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "project lookup failed"}
 		}
 		if p.OrgID != orgID {
 			return "", &SyncError{Code: "FORBIDDEN", Status: 403, Msg: "project belongs to a different organization"}
@@ -84,32 +92,57 @@ func (e *SyncEngine) resolveProject(ctx context.Context, orgID, accountID string
 	}
 
 	claim := req.ProjectClaim
-	if claim != nil {
-		if bad := hasLocalPath(claim.RemoteKey, claim.Name, claim.RepoSlug); bad != "" {
-			return "", &SyncError{Code: "LOCAL_PATH_DETECTED", Status: 400, Msg: fmt.Sprintf("claim field contains local path pattern: %s", bad)}
-		}
-
-		existing, err := e.store.GetProjectByRemoteKey(ctx, orgID, claim.RemoteKey)
-		if err == nil && existing != nil {
-			return existing.ID, nil
-		}
-
-		proj, err := e.store.CreateProject(ctx, orgID, claim.Name, toSlug(claim.Name), claim.RemoteKey, accountID)
-		if err != nil {
-			e.logger.Error("project creation from claim failed", "remote_key", claim.RemoteKey, "error", err)
-			return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "failed to create project"}
-		}
-
-		e.appendAudit(ctx, orgID, proj.ID, accountID, "sync.project.created", "project", proj.ID, claim.RemoteKey)
-		return proj.ID, nil
+	if claim == nil {
+		return "", &SyncError{Code: "INVALID_REQUEST", Status: 400, Msg: "project_id or project_claim is required"}
 	}
 
-	return "", &SyncError{Code: "INVALID_REQUEST", Status: 400, Msg: "project_id or project_claim is required"}
+	if bad := hasLocalPathInClaim(claim); bad != "" {
+		return "", &SyncError{Code: "LOCAL_PATH_DETECTED", Status: 400, Msg: fmt.Sprintf("claim field contains local path pattern: %s", bad)}
+	}
+	if claim.RemoteKey == "" || claim.Name == "" {
+		return "", &SyncError{Code: "INVALID_REQUEST", Status: 400, Msg: "project_claim requires name and remote_key"}
+	}
+
+	existing, err := e.store.GetProjectByRemoteKey(ctx, orgID, claim.RemoteKey)
+	if err == nil {
+		return existing.ID, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		e.logger.Error("project by remote_key failed", "remote_key", claim.RemoteKey, "error", err)
+		return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "project lookup failed"}
+	}
+
+	slug := toSlug(claim.Name)
+	if slug == "" {
+		return "", &SyncError{Code: "INVALID_REQUEST", Status: 400, Msg: "project_claim.name does not produce a valid slug"}
+	}
+
+	proj, err := e.store.CreateProject(ctx, orgID, claim.Name, slug, claim.RemoteKey, accountID)
+	if err != nil {
+		e.logger.Error("project creation from claim failed", "remote_key", claim.RemoteKey, "error", err)
+		return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "failed to create project"}
+	}
+
+	// Grant the creator access via the org's default team so the very
+	// same sync request can proceed past authorize().
+	if err := e.store.EnsureCreatorProjectAccess(ctx, orgID, accountID, proj.ID); err != nil {
+		e.logger.Error("grant creator access failed", "project_id", proj.ID, "error", err)
+		return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "failed to grant project access"}
+	}
+
+	e.appendAudit(ctx, orgID, proj.ID, accountID, "sync.project.created", "project", proj.ID, claim.RemoteKey)
+	return proj.ID, nil
 }
 
 func (e *SyncEngine) authorize(ctx context.Context, accountID, projectID string) error {
+	// Admin keys bypass team-access checks but are still bounded by the
+	// org match in resolveProject.
+	if middleware.GetScope(ctx) == "admin" {
+		return nil
+	}
 	projects, err := e.store.ListProjectsByTeamAccess(ctx, accountID)
 	if err != nil {
+		e.logger.Error("authorize: list projects failed", "account_id", accountID, "error", err)
 		return &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "authorization check failed"}
 	}
 	for _, p := range projects {
@@ -136,6 +169,9 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 	filterResults := e.filter.Filter(filterables)
 
 	results := make([]model.SyncResult, len(pushes))
+	accepted := make([]*model.Memory, 0, len(pushes))
+	auditEntries := make([]*model.AuditEntry, 0, len(pushes))
+
 	for i, push := range pushes {
 		fr := filterResults[i]
 		if !fr.Accepted {
@@ -145,7 +181,7 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 				Rule:   fr.Rule,
 				Detail: fr.Detail,
 			}
-			e.appendAudit(ctx, orgID, projectID, accountID, "sync.push.rejected", "memory", push.ID, fr.Rule)
+			auditEntries = append(auditEntries, buildAudit(orgID, projectID, accountID, "sync.push.rejected", "memory", push.ID, fr.Rule))
 			continue
 		}
 
@@ -165,26 +201,64 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 		if mem.ID == "" {
 			mem.ID = newID()
 		}
+		accepted = append(accepted, mem)
+		results[i] = model.SyncResult{ID: mem.ID, Status: "accepted"}
+		auditEntries = append(auditEntries, buildAudit(orgID, projectID, accountID, "sync.push.accepted", "memory", mem.ID, ""))
+	}
 
-		if err := e.store.UpsertMemory(ctx, mem); err != nil {
-			e.logger.Error("upsert memory failed", "id", push.ID, "error", err)
-			results[i] = model.SyncResult{
-				ID:     push.ID,
-				Status: "rejected",
-				Rule:   "internal_error",
-				Detail: "failed to store memory",
+	if len(accepted) > 0 {
+		if err := e.store.UpsertMemories(ctx, accepted); err != nil {
+			e.logger.Error("batch upsert memories failed", "count", len(accepted), "error", err)
+			// Re-flag every accepted slot as rejected so the client knows
+			// nothing landed; partial batches are inherently atomic per chunk
+			// but we cannot tell which row triggered the violation from here.
+			rejectedIDs := make(map[string]bool, len(accepted))
+			for _, m := range accepted {
+				rejectedIDs[m.ID] = true
 			}
-			continue
+			for i := range results {
+				if results[i].Status == "accepted" && rejectedIDs[results[i].ID] {
+					results[i] = model.SyncResult{
+						ID:     results[i].ID,
+						Status: "rejected",
+						Rule:   "internal_error",
+						Detail: "failed to store memory batch",
+					}
+				}
+			}
+			// Trim audit entries for accepted-but-now-rejected items.
+			pruned := auditEntries[:0]
+			for _, a := range auditEntries {
+				if a.Action == "sync.push.accepted" && rejectedIDs[a.TargetID] {
+					continue
+				}
+				pruned = append(pruned, a)
+			}
+			auditEntries = pruned
 		}
+	}
 
-		results[i] = model.SyncResult{
-			ID:     mem.ID,
-			Status: "accepted",
-		}
-		e.appendAudit(ctx, orgID, projectID, accountID, "sync.push.accepted", "memory", mem.ID, "")
+	if err := e.store.AppendAudits(ctx, auditEntries); err != nil {
+		e.logger.Error("audit batch append failed", "count", len(auditEntries), "error", err)
 	}
 
 	return results, nil
+}
+
+func buildAudit(orgID, projectID, actorID, action, targetType, targetID, detail string) *model.AuditEntry {
+	metadata := map[string]string{}
+	if detail != "" {
+		metadata["detail"] = detail
+	}
+	return &model.AuditEntry{
+		OrgID:      orgID,
+		ProjectID:  projectID,
+		ActorID:    actorID,
+		Action:     action,
+		TargetType: targetType,
+		TargetID:   targetID,
+		Metadata:   metadata,
+	}
 }
 
 func (e *SyncEngine) handleTombstones(ctx context.Context, orgID, projectID string, tombstones []string) ([]model.SyncResult, error) {
@@ -194,7 +268,17 @@ func (e *SyncEngine) handleTombstones(ctx context.Context, orgID, projectID stri
 
 	results := make([]model.SyncResult, len(tombstones))
 	for i, id := range tombstones {
-		if err := e.store.SoftDeleteMemory(ctx, id, projectID); err != nil {
+		err := e.store.SoftDeleteMemory(ctx, id, projectID)
+		if errors.Is(err, store.ErrNotFound) {
+			results[i] = model.SyncResult{
+				ID:     id,
+				Status: "rejected",
+				Rule:   "not_found",
+				Detail: "memory not found or already deleted",
+			}
+			continue
+		}
+		if err != nil {
 			e.logger.Error("tombstone failed", "id", id, "error", err)
 			results[i] = model.SyncResult{
 				ID:     id,
@@ -255,14 +339,10 @@ func (e *SyncEngine) appendAudit(ctx context.Context, orgID, projectID, actorID,
 	}
 }
 
-var claimLocalPatterns = []string{"/home/", "/Users/", `C:\Users\`, "C:/Users/", "~/"}
-
-func hasLocalPath(fields ...string) string {
-	for _, f := range fields {
-		for _, p := range claimLocalPatterns {
-			if strings.Contains(f, p) {
-				return p
-			}
+func hasLocalPathInClaim(claim *model.ProjectClaim) string {
+	for _, f := range []string{claim.RemoteKey, claim.Name, claim.RepoSlug} {
+		if found, pattern := policy.ContainsLocalPath(f); found {
+			return pattern
 		}
 	}
 	return ""
@@ -277,7 +357,7 @@ func toSlug(name string) string {
 			result.WriteRune(c)
 		}
 	}
-	return result.String()
+	return strings.Trim(result.String(), "-")
 }
 
 func newID() string {

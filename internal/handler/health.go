@@ -22,18 +22,26 @@ func NewHealthHandler(version string, st store.Store) *HealthHandler {
 
 func (h *HealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "unavailable"
+	status := "ok"
+	httpStatus := http.StatusOK
+
 	if h.store != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		if err := h.store.Ping(ctx); err == nil {
-			dbStatus = "ok"
-		}
+		err := h.store.Ping(ctx)
 		cancel()
+		if err == nil {
+			dbStatus = "ok"
+		} else {
+			dbStatus = "down"
+			status = "degraded"
+			httpStatus = http.StatusServiceUnavailable
+		}
 	}
 
-	jsonResponse(w, http.StatusOK, map[string]string{
+	jsonResponse(w, httpStatus, map[string]string{
 		"service":   "anchored-oss",
 		"version":   h.version,
-		"status":    "ok",
+		"status":    status,
 		"db_status": dbStatus,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
