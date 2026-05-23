@@ -1,0 +1,25 @@
+{
+  "pulls": [],
+  "server_tombstones": [],
+  "results": [
+    {
+      "id": "mem-bad-001",
+      "status": "rejected",
+      "rule": "local_path_detected",
+      "detail": "local path pattern detected: /home/alice/.config/anchored"
+    },
+    {
+      "id": "mem-bad-002",
+      "status": "rejected",
+      "rule": "secret_detected",
+      "detail": "secret pattern detected: sk_live_..."
+    },
+    {
+      "id": "mem-bad-003",
+      "status": "rejected",
+      "rule": "blocked_category",
+      "detail": "category \"event\" is not allowed"
+    }
+  ],
+  "watermark": "2026-05-22T10:05:00Z"
+}
