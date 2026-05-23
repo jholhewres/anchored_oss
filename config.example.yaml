@@ -1,0 +1,16 @@
+# Anchored OSS Configuration
+
+server:
+  address: ":8080"
+  read_timeout: 30s
+  write_timeout: 300s  # long for SSE
+
+database:
+  dsn: "postgres://localhost:5433/anchored_oss?sslmode=disable"
+  max_open_conns: 10
+  max_idle_conns: 5
+  conn_max_lifetime: 5m
+
+cors:
+  allowed_origins:
+    - "*"

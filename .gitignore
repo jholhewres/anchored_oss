@@ -1,0 +1,9 @@
+bin/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+tmp/
+node_modules/
+coverage/
