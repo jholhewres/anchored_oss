@@ -1,18 +1,18 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
 
-const schemaVersion = 1
+const schemaVersion = 5
+
+// advisoryLockKey is a constant 64-bit key used to serialize migrations
+// across concurrent server instances on the same database.
+const advisoryLockKey int64 = 0x416E63686F726564 // "Anchored" as bytes
 
 const migration001 = `
-CREATE TABLE IF NOT EXISTS schema_version (
-    version INT PRIMARY KEY,
-    applied_at TIMESTAMPTZ DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS accounts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
@@ -117,12 +117,61 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 `
 
+const migration002 = `
+CREATE INDEX IF NOT EXISTS idx_audit_org_created ON audit_log(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_project_created ON audit_log(project_id, created_at DESC) WHERE project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audit_actor_created ON audit_log(actor_id, created_at DESC) WHERE actor_id IS NOT NULL;
+`
+
+// migration003 relaxes the dedupe constraint on memories. Memories with the
+// same content_hash but different ids are legal (clients may import similar
+// content under multiple ids); we keep the index for lookups but drop the
+// UNIQUE so batched upserts cannot fail on partial-index conflicts.
+const migration003 = `
+DROP INDEX IF EXISTS idx_memories_content_hash_project;
+CREATE INDEX IF NOT EXISTS idx_memories_content_hash_project ON memories(content_hash, project_id) WHERE deleted_at IS NULL;
+`
+
+// migration004 introduces soft-delete on projects. The partial index keeps
+// "active projects per org" lookups cheap and excludes archived rows from
+// the dashboard list views.
+const migration004 = `
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_projects_org_active ON projects(org_id) WHERE deleted_at IS NULL;
+`
+
+// migration005 adds password_hash to accounts for email/password login.
+const migration005 = `
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_hash TEXT;
+`
+
 var migrations = map[int]string{
 	1: migration001,
+	2: migration002,
+	3: migration003,
+	4: migration004,
+	5: migration005,
 }
 
+// Migrate brings the schema up to schemaVersion. Safe to call from
+// multiple instances concurrently: a session-level advisory lock
+// serializes execution per database.
 func Migrate(db *sql.DB) error {
-	if _, err := db.Exec(`
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire conn for migration: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, advisoryLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, advisoryLockKey)
+	}()
+
+	if _, err := conn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_version (
 			version INT PRIMARY KEY,
 			applied_at TIMESTAMPTZ DEFAULT now()
@@ -132,23 +181,23 @@ func Migrate(db *sql.DB) error {
 	}
 
 	var current int
-	row := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`)
+	row := conn.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`)
 	if err := row.Scan(&current); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 
 	for v := current + 1; v <= schemaVersion; v++ {
-		sql, ok := migrations[v]
+		sqlText, ok := migrations[v]
 		if !ok {
 			return fmt.Errorf("migration %d not found", v)
 		}
 
-		tx, err := db.Begin()
+		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin migration %d: %w", v, err)
 		}
 
-		if _, err := tx.Exec(sql); err != nil {
+		if _, err := tx.Exec(sqlText); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("exec migration %d: %w", v, err)
 		}
