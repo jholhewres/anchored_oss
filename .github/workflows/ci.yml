@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        go-version: ['1.25']
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+      - run: go mod tidy -diff
+      - run: go vet ./...
+      - run: go build -ldflags "-X main.versionFlag=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" ./cmd/server
+      - run: go test -count=1 -race ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose build server
