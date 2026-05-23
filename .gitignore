@@ -1,9 +1,57 @@
+# Binaries
 bin/
 dist/
-*.log
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go
+vendor/
+*.test
+*.out
+go.work
+go.work.sum
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Environment and secrets
 .env
 .env.*
 !.env.example
-tmp/
-node_modules/
+config.yaml
+config.local.yaml
+
+# Data
+data/
+*.db
+*.db-shm
+*.db-wal
+*.log
 coverage/
+
+# Build artifacts
+tmp/
+*.o
+*.a
+
+# OMC / AI tooling state
+.omc/
+.omx/
+.claude/
+.opencode/
+
+# Playwright / Browser
+.playwright-mcp/
