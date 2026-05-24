@@ -67,12 +67,13 @@ type compatPushRequest struct {
 }
 
 type compatPushMemory struct {
-	ID               string `json:"id"`
-	Category         string `json:"category"`
-	Content          string `json:"content"`
-	Source           string `json:"source"`
-	PreferenceScope  string `json:"preference_scope,omitempty"`
-	RemoteProjectKey string `json:"remote_project_key,omitempty"`
+	ID               string         `json:"id"`
+	Category         string         `json:"category"`
+	Content          string         `json:"content"`
+	Source           string         `json:"source"`
+	PreferenceScope  string         `json:"preference_scope,omitempty"`
+	RemoteProjectKey string         `json:"remote_project_key,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
 }
 
 type compatPushResponse struct {
@@ -93,12 +94,13 @@ type compatPullResponse struct {
 }
 
 type compatPullMemory struct {
-	ID         string    `json:"id"`
-	Category   string    `json:"category"`
-	Content    string    `json:"content"`
-	Source     string    `json:"source,omitempty"`
-	AuthorName string    `json:"author_name,omitempty"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         string         `json:"id"`
+	Category   string         `json:"category"`
+	Content    string         `json:"content"`
+	Source     string         `json:"source,omitempty"`
+	AuthorName string         `json:"author_name,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 // CompatPush adapts POST /api/v1/sync/push to the bidirectional engine.
@@ -134,7 +136,6 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 	pushes := make([]model.SyncMemory, 0, len(req.Memories))
 	for _, m := range req.Memories {
 		if m.PreferenceScope == "user" {
-			// Defense in depth: server-side blocklist for personal scope.
 			continue
 		}
 		hash := "sha256:" + sha256Hex(m.Content)
@@ -147,6 +148,7 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 			AuthorName:  authorName,
 			CreatedAt:   now,
 			UpdatedAt:   now,
+			Metadata:    m.Metadata,
 		})
 	}
 
@@ -224,6 +226,12 @@ func (h *SyncHandler) CompatPull(w http.ResponseWriter, r *http.Request) {
 		Watermark: resp.Watermark.Format(time.RFC3339Nano),
 	}
 	for _, m := range resp.Pulls {
+		var meta map[string]any
+		if m.Metadata != nil {
+			if raw, ok := m.Metadata.(map[string]any); ok {
+				meta = raw
+			}
+		}
 		out.Memories = append(out.Memories, compatPullMemory{
 			ID:         m.ID,
 			Category:   m.Category,
@@ -231,6 +239,7 @@ func (h *SyncHandler) CompatPull(w http.ResponseWriter, r *http.Request) {
 			Source:     m.Source,
 			AuthorName: m.AuthorName,
 			UpdatedAt:  m.UpdatedAt,
+			Metadata:   meta,
 		})
 	}
 	jsonResponse(w, http.StatusOK, out)

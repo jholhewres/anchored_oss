@@ -160,10 +160,15 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 
 	filterables := make([]policy.Filterable, len(pushes))
 	for i, p := range pushes {
+		var meta map[string]any
+		if m, ok := p.Metadata.(map[string]any); ok {
+			meta = m
+		}
 		filterables[i] = policy.Filterable{
 			ID:       p.ID,
 			Content:  p.Content,
 			Category: p.Category,
+			Metadata: meta,
 		}
 	}
 	filterResults := e.filter.Filter(filterables)
@@ -197,6 +202,7 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 			AuthorName:  push.AuthorName,
 			CreatedAt:   push.CreatedAt,
 			UpdatedAt:   push.UpdatedAt,
+			Metadata:    push.Metadata,
 		}
 		if mem.ID == "" {
 			mem.ID = newID()

@@ -23,6 +23,7 @@ type SyncMemory struct {
 	AuthorName  string    `json:"author_name"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	Metadata    any       `json:"metadata,omitempty"`
 }
 
 // ProjectClaim is used to resolve a project by remote key instead of ID.
