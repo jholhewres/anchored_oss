@@ -78,7 +78,7 @@ jobs:
             ### Install
 
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored_oss/main/install.sh | bash
+            curl -fsSL https://anchoredoss.dev/install-oss | sh
             ```
 
             ### Binaries
