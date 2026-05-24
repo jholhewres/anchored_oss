@@ -1,31 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="jholhewres/anchored_oss"
-BINARY_NAME="anchored-oss"
-INSTALL_DIR="${ANCHORED_OSS_INSTALL_DIR:-$HOME/.anchored-oss}"
+REPO="jholhewres/anchored"
+BINARY_NAME="anchored"
+INSTALL_DIR="${ANCHORED_INSTALL_DIR:-$HOME/.anchored}"
 BIN_DIR="$INSTALL_DIR/bin"
 INSTALL_PATH="$BIN_DIR/$BINARY_NAME"
 
 VERSION=""
-VARIANT="selfhosted"
 
 usage() {
   cat <<'EOF'
-Anchored OSS Installer
+Anchored Installer
 
 Usage:
-  install.sh [options]
+  anchored.sh [options]
 
 Options:
   --version VERSION      Install a specific version (default: latest)
-  --variant VARIANT      selfhosted or cloud (default: selfhosted)
   --help                 Show this help message
 
 Examples:
-  curl -fsSL https://anchoredoss.dev/install-oss | sh
-  curl -fsSL https://anchoredoss.dev/install-oss | sh -s -- --variant cloud
-  ./install/install.sh --version v0.1.0
+  curl -fsSL https://anchoredoss.dev/install | sh
+  ./install/anchored.sh --version v0.4.10
 EOF
   exit 0
 }
@@ -41,11 +38,6 @@ while [[ $# -gt 0 ]]; do
       [[ -n "$VERSION" ]] || error "--version requires a value"
       shift 2
       ;;
-    --variant)
-      VARIANT="${2:-}"
-      [[ "$VARIANT" == "selfhosted" || "$VARIANT" == "cloud" ]] || error "--variant must be selfhosted or cloud"
-      shift 2
-      ;;
     --help|-h)
       usage
       ;;
@@ -56,6 +48,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 command -v curl >/dev/null 2>&1 || error "curl is required but not installed."
+command -v tar >/dev/null 2>&1 || error "tar is required but not installed."
 
 case "$(uname -s)" in
   Linux)  os="linux" ;;
@@ -70,24 +63,39 @@ case "$(uname -m)" in
 esac
 
 if [[ -z "$VERSION" ]]; then
-  info "Fetching latest Anchored OSS release..."
+  info "Fetching latest Anchored release..."
   VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/') \
     || error "Could not determine latest version."
 fi
 
-binary_file="${BINARY_NAME}-${VARIANT}-${os}-${arch}"
-url="https://github.com/${REPO}/releases/download/${VERSION}/${binary_file}"
+version_no_v="${VERSION#v}"
+archive="anchored_${version_no_v}_${os}_${arch}.tar.gz"
+url="https://github.com/${REPO}/releases/download/${VERSION}/${archive}"
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+info "Downloading Anchored ${VERSION} (${os}/${arch})..."
+curl -fsSL "$url" -o "$tmpdir/$archive" || error "Download failed: $url"
+
+tar -xzf "$tmpdir/$archive" -C "$tmpdir"
+binary=""
+while IFS= read -r candidate; do
+  if [[ -x "$candidate" ]]; then
+    binary="$candidate"
+    break
+  fi
+done < <(find "$tmpdir" -type f -name "$BINARY_NAME")
+[[ -n "$binary" ]] || error "Archive did not contain an executable named $BINARY_NAME."
 
 mkdir -p "$BIN_DIR"
-
-info "Downloading Anchored OSS ${VERSION} (${VARIANT}, ${os}/${arch})..."
-curl -fsSL "$url" -o "$INSTALL_PATH" || error "Download failed: $url"
+cp "$binary" "$INSTALL_PATH"
 chmod 755 "$INSTALL_PATH"
 
-ok "Installed Anchored OSS ${VERSION} (${VARIANT}) to $INSTALL_PATH"
+ok "Installed Anchored ${VERSION} to $INSTALL_PATH"
 echo ""
 echo "Add this to your shell profile if needed:"
 echo "  export PATH=\"$BIN_DIR:\$PATH\""
 echo ""
 echo "Next:"
-echo "  anchored-oss -setup"
+echo "  anchored --help"

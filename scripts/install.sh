@@ -3,11 +3,12 @@ set -euo pipefail
 
 REPO="jholhewres/anchored_oss"
 BINARY_NAME="anchored-oss"
-INSTALL_DIR="/usr/local/bin"
-INSTALL_PATH="${INSTALL_DIR}/${BINARY_NAME}"
+INSTALL_DIR="${ANCHORED_OSS_INSTALL_DIR:-$HOME/.anchored-oss}"
+BIN_DIR="$INSTALL_DIR/bin"
+INSTALL_PATH="$BIN_DIR/$BINARY_NAME"
 
 VERSION=""
-NON_INTERACTIVE=false
+VARIANT="selfhosted"
 
 usage() {
   cat <<'EOF'
@@ -18,118 +19,75 @@ Usage:
 
 Options:
   --version VERSION      Install a specific version (default: latest)
-  --non-interactive      Skip wizard, just install the binary
+  --variant VARIANT      selfhosted or cloud (default: selfhosted)
   --help                 Show this help message
 
 Examples:
-  install.sh                        # Install latest
-  install.sh --version v0.1.0       # Install specific version
-  install.sh --non-interactive      # Install latest without wizard
+  curl -fsSL https://anchoredoss.dev/install-oss | sh
+  curl -fsSL https://anchoredoss.dev/install-oss | sh -s -- --variant cloud
+  ./install/install.sh --version v0.1.0
 EOF
   exit 0
 }
 
 info()  { printf "\033[1;34m==>\033[0m %s\n" "$*"; }
+ok()    { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
 error() { printf "\033[1;31mError:\033[0m %s\n" "$*" >&2; exit 1; }
 
-cleanup() {
-  [[ -n "${TMPDIR:-}" ]] && rm -rf "$TMPDIR"
-}
-trap cleanup EXIT
-
-# --- Argument parsing ---
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --version)
-      shift; VERSION="${1:-}"; shift || error "--version requires a value"
+      VERSION="${2:-}"
+      [[ -n "$VERSION" ]] || error "--version requires a value"
+      shift 2
       ;;
-    --non-interactive)
-      NON_INTERACTIVE=true; shift
+    --variant)
+      VARIANT="${2:-}"
+      [[ "$VARIANT" == "selfhosted" || "$VARIANT" == "cloud" ]] || error "--variant must be selfhosted or cloud"
+      shift 2
       ;;
     --help|-h)
       usage
       ;;
     *)
-      error "Unknown option: $arg"
+      error "Unknown option: $1"
       ;;
   esac
 done
 
-# --- Prerequisites ---
 command -v curl >/dev/null 2>&1 || error "curl is required but not installed."
 
-# --- OS detection ---
-os="$(uname -s)"
-case "$os" in
+case "$(uname -s)" in
   Linux)  os="linux" ;;
   Darwin) os="darwin" ;;
-  *)      error "Unsupported operating system: ${os}. Only linux and darwin are supported." ;;
+  *)      error "Unsupported operating system: $(uname -s). Only linux and darwin are supported." ;;
 esac
 
-# --- Arch detection ---
-arch="$(uname -m)"
-case "$arch" in
+case "$(uname -m)" in
   x86_64|amd64)  arch="amd64" ;;
   aarch64|arm64) arch="arm64" ;;
-  *)             error "Unsupported architecture: ${arch}. Only amd64 and arm64 are supported." ;;
+  *)             error "Unsupported architecture: $(uname -m). Only amd64 and arm64 are supported." ;;
 esac
 
-# --- Resolve version ---
 if [[ -z "$VERSION" ]]; then
-  info "Fetching latest version from GitHub..."
-  VERSION_URL="https://api.github.com/repos/${REPO}/releases/latest"
-  VERSION_RESPONSE=$(curl -fsSL "$VERSION_URL" 2>/dev/null) \
-    || error "Failed to fetch latest version from GitHub. Check your network or specify a version with --version."
-
-  VERSION=$(printf '%s\n' "$VERSION_RESPONSE" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/') \
-    || error "Could not parse latest version from GitHub API response."
+  info "Fetching latest Anchored OSS release..."
+  VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/') \
+    || error "Could not determine latest version."
 fi
 
-info "Installing ${BINARY_NAME} ${VERSION} (${os}/${arch})..."
+binary_file="${BINARY_NAME}-${VARIANT}-${os}-${arch}"
+url="https://github.com/${REPO}/releases/download/${VERSION}/${binary_file}"
 
-# --- Download ---
-BINARY_FILE="${BINARY_NAME}-${os}-${arch}"
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY_FILE}"
+mkdir -p "$BIN_DIR"
 
-TMPDIR=$(mktemp -d)
-DOWNLOAD_PATH="${TMPDIR}/${BINARY_FILE}"
+info "Downloading Anchored OSS ${VERSION} (${VARIANT}, ${os}/${arch})..."
+curl -fsSL "$url" -o "$INSTALL_PATH" || error "Download failed: $url"
+chmod 755 "$INSTALL_PATH"
 
-info "Downloading from ${DOWNLOAD_URL}..."
-HTTP_STATUS=$(curl -fsSL -w '%{http_code}' -o "$DOWNLOAD_PATH" "$DOWNLOAD_URL") || true
-
-if [[ ! -f "$DOWNLOAD_PATH" ]]; then
-  error "Download failed (HTTP ${HTTP_STATUS}). Ensure version ${VERSION} exists for ${os}/${arch} at ${DOWNLOAD_URL}"
-fi
-
-if [[ ! -s "$DOWNLOAD_PATH" ]]; then
-  rm -f "$DOWNLOAD_PATH"
-  error "Downloaded file is empty. Ensure version ${VERSION} exists for ${os}/${arch}."
-fi
-
-# --- Install ---
-if [[ "$(id -u)" -ne 0 ]]; then
-  if ! command -v sudo >/dev/null 2>&1; then
-    error "Root privileges required to install to ${INSTALL_DIR}. Run with sudo or as root."
-  fi
-  sudo cp "$DOWNLOAD_PATH" "$INSTALL_PATH"
-  sudo chmod 755 "$INSTALL_PATH"
-else
-  cp "$DOWNLOAD_PATH" "$INSTALL_PATH"
-  chmod 755 "$INSTALL_PATH"
-fi
-
-# --- Done ---
-info "Installed to ${INSTALL_PATH}"
+ok "Installed Anchored OSS ${VERSION} (${VARIANT}) to $INSTALL_PATH"
 echo ""
-echo "Anchored OSS installed successfully!"
+echo "Add this to your shell profile if needed:"
+echo "  export PATH=\"$BIN_DIR:\$PATH\""
 echo ""
-if [[ "$NON_INTERACTIVE" == false ]]; then
-  echo "Run the setup wizard:"
-  echo "  ${BINARY_NAME} -setup"
-  echo ""
-  echo "Or start directly with an existing config:"
-  echo "  ${BINARY_NAME}"
-else
-  echo "Ready to use:"
-  echo "  ${BINARY_NAME}"
-fi
+echo "Next:"
+echo "  anchored-oss -setup"
