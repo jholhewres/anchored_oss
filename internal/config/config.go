@@ -13,6 +13,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultMode is set via:
+//
+//	-ldflags "-X github.com/jholhewres/anchored_oss/internal/config.DefaultMode=cloud"
+//
+// at build time. Defaults to "selfhosted" for the self-hosted binary.
+var DefaultMode = "selfhosted"
+
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
@@ -79,7 +86,7 @@ func DefaultConfig() *Config {
 			AllowedOrigins: nil,
 		},
 		Mode: ModeConfig{
-			Type: "selfhosted",
+			Type: DefaultMode,
 		},
 		Quota: QuotaConfig{
 			MaxStorageBytes: 0,

@@ -39,26 +39,23 @@ jobs:
       - name: Build binaries
         env:
           CGO_ENABLED: 0
-          LDFLAGS: >-
-            -s -w
-            -X github.com/jholhewres/anchored_oss/internal/version.Version=${{ steps.vars.outputs.version }}
         run: |
+          VERSION=${{ steps.vars.outputs.version }}
           mkdir -p dist
 
-          # linux amd64
-          GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/anchored-oss-linux-amd64 ./cmd/server
+          build_variant() {
+            local MODE="$1"
+            local SUFFIX="$2"
+            local LDFLAGS="-s -w -X github.com/jholhewres/anchored_oss/internal/version.Version=${VERSION} -X github.com/jholhewres/anchored_oss/internal/config.DefaultMode=${MODE}"
 
-          # linux arm64
-          GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/anchored-oss-linux-arm64 ./cmd/server
+            GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-linux-amd64" ./cmd/server
+            GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-linux-arm64" ./cmd/server
+            GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-darwin-amd64" ./cmd/server
+            GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-darwin-arm64" ./cmd/server
+          }
 
-          # darwin amd64
-          GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/anchored-oss-darwin-amd64 ./cmd/server
-
-          # darwin arm64
-          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/anchored-oss-darwin-arm64 ./cmd/server
-
-          # windows amd64
-          GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/anchored-oss-windows-amd64.exe ./cmd/server
+          build_variant selfhosted selfhosted
+          build_variant cloud cloud
 
       - name: Generate checksums
         run: |
@@ -76,27 +73,25 @@ jobs:
           body: |
             ## Anchored OSS ${{ steps.vars.outputs.version }}
 
-            Self-hosted team memory sync server for Anchored.
+            Two binary variants: **selfhosted** (single-tenant, default) and **cloud** (multi-tenant with registration).
 
-            ### Quick Start
+            ### Install
+
             ```bash
-            # Download
-            curl -sL https://github.com/jholhewres/anchored_oss/releases/download/${{ steps.vars.outputs.version }}/anchored-oss-linux-amd64 -o anchored-oss
-            chmod +x anchored-oss
-
-            # Run with Docker Compose (Postgres)
-            docker compose up -d postgres
-            ./anchored-oss -bootstrap
-            ./anchored-oss
+            curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored_oss/main/install.sh | bash
             ```
 
             ### Binaries
-            | Platform | Architecture | Binary |
-            |---|---|---|
-            | Linux | amd64 | `anchored-oss-linux-amd64` |
-            | Linux | arm64 | `anchored-oss-linux-arm64` |
-            | macOS | amd64 | `anchored-oss-darwin-amd64` |
-            | macOS | arm64 | `anchored-oss-darwin-arm64` |
-            | Windows | amd64 | `anchored-oss-windows-amd64.exe` |
+
+            | Variant | Platform | Arch | Binary |
+            |---|---|---|---|
+            | Self-hosted | Linux | amd64 | `anchored-oss-selfhosted-linux-amd64` |
+            | Self-hosted | Linux | arm64 | `anchored-oss-selfhosted-linux-arm64` |
+            | Self-hosted | macOS | amd64 | `anchored-oss-selfhosted-darwin-amd64` |
+            | Self-hosted | macOS | arm64 | `anchored-oss-selfhosted-darwin-arm64` |
+            | Cloud | Linux | amd64 | `anchored-oss-cloud-linux-amd64` |
+            | Cloud | Linux | arm64 | `anchored-oss-cloud-linux-arm64` |
+            | Cloud | macOS | amd64 | `anchored-oss-cloud-darwin-amd64` |
+            | Cloud | macOS | arm64 | `anchored-oss-cloud-darwin-arm64` |
 
             Built on ${{ steps.vars.outputs.build_date }} with Go 1.25 (CGO_ENABLED=0).
