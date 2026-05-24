@@ -1,224 +1,101 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-
-import { PageHeader } from "@/components/PageHeader";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import React from "react";
+import { Card, Btn, Input } from "@/ds/components";
+import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
 import type { AuditEntry, AuditFilters } from "@/lib/types";
-import { formatNumber } from "@/lib/utils";
 
-const PAGE_SIZE = 50;
-const actionOptions = [
-  "",
-  "sync.push.accepted",
-  "sync.push.rejected",
-  "sync.tombstone.accepted",
-  "sync.project.created",
-];
+const actionTones: Record<string, string> = {
+  "sync.push.accepted": "ok",
+  "sync.push.rejected": "err",
+  "sync.tombstone.accepted": "warn",
+  "sync.project.created": "info",
+  "memory.append": "accent",
+  "apikey.rotate": "warn",
+  "member.invite": "info",
+  "policy.update": "neutral",
+};
 
 export function AuditPage() {
-  const [filters, setFilters] = useState<AuditFilters>({ limit: PAGE_SIZE, offset: 0 });
-  const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: () => api.getProjects() });
-  const accountsQuery = useQuery({ queryKey: ["accounts"], queryFn: () => api.getAccounts() });
+  const [entries, setEntries] = React.useState<AuditEntry[]>([]);
+  const [total, setTotal] = React.useState(0);
+  const [loading, setLoading] = React.useState(true);
+  const [filters, setFilters] = React.useState<AuditFilters>({ limit: 50, offset: 0 });
+  const [search, setSearch] = React.useState("");
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["audit", filters],
-    queryFn: () => api.getAudit(filters),
-    placeholderData: (prev) => prev,
-  });
+  React.useEffect(() => {
+    setLoading(true);
+    api.getAudit(filters)
+      .then(r => { setEntries(r.entries); setTotal(r.total); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [filters]);
 
-  const total = data?.total ?? 0;
+  if (loading && entries.length === 0) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Loading...</div>;
+
   const offset = filters.offset ?? 0;
-  const limit = data?.limit ?? PAGE_SIZE;
-  const showingTo = offset + (data?.entries.length ?? 0);
-
-  function setFilter<K extends keyof AuditFilters>(key: K, value: AuditFilters[K]) {
-    setFilters((prev) => ({ ...prev, [key]: value, offset: 0 }));
-  }
 
   return (
-    <>
-      <PageHeader
-        title="Audit"
-        description={`${formatNumber(total)} entries · showing ${total === 0 ? 0 : offset + 1}–${showingTo}`}
-      />
-
-      <Card className="mb-4">
-        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
-          <div className="space-y-2">
-            <Label className="text-xs">Project</Label>
-            <Select
-              value={filters.project ?? ""}
-              onValueChange={(v) => setFilter("project", v || undefined)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="All" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__any">All</SelectItem>
-                {(projectsQuery.data ?? []).map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Actor</Label>
-            <Select
-              value={filters.actor ?? ""}
-              onValueChange={(v) => setFilter("actor", v || undefined)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="All" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__any">All</SelectItem>
-                {(accountsQuery.data ?? []).map((a) => (
-                  <SelectItem key={a.id} value={a.id}>
-                    {a.display_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Action</Label>
-            <Select
-              value={filters.action ?? ""}
-              onValueChange={(v) => setFilter("action", v || undefined)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="All" />
-              </SelectTrigger>
-              <SelectContent>
-                {actionOptions.map((a) => (
-                  <SelectItem key={a || "__any"} value={a || "__any"}>
-                    {a || "All"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">From</Label>
-            <Input
-              type="datetime-local"
-              value={filters.from ?? ""}
-              onChange={(e) => setFilter("from", e.target.value || undefined)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">To</Label>
-            <Input
-              type="datetime-local"
-              value={filters.to ?? ""}
-              onChange={(e) => setFilter("to", e.target.value || undefined)}
-            />
-          </div>
-        </CardContent>
-      </Card>
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <Input icon={<I.search />} placeholder="filter by actor, scope, kind..." size="sm" style={{ width: 360 }} value={search} onChange={e => setSearch(e.target.value)} />
+        <Btn variant="outline" size="sm" icon={<I.filter />}>kind: all</Btn>
+        <Btn variant="outline" size="sm" icon={<I.user />}>actor: all</Btn>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>{total} events</span>
+      </div>
 
       <Card>
-        <CardContent className="p-0">
-          {isLoading && !data ? (
-            <div className="space-y-3 p-6">
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-            </div>
-          ) : !data || data.entries.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground">No audit entries.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Timestamp</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Target</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.entries.map((e) => (
-                  <AuditRow key={e.id} entry={e} />
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
+        <div style={{
+          padding: "10px 14px", borderBottom: "1px solid var(--border)",
+          background: "var(--bg-1)", fontFamily: "var(--font-mono)", fontSize: 11,
+          color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase",
+          display: "grid", gridTemplateColumns: "90px 24px 200px 140px 140px 1fr", gap: 14,
+        }}>
+          <span>time</span>
+          <span />
+          <span>kind</span>
+          <span>actor</span>
+          <span>project</span>
+          <span>detail</span>
+        </div>
+        {entries.length === 0 ? (
+          <div style={{ padding: "32px 14px", textAlign: "center", color: "var(--text-dim)", fontSize: 13 }}>No audit entries.</div>
+        ) : (
+          entries.map((e, i) => {
+            const tone = actionTones[e.action] || "neutral";
+            const toneVar = tone === "neutral" ? "text-ghost" : tone === "accent" ? "accent" : tone;
+            const timeStr = new Date(e.created_at).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            return (
+              <div key={e.id} style={{
+                padding: "8px 14px", borderBottom: i < entries.length - 1 ? "1px solid var(--border)" : "none",
+                display: "grid", gridTemplateColumns: "90px 24px 200px 140px 140px 1fr",
+                alignItems: "center", gap: 14, fontFamily: "var(--font-mono)", fontSize: 12.5,
+              }}>
+                <span style={{ color: "var(--text-dim)" }}>{timeStr}</span>
+                <span style={{
+                  width: 6, height: 6, borderRadius: 3,
+                  background: `var(--${toneVar})`, justifySelf: "center",
+                }} />
+                <span style={{ color: "var(--text)" }}>{e.action}</span>
+                <span style={{ color: "var(--text-muted)" }}>{e.actor_id ? e.actor_id.slice(0, 8) : "system"}</span>
+                <span style={{ color: "var(--text-muted)" }}>{e.project_id ? e.project_id.slice(0, 8) : "—"}</span>
+                <span style={{ color: "var(--text)" }}>
+                  {e.target_type ? `${e.target_type}/${e.target_id?.slice(0, 8)}` : ""}
+                </span>
+              </div>
+            );
+          })
+        )}
       </Card>
 
-      <div className="mt-4 flex justify-end gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={offset === 0}
-          onClick={() => setFilters((f) => ({ ...f, offset: Math.max(0, offset - limit) }))}
-        >
+      <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn variant="ghost" size="sm" style={offset === 0 ? { opacity: 0.4, pointerEvents: "none" } : {}} onClick={() => setFilters(f => ({ ...f, offset: Math.max(0, offset - 50) }))}>
           Previous
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={showingTo >= total}
-          onClick={() => setFilters((f) => ({ ...f, offset: offset + limit }))}
-        >
+        </Btn>
+        <Btn variant="ghost" size="sm" style={offset + 50 >= total ? { opacity: 0.4, pointerEvents: "none" } : {}} onClick={() => setFilters(f => ({ ...f, offset: offset + 50 }))}>
           Next
-        </Button>
+        </Btn>
       </div>
-    </>
-  );
-}
-
-function AuditRow({ entry }: { entry: AuditEntry }) {
-  const [open, setOpen] = useState(false);
-  const meta = entry.metadata;
-  const hasMeta = meta != null && typeof meta === "object" && Object.keys(meta as object).length > 0;
-  return (
-    <>
-      <TableRow
-        onClick={() => hasMeta && setOpen((v) => !v)}
-        className={hasMeta ? "cursor-pointer" : ""}
-      >
-        <TableCell className="text-xs text-muted-foreground">
-          {new Date(entry.created_at).toLocaleString()}
-        </TableCell>
-        <TableCell>
-          <code className="text-xs">{entry.action}</code>
-        </TableCell>
-        <TableCell className="text-xs text-muted-foreground">
-          {entry.actor_id ? entry.actor_id.slice(0, 8) : "—"}
-        </TableCell>
-        <TableCell className="text-xs text-muted-foreground">
-          {entry.target_type ?? "—"}
-          {entry.target_id && (
-            <span className="ml-2">
-              <code>{entry.target_id.slice(0, 8)}</code>
-            </span>
-          )}
-        </TableCell>
-      </TableRow>
-      {open && hasMeta && (
-        <TableRow>
-          <TableCell colSpan={4} className="bg-muted/30">
-            <pre className="overflow-auto text-xs">{JSON.stringify(meta, null, 2)}</pre>
-          </TableCell>
-        </TableRow>
-      )}
-    </>
+    </div>
   );
 }

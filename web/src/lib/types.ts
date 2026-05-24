@@ -1,4 +1,9 @@
 export type Scope = "admin" | "sync" | "readonly";
+export type Mode = "cloud" | "selfhosted";
+
+export interface ModeResponse {
+  mode: Mode;
+}
 
 export interface Me {
   account_id: string;
@@ -145,6 +150,13 @@ export interface AuditFilters {
   to?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface RegisterResponse {
+  api_key: string;
+  account_id: string;
+  org_id: string;
+  scope: Scope;
 }
 
 export interface Health {

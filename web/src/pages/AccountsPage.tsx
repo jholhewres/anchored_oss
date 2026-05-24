@@ -1,171 +1,86 @@
-import { useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
-
-import { PageHeader } from "@/components/PageHeader";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { useToast } from "@/components/ui/toast";
+import React from "react";
+import { Card, ScopeChip, Status, Btn, Input, Avatar, Table } from "@/ds/components";
+import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
-import { formatRelativeTime } from "@/lib/utils";
+import type { AccountWithRole } from "@/lib/types";
+
+function AccCell({ name, sub }: { name: string; sub?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <Avatar name={name} size={28} />
+      <div>
+        <div style={{ fontSize: 13.5, fontWeight: 500 }}>{name}</div>
+        {sub && <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)" }}>{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
 
 export function AccountsPage() {
-  const toast = useToast();
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [accounts, setAccounts] = React.useState<AccountWithRole[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [search, setSearch] = React.useState("");
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["accounts"],
-    queryFn: () => api.getAccounts(),
-  });
+  React.useEffect(() => {
+    api.getAccounts()
+      .then(setAccounts)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
 
-  const create = useMutation({
-    mutationFn: () => api.createAccount(email, displayName),
-    onSuccess: (acc) => {
-      toast.push({
-        title: acc.created ? "Account created" : "Account already existed",
-        description: acc.email,
-        variant: "success",
-      });
-      queryClient.invalidateQueries({ queryKey: ["accounts"] });
-      setOpen(false);
-      setEmail("");
-      setDisplayName("");
-    },
-    onError: (err) => {
-      toast.push({
-        title: "Invite failed",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "error",
-      });
-    },
-  });
+  const filtered = search
+    ? accounts.filter(a => a.email.toLowerCase().includes(search.toLowerCase()) || a.display_name.toLowerCase().includes(search.toLowerCase()))
+    : accounts;
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    create.mutate();
-  }
+  if (loading) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Loading...</div>;
 
   return (
-    <>
-      <PageHeader
-        title="Accounts"
-        description="People with access to this organization."
-        actions={
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="mr-2 h-4 w-4" /> Invite account
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <form onSubmit={onSubmit}>
-                <DialogHeader>
-                  <DialogTitle>Invite account</DialogTitle>
-                  <DialogDescription>
-                    Adds an account to this organization's default team. Existing emails
-                    return the existing account (idempotent).
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="display_name">Display name</Label>
-                    <Input
-                      id="display_name"
-                      value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
-                      required
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={create.isPending}>
-                    Invite
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
-        }
-      />
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <Input icon={<I.search />} placeholder="search accounts..." size="sm" style={{ width: 320 }} value={search} onChange={e => setSearch(e.target.value)} />
+        <Btn variant="outline" size="sm" icon={<I.filter />}>role: any</Btn>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>
+          {filtered.length} accounts · {filtered.filter(a => a.role === "admin").length} admins
+        </span>
+      </div>
 
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="space-y-3 p-6">
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-            </div>
-          ) : error ? (
-            <p className="p-6 text-sm text-destructive">Failed to load accounts.</p>
-          ) : !data || data.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground">No accounts yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Display name</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Created</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell className="font-medium">{a.email}</TableCell>
-                    <TableCell>{a.display_name}</TableCell>
-                    <TableCell>
-                      <Badge variant={a.role === "admin" ? "destructive" : "secondary"}>
-                        {a.role}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatRelativeTime(a.created_at)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-    </>
+      {filtered.length === 0 ? (
+        <Card style={{ padding: "40px 22px", textAlign: "center" }}>
+          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>No accounts found.</div>
+        </Card>
+      ) : (
+        <Card>
+          <Table
+            cols={[
+              { key: "name", label: "Account" },
+              { key: "email", label: "Email", mono: true, muted: true },
+              { key: "role", label: "Role" },
+              { key: "created", label: "Created", mono: true, muted: true },
+              { key: "status", label: "Status", align: "right" as const },
+            ]}
+            rows={filtered.map(a => ({
+              name: <AccCell name={a.display_name} />,
+              email: a.email,
+              role: <ScopeChip scope={a.role} />,
+              created: timeAgo(a.created_at),
+              status: <Status value="online" label="active" />,
+            }))}
+          />
+        </Card>
+      )}
+    </div>
   );
 }

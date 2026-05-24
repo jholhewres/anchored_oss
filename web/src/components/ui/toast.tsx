@@ -1,7 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, AlertTriangle, Info, X } from "lucide-react";
-
-import { cn } from "@/lib/utils";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { I } from "@/ds/icons";
 
 type Variant = "default" | "success" | "error" | "info";
 
@@ -18,11 +24,11 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
-const iconFor: Record<Variant, ReactNode> = {
-  default: <Info className="h-4 w-4 text-muted-foreground" />,
-  info: <Info className="h-4 w-4 text-blue-400" />,
-  success: <CheckCircle2 className="h-4 w-4 text-emerald-400" />,
-  error: <AlertTriangle className="h-4 w-4 text-destructive" />,
+const variantStyles: Record<Variant, { icon: ReactNode; color: string }> = {
+  default: { icon: <I.info size={14} />, color: "var(--text-muted)" },
+  info: { icon: <I.info size={14} />, color: "var(--info)" },
+  success: { icon: <I.check size={14} />, color: "var(--ok)" },
+  error: { icon: <I.alert size={14} />, color: "var(--err)" },
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -49,31 +55,71 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-full max-w-sm flex-col gap-2">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={cn(
-              "pointer-events-auto flex items-start gap-3 rounded-lg border bg-card p-3 shadow-lg",
-            )}
-          >
-            <div className="mt-0.5">{iconFor[t.variant]}</div>
-            <div className="flex-1">
-              <div className="text-sm font-medium">{t.title}</div>
-              {t.description && (
-                <div className="mt-0.5 text-xs text-muted-foreground">{t.description}</div>
-              )}
-            </div>
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground"
-              onClick={() => dismiss(t.id)}
-              aria-label="Dismiss"
+      <div
+        style={{
+          position: "fixed",
+          bottom: 16,
+          right: 16,
+          zIndex: 100,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          maxWidth: 400,
+          pointerEvents: "none",
+        }}
+      >
+        {toasts.map((t) => {
+          const vs = variantStyles[t.variant] || variantStyles.default;
+          return (
+            <div
+              key={t.id}
+              style={{
+                pointerEvents: "auto",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 12,
+                padding: "10px 14px",
+                background: "var(--bg-2)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius)",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+              }}
             >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        ))}
+              <span style={{ color: vs.color, marginTop: 1, display: "inline-flex" }}>
+                {vs.icon}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{t.title}</div>
+                {t.description && (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-muted)",
+                      marginTop: 2,
+                    }}
+                  >
+                    {t.description}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => dismiss(t.id)}
+                aria-label="Dismiss"
+                style={{
+                  background: "transparent",
+                  border: 0,
+                  color: "var(--text-dim)",
+                  cursor: "pointer",
+                  padding: 2,
+                  display: "inline-flex",
+                }}
+              >
+                <I.x size={14} />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </ToastContext.Provider>
   );

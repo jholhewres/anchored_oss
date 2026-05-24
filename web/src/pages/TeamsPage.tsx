@@ -1,152 +1,68 @@
-import { useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import React from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus } from "lucide-react";
-
-import { PageHeader } from "@/components/PageHeader";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useToast } from "@/components/ui/toast";
+import { Card, Badge, Btn, Empty, Avatar } from "@/ds/components";
+import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
-import { formatRelativeTime } from "@/lib/utils";
+import type { Team } from "@/lib/types";
 
 export function TeamsPage() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const toast = useToast();
-  const { me } = useAuth();
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
+  const [teams, setTeams] = React.useState<Team[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["teams"],
-    queryFn: () => api.getTeams(),
-  });
+  React.useEffect(() => {
+    api.getTeams()
+      .then(setTeams)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
 
-  const create = useMutation({
-    mutationFn: () => api.createTeam(name, slug),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["teams"] });
-      setOpen(false);
-      setName("");
-      setSlug("");
-      toast.push({ title: "Team created", variant: "success" });
-    },
-    onError: (err) => {
-      toast.push({
-        title: "Create team failed",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "error",
-      });
-    },
-  });
+  if (loading) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Loading...</div>;
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    create.mutate();
+  if (teams.length === 0) {
+    return (
+      <Empty
+        icon={<I.users />}
+        title="No teams"
+        body="Create your first team to organize members and project access."
+        actions={<Btn variant="primary" size="sm" icon={<I.plus />}>New team</Btn>}
+      />
+    );
   }
 
   return (
-    <>
-      <PageHeader
-        title="Teams"
-        description="Groups that bundle members and project access grants."
-        actions={
-          me?.scope === "admin" && (
-            <Dialog open={open} onOpenChange={setOpen}>
-              <DialogTrigger asChild>
-                <Button size="sm">
-                  <Plus className="mr-2 h-4 w-4" /> Create team
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <form onSubmit={onSubmit}>
-                  <DialogHeader>
-                    <DialogTitle>Create team</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Name</Label>
-                      <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="slug">Slug</Label>
-                      <Input
-                        id="slug"
-                        value={slug}
-                        onChange={(e) => setSlug(e.target.value)}
-                        placeholder="lowercase-kebab"
-                        pattern="[a-z0-9][a-z0-9-]{0,63}"
-                        required
-                      />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={create.isPending}>
-                      Create
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
-          )
-        }
-      />
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="space-y-3 p-6">
-              <Skeleton className="h-9 w-full" />
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
+      {teams.map(t => (
+        <Card
+          key={t.id}
+          style={{ padding: 20, cursor: "pointer" }}
+          onClick={() => navigate(`/teams/${t.id}`)}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 600 }}>
+                team / {t.name}
+              </div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 4 }}>
+                {t.slug}
+              </div>
             </div>
-          ) : !data || data.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground">No teams yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Slug</TableHead>
-                  <TableHead>Created</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.map((t) => (
-                  <TableRow
-                    key={t.id}
-                    onClick={() => navigate(`/teams/${t.id}`)}
-                    className="cursor-pointer"
-                  >
-                    <TableCell className="font-medium">{t.name}</TableCell>
-                    <TableCell>
-                      <code className="text-xs text-muted-foreground">{t.slug}</code>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatRelativeTime(t.created_at)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-    </>
+            <Btn variant="ghost" size="sm">View</Btn>
+          </div>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 14,
+            padding: "12px 0", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
+          }}>
+            <Avatar name={t.name} size={26} />
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>
+              created {new Date(t.created_at).toLocaleDateString()}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>
+            <Badge tone="outline" icon={<I.folder />}>{t.slug}</Badge>
+          </div>
+        </Card>
+      ))}
+    </div>
   );
 }

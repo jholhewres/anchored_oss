@@ -5,11 +5,25 @@ import { Sidebar } from "@/components/layout/Sidebar";
 
 export function AppLayout() {
   return (
-    <div className="flex min-h-screen">
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "240px 1fr",
+        height: "100vh",
+        minHeight: "100vh",
+      }}
+    >
       <Sidebar />
-      <div className="flex flex-1 flex-col">
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+          background: "var(--bg)",
+        }}
+      >
         <Header />
-        <main className="flex-1 overflow-auto p-6">
+        <main style={{ padding: "28px 36px 60px", flex: 1, overflow: "auto" }}>
           <Outlet />
         </main>
       </div>

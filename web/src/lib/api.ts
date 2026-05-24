@@ -9,7 +9,9 @@ import type {
   Health,
   ListMemoriesResponse,
   Me,
+  ModeResponse,
   Project,
+  RegisterResponse,
   Scope,
   Team,
   TeamDetail,
@@ -90,9 +92,24 @@ function safeJSON(text: string): unknown {
   }
 }
 
+export async function getMode(): Promise<ModeResponse> {
+  const res = await fetch("/v1/mode");
+  if (!res.ok) return { mode: "selfhosted" };
+  return res.json();
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<LoginResponse>("POST", "/v1/auth/login", { email, password }, { auth: false }),
+
+  register: (email: string, password: string, displayName: string, orgName: string, orgSlug?: string) =>
+    request<RegisterResponse>("POST", "/v1/auth/register", {
+      email,
+      password,
+      display_name: displayName,
+      org_name: orgName,
+      org_slug: orgSlug,
+    }, { auth: false }),
 
   getMe: () => request<Me>("GET", "/v1/me"),
   getHealth: () => request<Health>("GET", "/v1/health", undefined, { auth: false }),

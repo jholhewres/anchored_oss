@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg: #0a0908;
+  --bg-1: #100e0c;
+  --bg-2: #161310;
+  --bg-3: #1c1815;
+  --bg-input: #0e0c0a;
+
+  --border: #26211d;
+  --border-strong: #3a322c;
+  --border-accent: #5a3a28;
+
+  --text: #f5f1eb;
+  --text-muted: #a39a90;
+  --text-dim: #6b6258;
+  --text-ghost: #4a4239;
+
+  --accent: #c2410c;
+  --accent-hover: #dd5520;
+  --accent-dim: #7c2d12;
+  --accent-bg: rgba(194,65,12,0.08);
+  --accent-border: rgba(194,65,12,0.25);
+
+  --ok: #84cc16;
+  --ok-bg: rgba(132,204,22,0.10);
+  --warn: #f59e0b;
+  --warn-bg: rgba(245,158,11,0.10);
+  --err: #ef4444;
+  --err-bg: rgba(239,68,68,0.10);
+  --info: #22d3ee;
+  --info-bg: rgba(34,211,238,0.10);
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
+  --pad: 1;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+::selection { background: var(--accent); color: var(--bg); }
+
+code, pre, .mono { font-family: var(--font-mono); }
+
+hr { border: 0; border-top: 1px solid var(--border); margin: 0; }
+
+a { color: var(--text); text-decoration: none; }
+a:hover { color: var(--accent); }
+
+button { font-family: inherit; }
+
+.grid-bg {
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.grid-bg-strong {
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--text) 10%, transparent) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+@keyframes a-pulse {
+  0% { transform: scale(0.5); opacity: 0.7; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@keyframes a-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes a-stream {
+  from { background-position: 0 0; }
+  to { background-position: 8px 0; }
+}
+
+.a-caret::after {
+  content: '_';
+  display: inline-block;
+  animation: a-blink 1s steps(2) infinite;
+  margin-left: 2px;
+  color: var(--accent);
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  font-feature-settings: "ss01", "cv11", "tnum";
+  margin: 0;
+}
