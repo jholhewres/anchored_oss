@@ -231,3 +231,94 @@ func TestFilter_MixedItems(t *testing.T) {
 		}
 	}
 }
+
+func TestFilter_LifecycleUserScopeRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "safe content", Category: "fact", Metadata: map[string]any{"scope": "user"}},
+	}
+	results := filter.Filter(items)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Accepted {
+		t.Error("user-scope memory should be rejected")
+	}
+	if results[0].Rule != "lifecycle_user_scope" {
+		t.Errorf("rule: got %q, want lifecycle_user_scope", results[0].Rule)
+	}
+}
+
+func TestFilter_LifecycleOperationalRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "safe content", Category: "fact", Metadata: map[string]any{"memory_type": "operational"}},
+	}
+	results := filter.Filter(items)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Accepted {
+		t.Error("operational memory should be rejected")
+	}
+	if results[0].Rule != "lifecycle_operational" {
+		t.Errorf("rule: got %q, want lifecycle_operational", results[0].Rule)
+	}
+}
+
+func TestFilter_LifecyclePrecompactRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "safe content", Category: "fact", Metadata: map[string]any{"origin": "precompact"}},
+	}
+	results := filter.Filter(items)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Accepted {
+		t.Error("precompact origin should be rejected")
+	}
+	if results[0].Rule != "lifecycle_local_origin" {
+		t.Errorf("rule: got %q, want lifecycle_local_origin", results[0].Rule)
+	}
+}
+
+func TestFilter_LifecycleHandoffRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "safe content", Category: "fact", Metadata: map[string]any{"origin": "handoff"}},
+	}
+	results := filter.Filter(items)
+	if results[0].Accepted {
+		t.Error("handoff origin should be rejected")
+	}
+}
+
+func TestFilter_LifecycleSemanticProjectAccepted(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "safe content", Category: "decision",
+			Metadata: map[string]any{"memory_type": "semantic", "scope": "project", "origin": "dream"}},
+	}
+	results := filter.Filter(items)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].Accepted {
+		t.Errorf("semantic project memory should be accepted, got rule=%s", results[0].Rule)
+	}
+}
+
+func TestFilter_LifecycleNilMetadataAccepted(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "safe content", Category: "fact", Metadata: nil},
+	}
+	results := filter.Filter(items)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].Accepted {
+		t.Errorf("nil metadata should be accepted, got rule=%s", results[0].Rule)
+	}
+}
