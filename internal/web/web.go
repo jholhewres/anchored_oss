@@ -18,6 +18,9 @@ import (
 //go:embed all:dist
 var DistFS embed.FS
 
+//go:embed install/*.sh
+var InstallFS embed.FS
+
 // NewSPAHandler returns an http.Handler that:
 //   - rejects /v1/* and /api/* with a JSON 404 (the server's API routes
 //     win first, but if a path slipped through the mux this guard avoids
@@ -79,6 +82,21 @@ func NewSPAHandler() (http.Handler, error) {
 		}
 		http.ServeContent(w, r, stat.Name(), stat.ModTime(), readSeeker(f))
 	}), nil
+}
+
+func InstallHandler(script string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := InstallFS.ReadFile("install/" + script)
+		if err != nil {
+			http.Error(w, "installer not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	})
 }
 
 func serveIndex(w http.ResponseWriter, body []byte) {

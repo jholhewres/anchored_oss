@@ -35,6 +35,8 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	mux.HandleFunc("GET /v1/health", healthHandler.ServeHTTP)
 
 	mux.HandleFunc("GET /v1/mode", modeHandler(cfg))
+	mux.Handle("GET /install", web.InstallHandler("anchored.sh"))
+	mux.Handle("GET /install-oss", web.InstallHandler("anchored-oss.sh"))
 
 	authHandler := handler.NewAuthHandler(st, logger)
 	mux.HandleFunc("POST /v1/auth/login", authHandler.Login)
