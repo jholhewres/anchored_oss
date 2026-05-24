@@ -66,6 +66,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.store.RevokeSessionKeys(r.Context(), account.ID); err != nil {
+		h.logger.Error("login: failed to revoke previous session keys", "error", err)
+	}
+
 	fullKey, prefix, hash, err := auth.GenerateAPIKey()
 	if err != nil {
 		h.logger.Error("login: failed to generate api key", "error", err)
