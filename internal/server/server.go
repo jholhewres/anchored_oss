@@ -34,6 +34,8 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	healthHandler := handler.NewHealthHandler(version.Version, st)
 	mux.HandleFunc("GET /v1/health", healthHandler.ServeHTTP)
 
+	mux.HandleFunc("GET /v1/mode", modeHandler(cfg))
+
 	authHandler := handler.NewAuthHandler(st, logger)
 	mux.HandleFunc("POST /v1/auth/login", authHandler.Login)
 
@@ -72,12 +74,24 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	auditHandler := handler.NewAuditHandler(st, logger)
 	mux.HandleFunc("GET /v1/audit", authMW(requireAdmin(http.HandlerFunc(auditHandler.List))).ServeHTTP)
 
+	quotaHandler := handler.NewQuotaHandler(st, cfg, logger)
+	mux.HandleFunc("GET /v1/quota", authMW(requireAdmin(http.HandlerFunc(quotaHandler.Get))).ServeHTTP)
+
 	syncEngine := syncpkg.NewSyncEngine(st, policy.NewContentFilter(), logger)
 	syncHandler := handler.NewSyncHandler(syncEngine, st, logger)
 	mux.HandleFunc("POST /v1/sync", authMW(http.HandlerFunc(syncHandler.ServeHTTP)).ServeHTTP)
 	// Compat split-protocol routes for the anchored CLI client.
 	mux.HandleFunc("POST /api/v1/sync/push", authMW(http.HandlerFunc(syncHandler.CompatPush)).ServeHTTP)
 	mux.HandleFunc("POST /api/v1/sync/pull", authMW(http.HandlerFunc(syncHandler.CompatPull)).ServeHTTP)
+
+	memoryHandler := handler.NewMemoryHandler(st, policy.NewContentFilter(), cfg, logger)
+	mux.HandleFunc("POST /v1/memories", authMW(http.HandlerFunc(memoryHandler.Create)).ServeHTTP)
+	mux.HandleFunc("GET /v1/memories/search", authMW(http.HandlerFunc(memoryHandler.Search)).ServeHTTP)
+
+	if cfg.IsCloud() {
+		registerHandler := handler.NewRegisterHandler(st, logger)
+		mux.HandleFunc("POST /v1/auth/register", registerHandler.Register)
+	}
 
 	// SPA fallback. The handler internally returns 404 JSON for /v1/* and
 	// /api/* paths so the dashboard never masks an API typo.

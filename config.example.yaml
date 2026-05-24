@@ -1,7 +1,7 @@
 # Anchored OSS Configuration
 #
 # Copy to config.yaml and edit. Environment variables PORT,
-# DATABASE_URL, and CORS_ALLOWED_ORIGINS override the matching fields.
+# DATABASE_URL, MODE, and CORS_ALLOWED_ORIGINS override the matching fields.
 # At least database.dsn (or $DATABASE_URL) must be set.
 
 server:
@@ -10,6 +10,7 @@ server:
   write_timeout: 300s
 
 database:
+  driver: "postgres"
   dsn: "postgres://anchored:anchored@localhost:5433/anchored_oss?sslmode=disable"
   max_open_conns: 10
   max_idle_conns: 5
@@ -20,3 +21,13 @@ cors:
   # Avoid "*" together with Authorization: it permits any origin to use
   # cached bearer tokens.
   allowed_origins: []
+
+mode:
+  # "selfhosted" (default) — single-tenant, accounts created via bootstrap.
+  # "cloud" — multi-tenant, enables registration and landing page.
+  type: selfhosted
+
+quota:
+  # Max storage per organization in bytes. 0 means unlimited.
+  # In cloud mode the default limit is 1 GB (1073741824).
+  max_storage_bytes: 0

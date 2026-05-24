@@ -9,18 +9,14 @@ import (
 	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
-	"github.com/lib/pq"
 )
 
-// memoryUpsertCols counts the columns inserted per row by UpsertMemories.
-const memoryUpsertCols = 12
+// ---------------------------------------------------------------------------
+// Memory methods for SQLiteStore
+// ---------------------------------------------------------------------------
 
-// memoryBatchSize splits an UpsertMemories call into chunks that stay
-// below Postgres' 65535-parameter limit (12 cols * 5000 rows = 60000).
-const memoryBatchSize = 1000
-
-// SearchMemories does ILIKE pattern matching on content and keywords.
-func (s *PostgresStore) SearchMemories(ctx context.Context, projectID string, query string, limit int) ([]*model.Memory, error) {
+// SearchMemories does LIKE pattern matching on content and keywords.
+func (s *SQLiteStore) SearchMemories(ctx context.Context, projectID string, query string, limit int) ([]*model.Memory, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -28,25 +24,28 @@ func (s *PostgresStore) SearchMemories(ctx context.Context, projectID string, qu
 		limit = 100
 	}
 
-	pattern := "%" + query + "%"
+	escaped := strings.ReplaceAll(query, "%", "\\%")
+	escaped = strings.ReplaceAll(escaped, "_", "\\_")
+	pattern := "%" + escaped + "%"
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
-		 WHERE project_id = $1 AND deleted_at IS NULL
-		   AND (content ILIKE $2 OR keywords::text ILIKE $2)
+		 WHERE project_id = ? AND deleted_at IS NULL
+		   AND (content LIKE ? ESCAPE '\' OR keywords LIKE ? ESCAPE '\')
 		 ORDER BY updated_at DESC
-		 LIMIT $3`,
-		projectID, pattern, limit,
+		 LIMIT ?`,
+		projectID, pattern, pattern, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("search memories: %w", err)
 	}
 	defer rows.Close()
 
-	return scanMemories(rows)
+	return sqliteScanMemories(rows)
 }
 
-func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error {
+// UpsertMemory inserts or updates a single memory (last-write-wins by id).
+func (s *SQLiteStore) UpsertMemory(ctx context.Context, m *model.Memory) error {
 	var metadataBytes []byte
 	if m.Metadata != nil {
 		var err error
@@ -56,27 +55,23 @@ func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error
 		}
 	}
 
-	// Last-write-wins by (id): editing a memory keeps the same id but may
-	// change content/hash. The partial unique index on
-	// (content_hash, project_id) still blocks accidental content-level dupes
-	// from a different id, surfacing as a unique-violation error.
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO memories (id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, metadata)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (id) DO UPDATE SET
-		   category = EXCLUDED.category,
-		   content = EXCLUDED.content,
-		   content_hash = EXCLUDED.content_hash,
-		   keywords = EXCLUDED.keywords,
-		   source = EXCLUDED.source,
-		   author_id = EXCLUDED.author_id,
-		   author_name = EXCLUDED.author_name,
-		   updated_at = EXCLUDED.updated_at,
-		   metadata = EXCLUDED.metadata,
+		   category = excluded.category,
+		   content = excluded.content,
+		   content_hash = excluded.content_hash,
+		   keywords = excluded.keywords,
+		   source = excluded.source,
+		   author_id = excluded.author_id,
+		   author_name = excluded.author_name,
+		   updated_at = excluded.updated_at,
+		   metadata = excluded.metadata,
 		   deleted_at = NULL
-		 WHERE memories.updated_at <= EXCLUDED.updated_at`,
+		 WHERE memories.updated_at <= excluded.updated_at`,
 		m.ID, m.ProjectID, m.Category, m.Content, m.ContentHash,
-		pq.Array(m.Keywords), m.Source, m.AuthorID, m.AuthorName,
+		jsonMarshalKeywords(m.Keywords), m.Source, nilIfEmpty(m.AuthorID), m.AuthorName,
 		m.CreatedAt, m.UpdatedAt, metadataBytes,
 	)
 	if err != nil {
@@ -86,9 +81,8 @@ func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error
 }
 
 // UpsertMemories runs a single batched INSERT ... ON CONFLICT (id) DO UPDATE
-// for every memory in ms. Internally chunks by memoryBatchSize so we stay
-// under the Postgres parameter limit.
-func (s *PostgresStore) UpsertMemories(ctx context.Context, ms []*model.Memory) error {
+// for every memory in ms, chunked by memoryBatchSize.
+func (s *SQLiteStore) UpsertMemories(ctx context.Context, ms []*model.Memory) error {
 	if len(ms) == 0 {
 		return nil
 	}
@@ -104,10 +98,13 @@ func (s *PostgresStore) UpsertMemories(ctx context.Context, ms []*model.Memory) 
 	return nil
 }
 
-func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Memory) error {
+func (s *SQLiteStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Memory) error {
 	args := make([]any, 0, memoryUpsertCols*len(ms))
+
+	rowPlaceholder := "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 	placeholders := make([]string, 0, len(ms))
-	for i, m := range ms {
+
+	for _, m := range ms {
 		var metadataBytes []byte
 		if m.Metadata != nil {
 			b, err := json.Marshal(m.Metadata)
@@ -116,15 +113,10 @@ func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Mem
 			}
 			metadataBytes = b
 		}
-		base := i * memoryUpsertCols
-		placeholders = append(placeholders, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6,
-			base+7, base+8, base+9, base+10, base+11, base+12,
-		))
+		placeholders = append(placeholders, rowPlaceholder)
 		args = append(args,
 			m.ID, m.ProjectID, m.Category, m.Content, m.ContentHash,
-			pq.Array(m.Keywords), m.Source, nilIfEmpty(m.AuthorID), m.AuthorName,
+			jsonMarshalKeywords(m.Keywords), m.Source, nilIfEmpty(m.AuthorID), m.AuthorName,
 			m.CreatedAt, m.UpdatedAt, metadataBytes,
 		)
 	}
@@ -132,17 +124,17 @@ func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Mem
 	query := `INSERT INTO memories (id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, metadata) VALUES ` +
 		strings.Join(placeholders, ",") +
 		` ON CONFLICT (id) DO UPDATE SET
-		   category = EXCLUDED.category,
-		   content = EXCLUDED.content,
-		   content_hash = EXCLUDED.content_hash,
-		   keywords = EXCLUDED.keywords,
-		   source = EXCLUDED.source,
-		   author_id = EXCLUDED.author_id,
-		   author_name = EXCLUDED.author_name,
-		   updated_at = EXCLUDED.updated_at,
-		   metadata = EXCLUDED.metadata,
+		   category = excluded.category,
+		   content = excluded.content,
+		   content_hash = excluded.content_hash,
+		   keywords = excluded.keywords,
+		   source = excluded.source,
+		   author_id = excluded.author_id,
+		   author_name = excluded.author_name,
+		   updated_at = excluded.updated_at,
+		   metadata = excluded.metadata,
 		   deleted_at = NULL
-		 WHERE memories.updated_at <= EXCLUDED.updated_at`
+		 WHERE memories.updated_at <= excluded.updated_at`
 
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("upsert memories batch: %w", err)
@@ -150,11 +142,12 @@ func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Mem
 	return nil
 }
 
-func (s *PostgresStore) GetMemoriesUpdatedSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error) {
+// GetMemoriesUpdatedSince returns all non-deleted memories updated after since.
+func (s *SQLiteStore) GetMemoriesUpdatedSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
-		 WHERE project_id = $1 AND updated_at > $2 AND deleted_at IS NULL
+		 WHERE project_id = ? AND updated_at > ? AND deleted_at IS NULL
 		 ORDER BY updated_at`,
 		projectID, since,
 	)
@@ -163,22 +156,23 @@ func (s *PostgresStore) GetMemoriesUpdatedSince(ctx context.Context, projectID s
 	}
 	defer rows.Close()
 
-	return scanMemories(rows)
+	return sqliteScanMemories(rows)
 }
 
-const (
-	memoryDefaultLimit = 20
-	memoryMaxLimit     = 200
-)
-
 // ListMemoriesPaginated returns a page of memories for a non-deleted project.
-// Returns ErrNotFound when the project is missing or soft-deleted so handlers
-// can map directly to 404.
-func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int) ([]*model.Memory, int, error) {
-	// Guard: project must be live. We piggyback on GetActiveProjectByID so the
-	// caller cannot peek at a soft-deleted project's memories.
-	if _, err := s.GetActiveProjectByID(ctx, projectID); err != nil {
-		return nil, 0, err
+func (s *SQLiteStore) ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int) ([]*model.Memory, int, error) {
+	{
+		var exists bool
+		err := s.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM projects WHERE id = ? AND deleted_at IS NULL)`,
+			projectID,
+		).Scan(&exists)
+		if err != nil {
+			return nil, 0, fmt.Errorf("check project: %w", err)
+		}
+		if !exists {
+			return nil, 0, ErrNotFound
+		}
 	}
 
 	if limit <= 0 {
@@ -196,9 +190,9 @@ func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID str
 		        author_id, author_name, created_at, updated_at, deleted_at, metadata,
 		        COUNT(*) OVER() AS total
 		 FROM memories
-		 WHERE project_id = $1 AND deleted_at IS NULL
+		 WHERE project_id = ? AND deleted_at IS NULL
 		 ORDER BY updated_at DESC
-		 LIMIT $2 OFFSET $3`,
+		 LIMIT ? OFFSET ?`,
 		projectID, limit, offset,
 	)
 	if err != nil {
@@ -211,12 +205,18 @@ func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID str
 	for rows.Next() {
 		var m model.Memory
 		var metadataBytes []byte
+		var kwBytes []byte
 		if err := rows.Scan(
 			&m.ID, &m.ProjectID, &m.Category, &m.Content, &m.ContentHash,
-			pq.Array(&m.Keywords), &m.Source, &m.AuthorID, &m.AuthorName,
-			&m.CreatedAt, &m.UpdatedAt, &m.DeletedAt, &metadataBytes, &total,
+			&kwBytes, &m.Source, &m.AuthorID, &m.AuthorName,
+			scanTime(&m.CreatedAt), scanTime(&m.UpdatedAt), scanNullTime(&m.DeletedAt), &metadataBytes, &total,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan memory: %w", err)
+		}
+		if len(kwBytes) > 0 {
+			if err := json.Unmarshal(kwBytes, &m.Keywords); err != nil {
+				return nil, 0, fmt.Errorf("unmarshal memory keywords: %w", err)
+			}
 		}
 		if metadataBytes != nil {
 			if err := json.Unmarshal(metadataBytes, &m.Metadata); err != nil {
@@ -231,9 +231,10 @@ func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID str
 	return memories, total, nil
 }
 
-func (s *PostgresStore) SoftDeleteMemory(ctx context.Context, id, projectID string) error {
+// SoftDeleteMemory sets deleted_at on a memory.
+func (s *SQLiteStore) SoftDeleteMemory(ctx context.Context, id, projectID string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE memories SET deleted_at = now(), updated_at = now() WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL`,
+		`UPDATE memories SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND project_id = ? AND deleted_at IS NULL`,
 		id, projectID,
 	)
 	if err != nil {
@@ -249,9 +250,10 @@ func (s *PostgresStore) SoftDeleteMemory(ctx context.Context, id, projectID stri
 	return nil
 }
 
-func (s *PostgresStore) GetTombstonesSince(ctx context.Context, projectID string, since time.Time) ([]string, error) {
+// GetTombstonesSince returns IDs of memories soft-deleted since the given time.
+func (s *SQLiteStore) GetTombstonesSince(ctx context.Context, projectID string, since time.Time) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id FROM memories WHERE project_id = $1 AND deleted_at IS NOT NULL AND updated_at > $2`,
+		`SELECT id FROM memories WHERE project_id = ? AND deleted_at IS NOT NULL AND updated_at > ?`,
 		projectID, since,
 	)
 	if err != nil {
@@ -273,17 +275,24 @@ func (s *PostgresStore) GetTombstonesSince(ctx context.Context, projectID string
 	return ids, nil
 }
 
-func scanMemories(rows *sql.Rows) ([]*model.Memory, error) {
+// sqliteScanMemories scans rows into a slice of Memory, using JSON for keywords.
+func sqliteScanMemories(rows *sql.Rows) ([]*model.Memory, error) {
 	var memories []*model.Memory
 	for rows.Next() {
 		var m model.Memory
 		var metadataBytes []byte
+		var kwBytes []byte
 		if err := rows.Scan(
 			&m.ID, &m.ProjectID, &m.Category, &m.Content, &m.ContentHash,
-			pq.Array(&m.Keywords), &m.Source, &m.AuthorID, &m.AuthorName,
-			&m.CreatedAt, &m.UpdatedAt, &m.DeletedAt, &metadataBytes,
+			&kwBytes, &m.Source, &m.AuthorID, &m.AuthorName,
+			scanTime(&m.CreatedAt), scanTime(&m.UpdatedAt), scanNullTime(&m.DeletedAt), &metadataBytes,
 		); err != nil {
 			return nil, fmt.Errorf("scan memory: %w", err)
+		}
+		if len(kwBytes) > 0 {
+			if err := json.Unmarshal(kwBytes, &m.Keywords); err != nil {
+				return nil, fmt.Errorf("unmarshal memory keywords: %w", err)
+			}
 		}
 		if metadataBytes != nil {
 			if err := json.Unmarshal(metadataBytes, &m.Metadata); err != nil {

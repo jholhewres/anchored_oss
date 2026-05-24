@@ -49,6 +49,7 @@ type Store interface {
 	EnsureDefaultTeamMembership(ctx context.Context, orgID, accountID string) error
 
 	// Memories.
+	SearchMemories(ctx context.Context, projectID string, query string, limit int) ([]*model.Memory, error)
 	UpsertMemory(ctx context.Context, m *model.Memory) error
 	// UpsertMemories upserts a batch of memories in a single statement.
 	// Chunks larger than ~5000 should be split by the caller to stay
@@ -64,6 +65,7 @@ type Store interface {
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (*model.APIKey, error)
 	ListAPIKeysByOrg(ctx context.Context, orgID string) ([]*model.APIKey, error)
 	RevokeAPIKey(ctx context.Context, id string) error
+	RevokeSessionKeys(ctx context.Context, accountID string) error
 
 	// Audit.
 	AppendAudit(ctx context.Context, entry *model.AuditEntry) error
@@ -73,4 +75,9 @@ type Store interface {
 
 	// Dashboard.
 	GetDashboardStats(ctx context.Context, orgID string) (*model.DashboardStats, error)
+
+	// Quota.
+	// GetOrgStorageBytes returns the total bytes used by non-deleted memories
+	// in all active projects under the given org.
+	GetOrgStorageBytes(ctx context.Context, orgID string) (int64, error)
 }

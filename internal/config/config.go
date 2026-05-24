@@ -17,6 +17,8 @@ type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
 	CORS     CORSConfig     `yaml:"cors"`
+	Mode     ModeConfig     `yaml:"mode"`
+	Quota    QuotaConfig    `yaml:"quota"`
 }
 
 type ServerConfig struct {
@@ -26,14 +28,34 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	DSN             string        `yaml:"dsn"`
-	MaxOpenConns    int           `yaml:"max_open_conns"`
-	MaxIdleConns    int           `yaml:"max_idle_conns"`
+	Driver         string        `yaml:"driver"`
+	DSN            string        `yaml:"dsn"`
+	MaxOpenConns   int           `yaml:"max_open_conns"`
+	MaxIdleConns   int           `yaml:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
 }
 
 type CORSConfig struct {
 	AllowedOrigins []string `yaml:"allowed_origins"`
+}
+
+type ModeConfig struct {
+	Type string `yaml:"type"` // "cloud" or "selfhosted" (default)
+}
+
+type QuotaConfig struct {
+	MaxStorageBytes int64 `yaml:"max_storage_bytes"` // 0 = unlimited
+}
+
+// IsCloud returns true when the server runs in cloud (multi-tenant) mode.
+func (c *Config) IsCloud() bool {
+	return c.Mode.Type == "cloud"
+}
+
+// IsSelfHosted returns true when the server runs in self-hosted (single-tenant) mode.
+// This is the default.
+func (c *Config) IsSelfHosted() bool {
+	return c.Mode.Type != "cloud"
 }
 
 // DefaultConfig returns conservative defaults intended for local dev only.
@@ -47,6 +69,7 @@ func DefaultConfig() *Config {
 			WriteTimeout: 300 * time.Second,
 		},
 		Database: DatabaseConfig{
+			Driver:          "postgres",
 			DSN:             "",
 			MaxOpenConns:    10,
 			MaxIdleConns:    5,
@@ -54,6 +77,12 @@ func DefaultConfig() *Config {
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: nil,
+		},
+		Mode: ModeConfig{
+			Type: "selfhosted",
+		},
+		Quota: QuotaConfig{
+			MaxStorageBytes: 0,
 		},
 	}
 }
@@ -112,11 +141,17 @@ func applyEnvOverrides(cfg *Config) {
 	if port := os.Getenv("PORT"); port != "" {
 		cfg.Server.Address = ":" + port
 	}
+	if driver := os.Getenv("DATABASE_DRIVER"); driver != "" {
+		cfg.Database.Driver = driver
+	}
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		cfg.Database.DSN = dsn
 	}
 	if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {
 		cfg.CORS.AllowedOrigins = parseCSV(origins)
+	}
+	if mode := os.Getenv("MODE"); mode != "" {
+		cfg.Mode.Type = mode
 	}
 }
 

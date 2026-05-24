@@ -13,6 +13,7 @@ import (
 	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/config"
 	"github.com/jholhewres/anchored_oss/internal/server"
+	"github.com/jholhewres/anchored_oss/internal/setup"
 	"github.com/jholhewres/anchored_oss/internal/store"
 	"github.com/jholhewres/anchored_oss/internal/version"
 	"golang.org/x/crypto/bcrypt"
@@ -22,7 +23,16 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	addr := flag.String("addr", "", "override server address")
 	bootstrap := flag.Bool("bootstrap", false, "create default org, admin account, and API key, then exit")
+	setupFlag := flag.Bool("setup", false, "run interactive setup wizard")
 	flag.Parse()
+
+	if *setupFlag {
+		if err := setup.RunInteractive(); err != nil {
+			slog.Error("setup failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -39,12 +49,22 @@ func main() {
 		cfg.Server.Address = *addr
 	}
 
-	st, err := store.NewPostgresStore(store.PoolConfig{
-		DSN:             cfg.Database.DSN,
-		MaxOpenConns:    cfg.Database.MaxOpenConns,
-		MaxIdleConns:    cfg.Database.MaxIdleConns,
-		ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
-	})
+	if cfg.Database.Driver != "sqlite" && cfg.Database.Driver != "postgres" {
+		slog.Error("invalid database.driver: must be 'sqlite' or 'postgres'", "driver", cfg.Database.Driver)
+		os.Exit(1)
+	}
+
+	var st store.Store
+	if cfg.Database.Driver == "sqlite" {
+		st, err = store.NewSQLiteStore(cfg.Database.DSN)
+	} else {
+		st, err = store.NewPostgresStore(store.PoolConfig{
+			DSN:             cfg.Database.DSN,
+			MaxOpenConns:    cfg.Database.MaxOpenConns,
+			MaxIdleConns:    cfg.Database.MaxIdleConns,
+			ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
+		})
+	}
 	if err != nil {
 		slog.Error("failed to open database", "error", err)
 		os.Exit(1)

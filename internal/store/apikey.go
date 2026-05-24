@@ -78,3 +78,14 @@ func (s *PostgresStore) RevokeAPIKey(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (s *PostgresStore) RevokeSessionKeys(ctx context.Context, accountID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET revoked_at = now() WHERE account_id = $1 AND name = 'session' AND revoked_at IS NULL`,
+		accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke session keys: %w", err)
+	}
+	return nil
+}

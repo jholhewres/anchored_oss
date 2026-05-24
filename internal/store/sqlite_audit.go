@@ -9,10 +9,7 @@ import (
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
 
-const auditInsertCols = 8
-const auditBatchSize = 2000
-
-func (s *PostgresStore) AppendAudit(ctx context.Context, entry *model.AuditEntry) error {
+func (s *SQLiteStore) AppendAudit(ctx context.Context, entry *model.AuditEntry) error {
 	var metadataBytes []byte
 	if entry.Metadata != nil {
 		var err error
@@ -22,10 +19,11 @@ func (s *PostgresStore) AppendAudit(ctx context.Context, entry *model.AuditEntry
 		}
 	}
 
+	id := newUUID()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO audit_log (org_id, project_id, actor_id, action, target_type, target_id, metadata)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		entry.OrgID, nilIfEmpty(entry.ProjectID), nilIfEmpty(entry.ActorID),
+		`INSERT INTO audit_log (id, org_id, project_id, actor_id, action, target_type, target_id, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, entry.OrgID, nilIfEmpty(entry.ProjectID), nilIfEmpty(entry.ActorID),
 		entry.Action, nilIfEmpty(entry.TargetType), nilIfEmpty(entry.TargetID),
 		metadataBytes,
 	)
@@ -35,8 +33,7 @@ func (s *PostgresStore) AppendAudit(ctx context.Context, entry *model.AuditEntry
 	return nil
 }
 
-// AppendAudits inserts a batch of audit entries with a single statement.
-func (s *PostgresStore) AppendAudits(ctx context.Context, entries []*model.AuditEntry) error {
+func (s *SQLiteStore) AppendAudits(ctx context.Context, entries []*model.AuditEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -52,10 +49,13 @@ func (s *PostgresStore) AppendAudits(ctx context.Context, entries []*model.Audit
 	return nil
 }
 
-func (s *PostgresStore) appendAuditsChunk(ctx context.Context, entries []*model.AuditEntry) error {
+func (s *SQLiteStore) appendAuditsChunk(ctx context.Context, entries []*model.AuditEntry) error {
 	args := make([]any, 0, auditInsertCols*len(entries))
+
+	rowPlaceholder := "(?, ?, ?, ?, ?, ?, ?, ?)"
 	placeholders := make([]string, 0, len(entries))
-	for i, e := range entries {
+
+	for _, e := range entries {
 		var metadataBytes []byte
 		if e.Metadata != nil {
 			b, err := json.Marshal(e.Metadata)
@@ -64,67 +64,48 @@ func (s *PostgresStore) appendAuditsChunk(ctx context.Context, entries []*model.
 			}
 			metadataBytes = b
 		}
-		base := i * auditInsertCols
-		placeholders = append(placeholders, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7,
-		))
+		placeholders = append(placeholders, rowPlaceholder)
 		args = append(args,
-			e.OrgID, nilIfEmpty(e.ProjectID), nilIfEmpty(e.ActorID),
+			newUUID(), e.OrgID, nilIfEmpty(e.ProjectID), nilIfEmpty(e.ActorID),
 			e.Action, nilIfEmpty(e.TargetType), nilIfEmpty(e.TargetID),
 			metadataBytes,
 		)
 	}
-	query := `INSERT INTO audit_log (org_id, project_id, actor_id, action, target_type, target_id, metadata) VALUES ` + strings.Join(placeholders, ",")
+
+	query := `INSERT INTO audit_log (id, org_id, project_id, actor_id, action, target_type, target_id, metadata) VALUES ` + strings.Join(placeholders, ",")
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("append audit batch: %w", err)
 	}
 	return nil
 }
 
-const (
-	auditDefaultLimit = 50
-	auditMaxLimit     = 500
-)
-
-// ListAuditEntries reads audit log rows for orgID filtered by an optional
-// project/actor/action/target_type/from/to envelope. Limit is clamped to
-// [1, auditMaxLimit] with auditDefaultLimit when not specified. Returns the
-// total count for pagination plus the current page.
-func (s *PostgresStore) ListAuditEntries(ctx context.Context, orgID string, filters model.AuditFilters) ([]*model.AuditEntry, int, error) {
-	conds := []string{"org_id = $1"}
+func (s *SQLiteStore) ListAuditEntries(ctx context.Context, orgID string, filters model.AuditFilters) ([]*model.AuditEntry, int, error) {
+	conds := []string{"org_id = ?"}
 	args := []any{orgID}
-	argIdx := 2
 
 	if filters.ProjectID != "" {
-		conds = append(conds, fmt.Sprintf("project_id = $%d", argIdx))
+		conds = append(conds, "project_id = ?")
 		args = append(args, filters.ProjectID)
-		argIdx++
 	}
 	if filters.ActorID != "" {
-		conds = append(conds, fmt.Sprintf("actor_id = $%d", argIdx))
+		conds = append(conds, "actor_id = ?")
 		args = append(args, filters.ActorID)
-		argIdx++
 	}
 	if filters.Action != "" {
-		conds = append(conds, fmt.Sprintf("action = $%d", argIdx))
+		conds = append(conds, "action = ?")
 		args = append(args, filters.Action)
-		argIdx++
 	}
 	if filters.TargetType != "" {
-		conds = append(conds, fmt.Sprintf("target_type = $%d", argIdx))
+		conds = append(conds, "target_type = ?")
 		args = append(args, filters.TargetType)
-		argIdx++
 	}
 	if filters.From != nil {
-		conds = append(conds, fmt.Sprintf("created_at >= $%d", argIdx))
+		conds = append(conds, "created_at >= ?")
 		args = append(args, *filters.From)
-		argIdx++
 	}
 	if filters.To != nil {
-		conds = append(conds, fmt.Sprintf("created_at <= $%d", argIdx))
+		conds = append(conds, "created_at <= ?")
 		args = append(args, *filters.To)
-		argIdx++
 	}
 
 	limit := filters.Limit
@@ -142,14 +123,14 @@ func (s *PostgresStore) ListAuditEntries(ctx context.Context, orgID string, filt
 	where := strings.Join(conds, " AND ")
 
 	query := fmt.Sprintf(
-		`SELECT id, org_id, COALESCE(project_id::text, ''), COALESCE(actor_id::text, ''),
+		`SELECT id, org_id, COALESCE(project_id, ''), COALESCE(actor_id, ''),
 		        action, COALESCE(target_type, ''), COALESCE(target_id, ''),
 		        metadata, created_at, COUNT(*) OVER() AS total
 		 FROM audit_log
 		 WHERE %s
 		 ORDER BY created_at DESC
-		 LIMIT $%d OFFSET $%d`,
-		where, argIdx, argIdx+1,
+		 LIMIT ? OFFSET ?`,
+		where,
 	)
 	args = append(args, limit, offset)
 
@@ -167,7 +148,7 @@ func (s *PostgresStore) ListAuditEntries(ctx context.Context, orgID string, filt
 		var metadataBytes []byte
 		if err := rows.Scan(
 			&e.ID, &e.OrgID, &projectID, &actorID, &e.Action,
-			&targetType, &targetID, &metadataBytes, &e.CreatedAt, &total,
+			&targetType, &targetID, &metadataBytes, scanTime(&e.CreatedAt), &total,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan audit entry: %w", err)
 		}
@@ -186,12 +167,4 @@ func (s *PostgresStore) ListAuditEntries(ctx context.Context, orgID string, filt
 		return nil, 0, fmt.Errorf("iterate audit entries: %w", err)
 	}
 	return entries, total, nil
-}
-
-// nilIfEmpty returns nil for empty strings so nullable columns get NULL.
-func nilIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
