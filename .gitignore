@@ -73,3 +73,17 @@ internal/web/dist/*.png
 internal/web/dist/*.ico
 internal/web/dist/*.map
 internal/web/dist/.vite/
+
+# Design system source (not part of the build)
+Anchored OSS/
+Anchored OSS.zip
+
+# Screenshots from dev
+*.png
+!web/public/*.png
+
+# Sisyphus state
+.sisyphus/
+
+# Compiled binary at repo root
+/server
