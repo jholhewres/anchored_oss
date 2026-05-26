@@ -123,6 +123,23 @@ export interface ListMemoriesResponse {
   offset: number;
 }
 
+export interface Triple {
+  id: string;
+  subject: string;
+  predicate: string;
+  object: string;
+  confidence: number;
+  project_id: string;
+  created_at: string;
+}
+
+export interface ListTriplesResponse {
+  triples: Triple[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface AuditEntry {
   id: string;
   org_id: string;

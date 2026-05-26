@@ -8,6 +8,7 @@ import type {
   DashboardStats,
   Health,
   ListMemoriesResponse,
+  ListTriplesResponse,
   Me,
   ModeResponse,
   Project,
@@ -121,6 +122,11 @@ export const api = {
     request<ListMemoriesResponse>(
       "GET",
       `/v1/projects/${id}/memories?limit=${limit}&offset=${offset}`,
+    ),
+  getProjectGraph: (id: string, limit: number, offset: number) =>
+    request<ListTriplesResponse>(
+      "GET",
+      `/v1/projects/${id}/graph?limit=${limit}&offset=${offset}`,
     ),
   deleteProject: (id: string) => request<void>("DELETE", `/v1/projects/${id}`),
 

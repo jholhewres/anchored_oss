@@ -3,7 +3,8 @@ import { useParams } from "react-router-dom";
 import { Card, Badge, Status, Btn, Input, Tabs } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
-import type { Project, Memory } from "@/lib/types";
+import type { Project, Memory, Triple } from "@/lib/types";
+import { GraphView } from "@/components/GraphView";
 
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n) + "..." : s;
@@ -32,6 +33,42 @@ function timeAgo(dateStr: string): string {
   return `${d}d ago`;
 }
 
+function PolicyRow({ title, description, items }: {
+  title: string;
+  description: string;
+  items: { label: string; tone: string; detail: string }[];
+}) {
+  return (
+    <div style={{ borderBottom: "1px solid var(--border)" }}>
+      <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 500 }}>{title}</div>
+        <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{description}</div>
+      </div>
+      <div style={{ padding: "0 22px 12px" }}>
+        {items.map((it, i) => (
+          <div key={i} style={{
+            display: "flex", alignItems: "flex-start", gap: 10,
+            padding: "7px 0",
+            borderTop: i > 0 ? "1px solid color-mix(in srgb, var(--border) 50%, transparent)" : "none",
+          }}>
+            <span style={{
+              fontFamily: "var(--font-mono)", fontSize: 10.5, padding: "2px 8px",
+              borderRadius: "var(--radius-sm)",
+              background: `var(--${it.tone === "neutral" ? "bg-3" : it.tone + "-bg"})`,
+              color: `var(--${it.tone === "neutral" ? "text-dim" : it.tone})`,
+              border: `1px solid var(--${it.tone === "neutral" ? "border" : it.tone + "-border"})`,
+              whiteSpace: "nowrap", flex: "none",
+            }}>
+              {it.label}
+            </span>
+            <span style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5 }}>{it.detail}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = React.useState<Project | null>(null);
@@ -41,6 +78,8 @@ export function ProjectDetailPage() {
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState("");
   const [activeTab, setActiveTab] = React.useState("memories");
+  const [triples, setTriples] = React.useState<Triple[]>([]);
+  const [tripleTotal, setTripleTotal] = React.useState(0);
 
   React.useEffect(() => {
     if (!id) return;
@@ -63,6 +102,13 @@ export function ProjectDetailPage() {
       .then(m => { setMemories(m.memories); setMemTotal(m.total); })
       .catch(() => {});
   }, [id, offset]);
+
+  React.useEffect(() => {
+    if (!id || activeTab !== "graph") return;
+    api.getProjectGraph(id, 200, 0)
+      .then(r => { setTriples(r.triples); setTripleTotal(r.total); })
+      .catch(() => {});
+  }, [id, activeTab]);
 
   if (loading) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Loading...</div>;
   if (!project) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Project not found.</div>;
@@ -106,7 +152,7 @@ export function ProjectDetailPage() {
         onSet={setActiveTab}
         tabs={[
           { key: "memories", label: "Memories", icon: <I.cube />, count: memTotal },
-          { key: "graph", label: "Knowledge graph", icon: <I.graph /> },
+          { key: "graph", label: "Knowledge graph", icon: <I.graph />, count: tripleTotal },
           { key: "policies", label: "Policies", icon: <I.shield /> },
           { key: "settings", label: "Settings", icon: <I.settings /> },
         ]}
@@ -161,6 +207,69 @@ export function ProjectDetailPage() {
               <Btn variant="ghost" size="sm" style={offset + 20 >= memTotal ? { opacity: 0.4, pointerEvents: "none" } : {}} onClick={() => setOffset(offset + 20)}>Load more</Btn>
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === "graph" && (
+        <div style={{ marginTop: 22 }}>
+          <GraphView triples={triples} total={tripleTotal} />
+        </div>
+      )}
+
+      {activeTab === "policies" && (
+        <div style={{ marginTop: 22 }}>
+          <Card style={{ padding: 0 }}>
+            <div style={{ padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 15, fontWeight: 500 }}>Sync guardrails</div>
+              <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
+                Server-side rules enforced on every incoming sync. Non-negotiable.
+              </div>
+            </div>
+
+            <div style={{ padding: 0 }}>
+              <PolicyRow
+                title="Blocked categories"
+                description="These categories are local-only and rejected at sync time."
+                items={[
+                  { label: "event", tone: "err", detail: "Session events are transient and machine-local" },
+                  { label: "preference", tone: "err", detail: "User preferences are personal, not team-shared" },
+                ]}
+              />
+
+              <PolicyRow
+                title="Allowed categories"
+                description="Only these categories are accepted into the project."
+                items={[
+                  { label: "fact", tone: "ok", detail: "Stable project truths" },
+                  { label: "decision", tone: "accent", detail: "Architectural and product decisions" },
+                  { label: "plan", tone: "info", detail: "Forward-looking intent" },
+                  { label: "summary", tone: "neutral", detail: "Consolidated recaps" },
+                  { label: "learning", tone: "warn", detail: "Non-obvious lessons and insights" },
+                ]}
+              />
+
+              <PolicyRow
+                title="Content filtering"
+                description="Patterns detected in memory content that trigger rejection."
+                items={[
+                  { label: "Local paths", tone: "err", detail: "/home/..., /Users/..., ~/..., C:\\Users\\..., /tmp/... — use repo-relative paths" },
+                  { label: "Secrets", tone: "err", detail: "Stripe/GitHub/Slack tokens, AWS keys, PEM private keys, credential URIs" },
+                  { label: "User-scoped", tone: "warn", detail: "Memories with metadata.scope = 'user' are personal, not team" },
+                  { label: "Operational", tone: "warn", detail: "metadata.memory_type = 'operational' is local session context" },
+                  { label: "Pre-compact/handoff", tone: "warn", detail: "metadata.origin = 'precompact'|'handoff' — local session artifacts" },
+                ]}
+              />
+
+              <PolicyRow
+                title="Storage quota"
+                description="Per-organization limits."
+                items={[
+                  { label: "1 GB (cloud)", tone: "info", detail: "Free tier storage limit per org in cloud mode" },
+                  { label: "Unlimited (self-hosted)", tone: "ok", detail: "No storage limit when running your own server" },
+                ]}
+              />
+            </div>
+          </Card>
         </div>
       )}
 

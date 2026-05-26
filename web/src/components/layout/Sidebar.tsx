@@ -21,7 +21,7 @@ interface NavGroup {
 const groups: NavGroup[] = [
   {
     items: [
-      { to: "/", icon: <I.home />, label: "Overview", end: true },
+      { to: "/dashboard", icon: <I.home />, label: "Overview" },
       { to: "/projects", icon: <I.folder />, label: "Projects" },
       { to: "/accounts", icon: <I.user />, label: "Accounts", adminOnly: true },
       { to: "/teams", icon: <I.users />, label: "Teams" },
