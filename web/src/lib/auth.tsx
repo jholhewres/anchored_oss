@@ -96,3 +96,28 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   }
   return <>{children}</>;
 }
+
+// RedirectIfAuth sends authenticated visitors away from public routes (the
+// landing page, login, register) and into the app shell. While the session
+// is still resolving we show the same Loading… placeholder as RequireAuth
+// so the marketing copy doesn't flash before the redirect.
+export function RedirectIfAuth({
+  children,
+  to = "/projects",
+}: {
+  children: ReactNode;
+  to?: string;
+}) {
+  const { me, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
+  if (me) {
+    return <Navigate to={to} replace />;
+  }
+  return <>{children}</>;
+}

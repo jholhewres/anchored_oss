@@ -17,7 +17,7 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   if (me) {
-    const target = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/";
+    const target = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/projects";
     return <Navigate to={target} replace />;
   }
 
@@ -27,7 +27,7 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await login(email.trim(), password);
-      const target = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/";
+      const target = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/projects";
       navigate(target, { replace: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid email or password";
