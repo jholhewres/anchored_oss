@@ -3,7 +3,7 @@ set -eu
 
 REPO="${ANCHORED_OSS_REPO:-jholhewres/anchored-oss}"
 APP_NAME="${ANCHORED_OSS_APP_NAME:-anchored-oss}"
-INSTALL_ROOT="${ANCHORED_OSS_HOME:-$HOME/HostGator/anchored-oss}"
+INSTALL_ROOT="${ANCHORED_OSS_HOME:-$HOME/.anchored-oss}"
 BIN_DIR="$INSTALL_ROOT/bin"
 DATA_DIR="$INSTALL_ROOT/data"
 CONFIG_PATH="$INSTALL_ROOT/config.yaml"

@@ -80,7 +80,7 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored-oss/main/install.sh | sh
           ```
 
-          The installer reads `VERSION.md` from `jholhewres/anchored-oss`, downloads the matching release asset, installs it under `~/HostGator/anchored-oss`, and starts it with PM2.
+          The installer reads `VERSION.md` from `jholhewres/anchored-oss`, downloads the matching release asset, installs it under `~/.anchored-oss`, and starts it with PM2.
 
           ### Binaries
 
