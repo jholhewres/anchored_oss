@@ -2,76 +2,54 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppLayout } from "@/components/layout/AppLayout";
-import { RedirectIfAuth, RequireAuth } from "@/lib/auth";
-import { getMode } from "@/lib/api";
-import type { Mode } from "@/lib/types";
+import { RequireAuth } from "@/lib/auth";
+import { api, getToken } from "@/lib/api";
+
 import { LoginPage } from "@/pages/LoginPage";
-import { LandingPage } from "@/pages/LandingPage";
 import { RegisterPage } from "@/pages/RegisterPage";
+import { OnboardingPage } from "@/pages/OnboardingPage";
+import { InviteAcceptPage } from "@/pages/InviteAcceptPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { ProjectDetailPage } from "@/pages/ProjectDetailPage";
-import { AccountsPage } from "@/pages/AccountsPage";
-import { TeamsPage } from "@/pages/TeamsPage";
-import { TeamDetailPage } from "@/pages/TeamDetailPage";
+import { DevelopersPage } from "@/pages/DevelopersPage";
 import { APIKeysPage } from "@/pages/APIKeysPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { HealthPage } from "@/pages/HealthPage";
 
-export function App() {
-  const [mode, setMode] = useState<Mode>("selfhosted");
+function RootRouter() {
+  const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
 
   useEffect(() => {
-    getMode().then((res) => setMode(res.mode)).catch(() => {});
+    api.getBootstrapStatus()
+      .then(res => setBootstrapped(res.bootstrapped))
+      .catch(() => setBootstrapped(true)); // on error, assume bootstrapped → show login
   }, []);
 
-  if (mode === "cloud") {
+  if (bootstrapped === null) {
     return (
-      <Routes>
-        <Route
-          path="/"
-          element={
-            <RedirectIfAuth>
-              <LandingPage />
-            </RedirectIfAuth>
-          }
-        />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          element={
-            <RequireAuth>
-              <AppLayout />
-            </RequireAuth>
-          }
-        >
-          <Route path="/dashboard" element={<OverviewPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/projects/:id" element={<ProjectDetailPage />} />
-          <Route path="/accounts" element={<AccountsPage />} />
-          <Route path="/teams" element={<TeamsPage />} />
-          <Route path="/teams/:id" element={<TeamDetailPage />} />
-          <Route path="/api-keys" element={<APIKeysPage />} />
-          <Route path="/audit" element={<AuditPage />} />
-          <Route path="/health" element={<HealthPage />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        height: "100vh", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 13,
+      }}>
+        Loading…
+      </div>
     );
   }
 
+  if (!bootstrapped) return <Navigate to="/onboarding" replace />;
+  if (!getToken()) return <Navigate to="/login" replace />;
+  return <Navigate to="/dashboard" replace />;
+}
+
+export function App() {
   return (
     <Routes>
-      <Route
-        path="/"
-        element={
-          <RedirectIfAuth>
-            <LandingPage />
-          </RedirectIfAuth>
-        }
-      />
+      <Route path="/" element={<RootRouter />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/onboarding" element={<OnboardingPage />} />
+      <Route path="/invite/:token" element={<InviteAcceptPage />} />
       <Route
         element={
           <RequireAuth>
@@ -82,9 +60,8 @@ export function App() {
         <Route path="/dashboard" element={<OverviewPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/:id" element={<ProjectDetailPage />} />
-        <Route path="/accounts" element={<AccountsPage />} />
-        <Route path="/teams" element={<TeamsPage />} />
-        <Route path="/teams/:id" element={<TeamDetailPage />} />
+        <Route path="/developers" element={<DevelopersPage />} />
+        <Route path="/accounts" element={<Navigate to="/developers" replace />} />
         <Route path="/api-keys" element={<APIKeysPage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/health" element={<HealthPage />} />

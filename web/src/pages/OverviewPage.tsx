@@ -1,45 +1,10 @@
 import React from "react";
+import { useNavigate, Link } from "react-router-dom";
 import { Metric, Card, Btn } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { DashboardStats, AuditEntry } from "@/lib/types";
-
-function ActivityChart() {
-  const hours = React.useMemo(() => {
-    const seed = [23,45,38,62,78,55,41,89,72,58,95,68,44,82,51,37,66,73,48,85,59,42,77,63];
-    return seed.map(t => ({
-      writes: Math.round(t * 0.35),
-      reads: Math.round(t * 0.65),
-    }));
-  }, []);
-  const max = Math.max(...hours.map(h => h.writes + h.reads));
-
-  return (
-    <svg viewBox="0 0 700 220" style={{ width: "100%", height: "100%", overflow: "visible" }}>
-      {[0.25, 0.5, 0.75].map(p => (
-        <line key={p} x1={0} y1={220 * p} x2={700} y2={220 * p} stroke="var(--border)" strokeDasharray="2 4" />
-      ))}
-      {hours.map((h, i) => {
-        const x = (i / 24) * 700;
-        const w = (700 / 24) * 0.7;
-        const rH = (h.reads / max) * 200;
-        const wH = (h.writes / max) * 200;
-        return (
-          <g key={i}>
-            <rect x={x} y={220 - rH} width={w} height={rH} fill="var(--text-ghost)" rx="1" />
-            <rect x={x} y={220 - rH - wH} width={w} height={wH} fill="var(--accent)" rx="1" />
-          </g>
-        );
-      })}
-      {[0, 6, 12, 18, 23].map(h => (
-        <text key={h} x={(h / 24) * 700} y={220 + 14} fontSize="10" fontFamily="var(--font-mono)" fill="var(--text-dim)">
-          {String(h).padStart(2, "0")}:00
-        </text>
-      ))}
-    </svg>
-  );
-}
 
 const eventIcons: Record<string, React.ReactNode> = {
   "memory.append": <I.cube size={13} />,
@@ -50,7 +15,6 @@ const eventIcons: Record<string, React.ReactNode> = {
   "sync.conflict": <I.alert size={13} />,
   "project.create": <I.folder size={13} />,
   "apikey.create": <I.key size={13} />,
-  "team.create": <I.users size={13} />,
 };
 
 const actionTones: Record<string, string> = {
@@ -62,7 +26,6 @@ const actionTones: Record<string, string> = {
   "sync.conflict": "err",
   "project.create": "info",
   "apikey.create": "ok",
-  "team.create": "neutral",
 };
 
 function formatNumber(n: number): string {
@@ -83,9 +46,15 @@ function timeAgo(dateStr: string): string {
 
 export function OverviewPage() {
   const { me } = useAuth();
+  const navigate = useNavigate();
   const [stats, setStats] = React.useState<DashboardStats | null>(null);
   const [audit, setAudit] = React.useState<AuditEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [firstLogin] = React.useState(() => {
+    const v = localStorage.getItem("anchored_first_login");
+    if (v === "1") { localStorage.removeItem("anchored_first_login"); return true; }
+    return false;
+  });
 
   React.useEffect(() => {
     if (me?.scope !== "admin") { setLoading(false); return; }
@@ -115,6 +84,31 @@ export function OverviewPage() {
 
   return (
     <div>
+      {/* First-login welcome banner */}
+      {firstLogin && (
+        <Card style={{ padding: 18, marginBottom: 20, border: "1px solid var(--accent-border)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 6, background: "var(--accent-bg)", color: "var(--accent)",
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              border: "1px solid var(--accent-border)", flex: "none",
+            }}>
+              <I.key size={16} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 500 }}>Welcome — create your first API key</div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2 }}>
+                Generate a key so your agents can start syncing memory.
+              </div>
+            </div>
+            <Btn variant="primary" size="sm" icon={<I.key />} onClick={() => navigate("/api-keys")}>
+              Generate API key
+            </Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Get started card when no projects */}
       {isEmpty && (
         <Card style={{ padding: 22, marginBottom: 20, borderStyle: "dashed" }}>
           <div style={{ fontSize: 15, fontWeight: 500 }}>Get started</div>
@@ -122,19 +116,39 @@ export function OverviewPage() {
             Your organization is set up. Create your first project to start sharing memory.
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Btn variant="primary" size="sm" icon={<I.plus />}>New project</Btn>
-            <Btn variant="outline" size="sm" icon={<I.key />}>Generate API key</Btn>
+            <Btn variant="primary" size="sm" icon={<I.plus />} onClick={() => navigate("/projects?new=1")}>
+              New project
+            </Btn>
+            <Btn variant="outline" size="sm" icon={<I.key />} onClick={() => navigate("/api-keys")}>
+              Generate API key
+            </Btn>
           </div>
         </Card>
       )}
 
+      {/* Shortcut row */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        <Btn variant="outline" size="sm" icon={<I.plus />} onClick={() => navigate("/projects?new=1")}>
+          New project
+        </Btn>
+        <Btn variant="outline" size="sm" icon={<I.users />} onClick={() => navigate("/developers")}>
+          Invite developer
+        </Btn>
+        <Btn variant="outline" size="sm" icon={<I.key />} onClick={() => navigate("/api-keys")}>
+          Generate API key
+        </Btn>
+        <Btn variant="ghost" size="sm" icon={<I.external />} as="a" href="https://anchoredoss.dev/docs" target="_blank" rel="noopener noreferrer">
+          Docs
+        </Btn>
+      </div>
+
+      {/* Metrics */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 28 }}>
         <Metric
           icon={<I.cube />}
           label="memories"
           value={stats ? formatNumber(stats.memories_live) : "—"}
-          delta="+128 / 24h"
-          trend="up"
+          trend="flat"
           sub={`across ${stats?.projects ?? 0} projects`}
         />
         <Metric
@@ -143,7 +157,7 @@ export function OverviewPage() {
           value={stats ? String(stats.accounts) : "—"}
           delta={`${stats?.keys_active ?? 0} keys`}
           trend="flat"
-          sub={`across ${stats?.teams ?? 0} teams`}
+          sub="team members"
         />
         <Metric
           icon={<I.clock />}
@@ -155,32 +169,49 @@ export function OverviewPage() {
         />
       </div>
 
+      {/* Recent pushes */}
       <Card style={{ marginBottom: 14 }}>
         <div style={{ padding: "16px 22px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 500 }}>Activity</div>
-            <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 2 }}>Last 24 hours · all projects</div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 18, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 8, height: 8, background: "var(--accent)" }} />writes
-            </span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 8, height: 8, background: "var(--text-ghost)" }} />reads
-            </span>
-            <span style={{ width: 1, height: 14, background: "var(--border)" }} />
-            <Btn variant="ghost" size="sm" iconR={<I.chevD />}>24h</Btn>
+            <div style={{ fontSize: 15, fontWeight: 500 }}>Recent pushes</div>
+            <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 2 }}>Memory sync activity · all projects</div>
           </div>
         </div>
-        <div style={{ padding: "22px 22px 10px", height: 240 }}>
-          <ActivityChart />
+        <div>
+          {(!stats?.recent_pushes || stats.recent_pushes.length === 0) ? (
+            <div style={{ padding: "40px 22px", textAlign: "center" }}>
+              <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 8 }}>No pushes yet</div>
+              <div style={{ fontSize: 12, color: "var(--text-ghost)" }}>
+                Run <code style={{ fontFamily: "var(--font-mono)" }}>anchored sync</code> from a project to see activity here.
+              </div>
+            </div>
+          ) : (
+            stats.recent_pushes.map((p, i, arr) => (
+              <div key={p.project_id} style={{
+                display: "grid", gridTemplateColumns: "1fr 100px 140px",
+                alignItems: "center", gap: 14, padding: "12px 22px",
+                borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : "none",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ color: "var(--text-muted)", display: "inline-flex" }}><I.folder size={14} /></span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{p.project_name}</span>
+                </div>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)" }}>
+                  {p.count} push{p.count !== 1 ? "es" : ""}
+                </span>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", textAlign: "right" }}>
+                  {timeAgo(p.last_push)}
+                </span>
+              </div>
+            ))
+          )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderTop: "1px solid var(--border)", fontFamily: "var(--font-mono)" }}>
+        {/* Quick stats footer */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: "1px solid var(--border)", fontFamily: "var(--font-mono)" }}>
           {[
-            ["ops total", stats ? formatNumber(stats.audit_entries_24h * 6) : "—"],
             ["projects", stats ? String(stats.projects) : "—"],
             ["active keys", stats ? String(stats.keys_active) : "—"],
-            ["teams", stats ? String(stats.teams) : "—"],
+            ["members", stats ? String(stats.accounts) : "—"],
           ].map(([k, v], i, a) => (
             <div key={k} style={{ padding: "14px 22px", borderRight: i < a.length - 1 ? "1px solid var(--border)" : "none" }}>
               <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: 0.4 }}>{k}</div>
@@ -190,10 +221,13 @@ export function OverviewPage() {
         </div>
       </Card>
 
+      {/* Recent events */}
       <Card>
         <div style={{ padding: "14px 22px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ fontSize: 15, fontWeight: 500 }}>Recent events</div>
-          <Btn variant="ghost" size="sm" iconR={<I.arrowR />}>Audit log</Btn>
+          <Link to="/audit" style={{ textDecoration: "none" }}>
+            <Btn variant="ghost" size="sm" iconR={<I.arrowR />}>Audit log</Btn>
+          </Link>
         </div>
         <div>
           {audit.length === 0 && (

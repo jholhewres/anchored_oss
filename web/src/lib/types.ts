@@ -1,9 +1,4 @@
 export type Scope = "admin" | "sync" | "readonly";
-export type Mode = "cloud" | "selfhosted";
-
-export interface ModeResponse {
-  mode: Mode;
-}
 
 export interface Me {
   account_id: string;
@@ -31,15 +26,67 @@ export interface PushActivity {
   last_push: string;
 }
 
+export type ProjectCategory = "service" | "library" | "app" | "infra" | "experiment" | "other";
+export const PROJECT_CATEGORIES: ProjectCategory[] = ["service", "library", "app", "infra", "experiment", "other"];
+
+export const PROJECT_CATEGORY_LABELS: Record<ProjectCategory, string> = {
+  service: "Services",
+  library: "Libraries",
+  app: "Apps",
+  infra: "Infra",
+  experiment: "Experiments",
+  other: "Other",
+};
+
 export interface Project {
   id: string;
   org_id: string;
   name: string;
   slug: string;
   remote_key: string;
+  category: ProjectCategory;
   created_by: string;
   created_at: string;
   deleted_at?: string | null;
+}
+
+export interface Invite {
+  id: string;
+  org_id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  expires_at: string;
+  accepted_at?: string | null;
+  created_by?: string;
+  created_at: string;
+}
+
+export interface BootstrapStatus { bootstrapped: boolean; }
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+}
+
+export interface OnboardingComplete {
+  api_key: string;
+  org: Organization;
+  admin: Account;
+  projects: Project[];
+}
+
+export interface InviteAcceptInfo {
+  valid: boolean;
+  email: string;
+  display_name: string;
+}
+
+export interface InviteAcceptResponse {
+  api_key: string;
+  account_id: string;
 }
 
 export interface Account {

@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
 import { I, AnchoredLogo } from "@/ds/icons";
 import { Avatar, ScopeChip } from "@/ds/components";
 import { useAuth } from "@/lib/auth";
+import { api } from "@/lib/api";
+import type { Health } from "@/lib/types";
 
 interface NavGroup {
   label?: string;
@@ -23,8 +25,7 @@ const groups: NavGroup[] = [
     items: [
       { to: "/dashboard", icon: <I.home />, label: "Overview" },
       { to: "/projects", icon: <I.folder />, label: "Projects" },
-      { to: "/accounts", icon: <I.user />, label: "Accounts", adminOnly: true },
-      { to: "/teams", icon: <I.users />, label: "Teams" },
+      { to: "/developers", icon: <I.users />, label: "Developers", adminOnly: true },
     ],
   },
   {
@@ -42,6 +43,32 @@ export function Sidebar() {
   const location = useLocation();
   const isAdmin = me?.scope === "admin";
 
+  const [dropOpen, setDropOpen] = useState(false);
+  const [health, setHealth] = useState<Health | null>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  // Fetch version once
+  useEffect(() => {
+    api.getHealth().then(setHealth).catch(() => {});
+  }, []);
+
+  // Click-outside to close dropdown
+  useEffect(() => {
+    if (!dropOpen) return;
+    function handler(e: MouseEvent) {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
+        setDropOpen(false);
+      }
+    }
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [dropOpen]);
+
+  function handleLogout() {
+    logout();
+    window.location.replace("/login");
+  }
+
   return (
     <aside
       style={{
@@ -54,8 +81,11 @@ export function Sidebar() {
         flex: "none",
       }}
     >
-      <div style={{ padding: "16px 14px", borderBottom: "1px solid var(--border)" }}>
-        <div
+      {/* Org pill with dropdown */}
+      <div style={{ padding: "16px 14px", borderBottom: "1px solid var(--border)", position: "relative" }} ref={dropRef}>
+        <button
+          type="button"
+          onClick={() => setDropOpen(o => !o)}
           style={{
             display: "flex",
             alignItems: "center",
@@ -64,25 +94,78 @@ export function Sidebar() {
             borderRadius: "var(--radius)",
             background: "var(--bg-2)",
             border: "1px solid var(--border)",
+            width: "100%",
+            cursor: "pointer",
+            color: "inherit",
+            fontFamily: "inherit",
           }}
         >
           <AnchoredLogo size={18} wordmark={false} />
-          <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
             <div style={{ fontSize: 13, fontWeight: 500, letterSpacing: -0.2 }}>
               anchored
             </div>
-            <div
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10.5,
-                color: "var(--text-dim)",
-              }}
-            >
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-dim)" }}>
               org · self-hosted
             </div>
           </div>
           <I.chevD size={14} />
-        </div>
+        </button>
+
+        {/* Dropdown */}
+        {dropOpen && (
+          <div style={{
+            position: "absolute", top: "calc(100% - 2px)", left: 14, right: 14,
+            background: "var(--bg-2)", border: "1px solid var(--border)",
+            borderRadius: "var(--radius)", zIndex: 40,
+            boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+            overflow: "hidden",
+          }}>
+            {/* Docs */}
+            <a
+              href="https://anchoredoss.dev/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setDropOpen(false)}
+              style={{
+                display: "flex", alignItems: "center", gap: 9,
+                padding: "10px 14px", fontSize: 13,
+                color: "var(--text-muted)", textDecoration: "none",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <I.external size={14} />
+              Docs
+            </a>
+
+            {/* Version */}
+            {health && (
+              <div style={{
+                padding: "8px 14px",
+                fontFamily: "var(--font-mono)", fontSize: 11,
+                color: "var(--text-dim)", borderBottom: "1px solid var(--border)",
+              }}>
+                v{health.version}
+              </div>
+            )}
+
+            {/* Logout */}
+            <button
+              type="button"
+              onClick={handleLogout}
+              style={{
+                display: "flex", alignItems: "center", gap: 9,
+                padding: "10px 14px", width: "100%",
+                background: "transparent", border: 0,
+                fontSize: 13, color: "var(--err)",
+                cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+              }}
+            >
+              <I.arrowR size={14} />
+              Log out
+            </button>
+          </div>
+        )}
       </div>
 
       <nav
@@ -158,48 +241,26 @@ export function Sidebar() {
         ))}
       </nav>
 
+      {/* Footer: non-interactive user display */}
       {me && (
         <div style={{ padding: 14, borderTop: "1px solid var(--border)" }}>
-          <button
-            onClick={() => {
-              logout();
-              window.location.replace("/login");
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "6px 8px",
-              borderRadius: "var(--radius)",
-              background: "transparent",
-              border: 0,
-              cursor: "pointer",
-              width: "100%",
-              textAlign: "left",
-              color: "inherit",
-              fontFamily: "inherit",
-            }}
-          >
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "6px 8px",
+          }}>
             <Avatar name={me.display_name} size={28} />
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>
                 {me.display_name}
               </div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10.5,
-                  color: "var(--text-dim)",
-                }}
-              >
+              <div style={{
+                display: "flex", alignItems: "center", gap: 6,
+                fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-dim)",
+              }}>
                 <ScopeChip scope={me.scope} />
               </div>
             </div>
-            <span style={{ color: "var(--text-muted)" }}><I.settings size={14} /></span>
-          </button>
+          </div>
         </div>
       )}
     </aside>

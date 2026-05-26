@@ -13,6 +13,7 @@ interface BtnProps extends React.HTMLAttributes<HTMLElement> {
   href?: string;
   target?: string;
   rel?: string;
+  type?: "button" | "submit" | "reset";
 }
 
 export const Btn: React.FC<BtnProps> = ({

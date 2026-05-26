@@ -5,13 +5,18 @@ import type {
   APIKeyMintResponse,
   AuditFilters,
   AuditResponse,
+  BootstrapStatus,
   DashboardStats,
   Health,
+  Invite,
+  InviteAcceptInfo,
+  InviteAcceptResponse,
   ListMemoriesResponse,
   ListTriplesResponse,
   Me,
-  ModeResponse,
+  OnboardingComplete,
   Project,
+  ProjectCategory,
   RegisterResponse,
   Scope,
   Team,
@@ -93,12 +98,6 @@ function safeJSON(text: string): unknown {
   }
 }
 
-export async function getMode(): Promise<ModeResponse> {
-  const res = await fetch("/v1/mode");
-  if (!res.ok) return { mode: "selfhosted" };
-  return res.json();
-}
-
 export const api = {
   login: (email: string, password: string) =>
     request<LoginResponse>("POST", "/v1/auth/login", { email, password }, { auth: false }),
@@ -172,4 +171,35 @@ export const api = {
     if (filters.offset != null) q.set("offset", String(filters.offset));
     return request<AuditResponse>("GET", `/v1/audit?${q.toString()}`);
   },
+
+  // Bootstrap / onboarding
+  getBootstrapStatus: () =>
+    request<BootstrapStatus>("GET", "/v1/bootstrap-status", undefined, { auth: false }),
+  completeOnboarding: (body: {
+    org: { name: string; slug: string };
+    admin: { email: string; password: string; display_name: string };
+    projects: { name: string; category: ProjectCategory }[];
+  }) => request<OnboardingComplete>("POST", "/v1/onboarding/complete", body, { auth: false }),
+
+  // Invites
+  getInvites: () => request<Invite[]>("GET", "/v1/invites"),
+  createInvite: (email: string, display_name: string, role: string) =>
+    request<{ id: string; invite_url: string; expires_at: string }>("POST", "/v1/invites", { email, display_name, role }),
+  revokeInvite: (id: string) => request<void>("DELETE", `/v1/invites/${id}`),
+  getInviteByToken: (token: string) =>
+    request<InviteAcceptInfo>("GET", `/v1/invites/accept/${token}`, undefined, { auth: false }),
+  acceptInvite: (token: string, password: string) =>
+    request<InviteAcceptResponse>("POST", `/v1/invites/accept/${token}`, { password }, { auth: false }),
+
+  // Account management
+  updateAccount: (id: string, body: { display_name?: string; role?: string }) =>
+    request<void>("PATCH", `/v1/accounts/${id}`, body),
+  deleteAccount: (id: string) => request<void>("DELETE", `/v1/accounts/${id}`),
+  getAccountProjects: (id: string) => request<Project[]>("GET", `/v1/accounts/${id}/projects`),
+  setAccountProjects: (id: string, project_ids: string[]) =>
+    request<void>("PUT", `/v1/accounts/${id}/projects`, { project_ids }),
+
+  // Projects
+  createProject: (body: { name: string; slug?: string; category: ProjectCategory; remote_key?: string }) =>
+    request<Project>("POST", "/v1/projects", body),
 };
