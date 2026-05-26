@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 5
+const schemaVersion = 7
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -145,12 +145,65 @@ const migration005 = `
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_hash TEXT;
 `
 
+// migration006 introduces knowledge graph tables for entity-relationship storage.
+const migration006 = `
+CREATE TABLE IF NOT EXISTS kg_entities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_entities_name_project ON kg_entities(name, project_id);
+
+CREATE TABLE IF NOT EXISTS kg_predicates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS kg_triples (
+    id TEXT PRIMARY KEY,
+    subject_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+    predicate_id TEXT NOT NULL REFERENCES kg_predicates(id) ON DELETE CASCADE,
+    object_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+    confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    valid_to TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_kg_triples_project ON kg_triples(project_id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_kg_triples_subject ON kg_triples(subject_id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_kg_triples_object ON kg_triples(object_id) WHERE valid_to IS NULL;
+`
+
+// migration007 hardens the knowledge graph: aliases for fuzzy entity matching,
+// is_functional predicates for temporal supersession, and a logical unique
+// constraint so the same (subject, predicate, object) is not duplicated per
+// project.
+const migration007 = `
+CREATE TABLE IF NOT EXISTS kg_entity_aliases (
+    entity_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+    alias TEXT NOT NULL,
+    PRIMARY KEY (entity_id, alias)
+);
+CREATE INDEX IF NOT EXISTS idx_kg_entity_aliases_alias ON kg_entity_aliases(alias);
+
+ALTER TABLE kg_predicates ADD COLUMN IF NOT EXISTS is_functional BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE kg_triples ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_triples_logical
+    ON kg_triples(subject_id, predicate_id, object_id, project_id)
+    WHERE valid_to IS NULL;
+`
+
 var migrations = map[int]string{
 	1: migration001,
 	2: migration002,
 	3: migration003,
 	4: migration004,
 	5: migration005,
+	6: migration006,
+	7: migration007,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

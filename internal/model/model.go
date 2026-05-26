@@ -120,6 +120,16 @@ type PushActivity struct {
 	LastPush    time.Time `json:"last_push"`
 }
 
+type Triple struct {
+	ID         string    `json:"id"`
+	Subject    string    `json:"subject"`
+	Predicate  string    `json:"predicate"`
+	Object     string    `json:"object"`
+	Confidence float64   `json:"confidence"`
+	ProjectID  string    `json:"project_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type DashboardStats struct {
 	Accounts        int            `json:"accounts"`
 	Organizations   int            `json:"organizations"`

@@ -71,6 +71,8 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	mux.HandleFunc("GET /v1/projects", authMW(http.HandlerFunc(projectHandler.List)).ServeHTTP)
 	mux.HandleFunc("GET /v1/projects/{id}", authMW(http.HandlerFunc(projectHandler.Get)).ServeHTTP)
 	mux.HandleFunc("GET /v1/projects/{id}/memories", authMW(http.HandlerFunc(projectHandler.ListMemories)).ServeHTTP)
+	mux.HandleFunc("GET /v1/projects/{id}/graph", authMW(http.HandlerFunc(projectHandler.ListGraph)).ServeHTTP)
+	mux.HandleFunc("POST /v1/projects/{id}/triples", authMW(http.HandlerFunc(projectHandler.IngestTriples)).ServeHTTP)
 	mux.HandleFunc("DELETE /v1/projects/{id}", authMW(requireAdmin(http.HandlerFunc(projectHandler.SoftDelete))).ServeHTTP)
 
 	auditHandler := handler.NewAuditHandler(st, logger)

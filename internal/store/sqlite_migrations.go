@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 5
+const sqliteSchemaVersion = 7
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -130,12 +130,60 @@ CREATE INDEX IF NOT EXISTS idx_projects_org_active ON projects(org_id) WHERE del
 
 const sqliteMigration005 = ``
 
+// sqliteMigration006 mirrors Postgres migration006 (basic KG tables).
+const sqliteMigration006 = `
+CREATE TABLE IF NOT EXISTS kg_entities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_entities_name_project ON kg_entities(name, project_id);
+
+CREATE TABLE IF NOT EXISTS kg_predicates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    is_functional INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS kg_triples (
+    id TEXT PRIMARY KEY,
+    subject_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+    predicate_id TEXT NOT NULL REFERENCES kg_predicates(id) ON DELETE CASCADE,
+    object_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at TEXT DEFAULT (datetime('now')),
+    valid_from TEXT NOT NULL DEFAULT (datetime('now')),
+    valid_to TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_kg_triples_project ON kg_triples(project_id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_kg_triples_subject ON kg_triples(subject_id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_kg_triples_object ON kg_triples(object_id) WHERE valid_to IS NULL;
+`
+
+// sqliteMigration007 adds aliases + logical unique constraint.
+const sqliteMigration007 = `
+CREATE TABLE IF NOT EXISTS kg_entity_aliases (
+    entity_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+    alias TEXT NOT NULL,
+    PRIMARY KEY (entity_id, alias)
+);
+CREATE INDEX IF NOT EXISTS idx_kg_entity_aliases_alias ON kg_entity_aliases(alias);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_triples_logical
+    ON kg_triples(subject_id, predicate_id, object_id, project_id)
+    WHERE valid_to IS NULL;
+`
+
 var sqliteMigrations = map[int]string{
 	1: sqliteMigration001,
 	2: sqliteMigration002,
 	3: sqliteMigration003,
 	4: sqliteMigration004,
 	5: sqliteMigration005,
+	6: sqliteMigration006,
+	7: sqliteMigration007,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {

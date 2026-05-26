@@ -76,6 +76,11 @@ type Store interface {
 	// Dashboard.
 	GetDashboardStats(ctx context.Context, orgID string) (*model.DashboardStats, error)
 
+	// Knowledge graph.
+	UpsertTriple(ctx context.Context, t *model.Triple) error
+	ListTriplesByProject(ctx context.Context, projectID string, limit, offset int) ([]*model.Triple, int, error)
+	CountTriplesByProject(ctx context.Context, projectID string) (int, error)
+
 	// Quota.
 	// GetOrgStorageBytes returns the total bytes used by non-deleted memories
 	// in all active projects under the given org.
