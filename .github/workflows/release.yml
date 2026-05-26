@@ -11,6 +11,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      PUBLIC_RELEASE_REPO: jholhewres/anchored-oss
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +54,8 @@ jobs:
             GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-linux-arm64" ./cmd/server
             GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-darwin-amd64" ./cmd/server
             GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-darwin-arm64" ./cmd/server
+            GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-windows-amd64.exe" ./cmd/server
+            GOOS=windows GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-windows-arm64.exe" ./cmd/server
           }
 
           build_variant selfhosted selfhosted
@@ -63,7 +67,42 @@ jobs:
           sha256sum * > checksums-sha256.txt
           cat checksums-sha256.txt
 
-      - name: Create GitHub Release
+      - name: Write release notes
+        run: |
+          cat > dist/release-notes.md <<'EOF'
+          ## Anchored OSS ${{ steps.vars.outputs.version }}
+
+          This public release contains downloadable Anchored OSS server binaries only. Source code remains private.
+
+          ### Install
+
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored-oss/main/install.sh | sh
+          ```
+
+          The installer reads `VERSION.md` from `jholhewres/anchored-oss`, downloads the matching release asset, installs it under `~/HostGator/anchored-oss`, and starts it with PM2.
+
+          ### Binaries
+
+          | Variant | Platform | Arch | Binary |
+          |---|---|---|---|
+          | Self-hosted | Linux | amd64 | `anchored-oss-selfhosted-linux-amd64` |
+          | Self-hosted | Linux | arm64 | `anchored-oss-selfhosted-linux-arm64` |
+          | Self-hosted | macOS | amd64 | `anchored-oss-selfhosted-darwin-amd64` |
+          | Self-hosted | macOS | arm64 | `anchored-oss-selfhosted-darwin-arm64` |
+          | Self-hosted | Windows | amd64 | `anchored-oss-selfhosted-windows-amd64.exe` |
+          | Self-hosted | Windows | arm64 | `anchored-oss-selfhosted-windows-arm64.exe` |
+          | Cloud | Linux | amd64 | `anchored-oss-cloud-linux-amd64` |
+          | Cloud | Linux | arm64 | `anchored-oss-cloud-linux-arm64` |
+          | Cloud | macOS | amd64 | `anchored-oss-cloud-darwin-amd64` |
+          | Cloud | macOS | arm64 | `anchored-oss-cloud-darwin-arm64` |
+          | Cloud | Windows | amd64 | `anchored-oss-cloud-windows-amd64.exe` |
+          | Cloud | Windows | arm64 | `anchored-oss-cloud-windows-arm64.exe` |
+
+          Built on ${{ steps.vars.outputs.build_date }} with Go 1.25 (CGO_ENABLED=0).
+          EOF
+
+      - name: Create private build archive release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -71,27 +110,41 @@ jobs:
             dist/anchored-oss-*
             dist/checksums-sha256.txt
           body: |
-            ## Anchored OSS ${{ steps.vars.outputs.version }}
+            See the public distribution release at https://github.com/${{ env.PUBLIC_RELEASE_REPO }}/releases/tag/${{ steps.vars.outputs.version }}.
 
-            Two binary variants: **selfhosted** (single-tenant, default) and **cloud** (multi-tenant with registration).
+            This private release exists only as a build/archive mirror for maintainers.
 
-            ### Install
+      - name: Publish public distribution release
+        env:
+          GH_TOKEN: ${{ secrets.ANCHORED_OSS_RELEASE_TOKEN }}
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "Set ANCHORED_OSS_RELEASE_TOKEN with contents:write on $PUBLIC_RELEASE_REPO to publish public releases." >&2
+            exit 1
+          fi
 
-            ```bash
-            curl -fsSL https://anchoredoss.dev/install-oss | sh
-            ```
+          if gh release view "$VERSION" --repo "$PUBLIC_RELEASE_REPO" >/dev/null 2>&1; then
+            gh release upload "$VERSION" dist/anchored-oss-* dist/checksums-sha256.txt --repo "$PUBLIC_RELEASE_REPO" --clobber
+            gh release edit "$VERSION" --repo "$PUBLIC_RELEASE_REPO" --title "Anchored OSS $VERSION" --notes-file dist/release-notes.md
+          else
+            gh release create "$VERSION" dist/anchored-oss-* dist/checksums-sha256.txt --repo "$PUBLIC_RELEASE_REPO" --title "Anchored OSS $VERSION" --notes-file dist/release-notes.md
+          fi
 
-            ### Binaries
-
-            | Variant | Platform | Arch | Binary |
-            |---|---|---|---|
-            | Self-hosted | Linux | amd64 | `anchored-oss-selfhosted-linux-amd64` |
-            | Self-hosted | Linux | arm64 | `anchored-oss-selfhosted-linux-arm64` |
-            | Self-hosted | macOS | amd64 | `anchored-oss-selfhosted-darwin-amd64` |
-            | Self-hosted | macOS | arm64 | `anchored-oss-selfhosted-darwin-arm64` |
-            | Cloud | Linux | amd64 | `anchored-oss-cloud-linux-amd64` |
-            | Cloud | Linux | arm64 | `anchored-oss-cloud-linux-arm64` |
-            | Cloud | macOS | amd64 | `anchored-oss-cloud-darwin-amd64` |
-            | Cloud | macOS | arm64 | `anchored-oss-cloud-darwin-arm64` |
-
-            Built on ${{ steps.vars.outputs.build_date }} with Go 1.25 (CGO_ENABLED=0).
+      - name: Update public VERSION.md
+        env:
+          GH_TOKEN: ${{ secrets.ANCHORED_OSS_RELEASE_TOKEN }}
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          sha=$(gh api "repos/$PUBLIC_RELEASE_REPO/contents/VERSION.md" --jq .sha 2>/dev/null || true)
+          body=$(printf '%s\n' "$VERSION" | base64 -w0)
+          if [ -n "$sha" ]; then
+            gh api --method PUT "repos/$PUBLIC_RELEASE_REPO/contents/VERSION.md" \
+              -f message="chore: update VERSION.md to $VERSION" \
+              -f content="$body" \
+              -f sha="$sha"
+          else
+            gh api --method PUT "repos/$PUBLIC_RELEASE_REPO/contents/VERSION.md" \
+              -f message="chore: add VERSION.md for $VERSION" \
+              -f content="$body"
+          fi
