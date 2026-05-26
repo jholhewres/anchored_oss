@@ -104,6 +104,14 @@ type compatPullMemory struct {
 }
 
 // CompatPush adapts POST /api/v1/sync/push to the bidirectional engine.
+//
+// Routing rules:
+//   - When `project_id` is set, all memories go to that project (legacy path).
+//   - When `project_id` is empty, memories are grouped by `remote_project_key`
+//     and routed via a per-group ProjectClaim so the engine can auto-create
+//     the project on the first push. Memories without a remote_project_key
+//     are rejected in the response with `routing: no project_id and no
+//     remote_project_key` so the client can surface them.
 func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 	var req compatPushRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -111,12 +119,12 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
-	if req.ProjectID == "" {
-		jsonError(w, http.StatusBadRequest, "project_id is required")
-		return
-	}
 	if middleware.GetScope(r.Context()) == "readonly" {
 		jsonError(w, http.StatusForbidden, "FORBIDDEN")
+		return
+	}
+	if req.ProjectID == "" && len(req.Memories) == 0 {
+		jsonError(w, http.StatusBadRequest, "project_id or memories with remote_project_key required")
 		return
 	}
 
@@ -132,52 +140,122 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	now := time.Now().UTC()
-	pushes := make([]model.SyncMemory, 0, len(req.Memories))
+	out := compatPushResponse{}
+
+	// Group memories so each batch lands in exactly one project.
+	// When ProjectID is set we keep the legacy single-group behaviour; otherwise
+	// we partition by RemoteProjectKey so the engine can claim/auto-create
+	// projects per repository.
+	type pushGroup struct {
+		projectID string
+		claimKey  string
+		memories  []compatPushMemory
+	}
+	groups := make(map[string]*pushGroup)
+	unroutable := make([]string, 0)
+
 	for _, m := range req.Memories {
 		if m.PreferenceScope == "user" {
 			continue
 		}
-		hash := "sha256:" + sha256Hex(m.Content)
-		pushes = append(pushes, model.SyncMemory{
-			ID:          m.ID,
-			Category:    m.Category,
-			Content:     m.Content,
-			ContentHash: hash,
-			Source:      m.Source,
-			AuthorName:  authorName,
-			CreatedAt:   now,
-			UpdatedAt:   now,
-			Metadata:    m.Metadata,
-		})
-	}
-
-	sr := &model.SyncRequest{
-		ProjectID: req.ProjectID,
-		ClientID:  req.ClientID,
-		Pushes:    pushes,
-	}
-	resp, err := h.engine.Sync(r.Context(), accountID, orgID, sr)
-	if err != nil {
-		h.writeSyncError(w, err)
-		return
-	}
-
-	out := compatPushResponse{}
-	for _, r := range resp.Results {
-		switch r.Status {
-		case "accepted":
-			out.Accepted++
+		var key string
+		switch {
+		case req.ProjectID != "":
+			key = "id:" + req.ProjectID
+		case m.RemoteProjectKey != "":
+			key = "key:" + m.RemoteProjectKey
 		default:
-			out.Rejected++
-			detail := r.Detail
-			if detail == "" {
-				detail = r.Rule
+			unroutable = append(unroutable, m.ID)
+			continue
+		}
+		g, ok := groups[key]
+		if !ok {
+			g = &pushGroup{}
+			if req.ProjectID != "" {
+				g.projectID = req.ProjectID
+			} else {
+				g.claimKey = m.RemoteProjectKey
 			}
-			out.Errors = append(out.Errors, "memory "+r.ID+" blocked: "+detail)
+			groups[key] = g
+		}
+		g.memories = append(g.memories, m)
+	}
+
+	for _, id := range unroutable {
+		out.Rejected++
+		out.Errors = append(out.Errors, "memory "+id+" blocked: routing: no project_id and no remote_project_key")
+	}
+
+	now := time.Now().UTC()
+	for _, g := range groups {
+		pushes := make([]model.SyncMemory, 0, len(g.memories))
+		for _, m := range g.memories {
+			hash := "sha256:" + sha256Hex(m.Content)
+			pushes = append(pushes, model.SyncMemory{
+				ID:          m.ID,
+				Category:    m.Category,
+				Content:     m.Content,
+				ContentHash: hash,
+				Source:      m.Source,
+				AuthorName:  authorName,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+				Metadata:    m.Metadata,
+			})
+		}
+
+		sr := &model.SyncRequest{ClientID: req.ClientID, Pushes: pushes}
+		if g.projectID != "" {
+			sr.ProjectID = g.projectID
+		} else {
+			sr.ProjectClaim = &model.ProjectClaim{
+				RemoteKey: g.claimKey,
+				Name:      autoProjectName(g.claimKey),
+			}
+		}
+
+		resp, err := h.engine.Sync(r.Context(), accountID, orgID, sr)
+		if err != nil {
+			// Record the failure for this group but keep processing the
+			// remaining groups so a single bad project doesn't abort the
+			// entire batch.
+			detail := err.Error()
+			for _, m := range g.memories {
+				out.Rejected++
+				out.Errors = append(out.Errors, "memory "+m.ID+" blocked: "+detail)
+			}
+			h.logger.Warn("compat push: group sync failed", "claim_key", g.claimKey, "project_id", g.projectID, "error", err)
+			continue
+		}
+
+		for _, rr := range resp.Results {
+			switch rr.Status {
+			case "accepted":
+				out.Accepted++
+			default:
+				out.Rejected++
+				detail := rr.Detail
+				if detail == "" {
+					detail = rr.Rule
+				}
+				out.Errors = append(out.Errors, "memory "+rr.ID+" blocked: "+detail)
+			}
 		}
 	}
+
 	jsonResponse(w, http.StatusOK, out)
+}
+
+// autoProjectName derives a stable, human-readable project name from a
+// remote_project_key (typically SHA-256 of the git remote URL). The client
+// doesn't send a friendly name on the legacy push endpoint; this keeps the
+// dashboard usable until an admin renames the project.
+func autoProjectName(key string) string {
+	short := key
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	return "auto-" + short
 }
 
 // CompatPull adapts POST /api/v1/sync/pull to the bidirectional engine.
