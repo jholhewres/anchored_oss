@@ -322,3 +322,139 @@ func TestFilter_LifecycleNilMetadataAccepted(t *testing.T) {
 		t.Errorf("nil metadata should be accepted, got rule=%s", results[0].Rule)
 	}
 }
+
+func TestFilter_QualityLowSignalCurationRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "Postgres has MVCC", Category: "fact",
+			Metadata: map[string]any{"curation_status": "low_signal"}},
+	}
+	results := filter.Filter(items)
+	if results[0].Accepted {
+		t.Fatal("expected low_signal curation to be rejected")
+	}
+	if results[0].Rule != "low_signal" {
+		t.Errorf("rule: got %q, want low_signal", results[0].Rule)
+	}
+}
+
+func TestFilter_QualityLowScoreRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "Postgres has MVCC", Category: "fact",
+			Metadata: map[string]any{"quality_score": 0.40}},
+	}
+	results := filter.Filter(items)
+	if results[0].Accepted {
+		t.Fatal("expected low quality_score to be rejected")
+	}
+	if results[0].Rule != "low_quality" {
+		t.Errorf("rule: got %q, want low_quality", results[0].Rule)
+	}
+}
+
+func TestFilter_QualityPinnedBypassesScore(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "Postgres has MVCC", Category: "fact",
+			Metadata: map[string]any{"quality_score": 0.20, "pinned": true}},
+	}
+	results := filter.Filter(items)
+	if !results[0].Accepted {
+		t.Errorf("pinned memory should bypass quality, got rule=%s", results[0].Rule)
+	}
+}
+
+func TestFilter_QualityZeroScoreAccepted(t *testing.T) {
+	// score=0 means "not scored yet" — should pass through.
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "Postgres has MVCC", Category: "fact",
+			Metadata: map[string]any{"quality_score": 0.0}},
+	}
+	results := filter.Filter(items)
+	if !results[0].Accepted {
+		t.Errorf("zero score should pass (not scored), got rule=%s", results[0].Rule)
+	}
+}
+
+func TestFilter_QualityTestOutputFactRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "23 passed, 0 failed", Category: "fact"},
+	}
+	results := filter.Filter(items)
+	if results[0].Accepted {
+		t.Fatal("expected test output to be rejected as low_quality")
+	}
+	if results[0].Rule != "low_quality" {
+		t.Errorf("rule: got %q, want low_quality", results[0].Rule)
+	}
+}
+
+func TestFilter_QualityProgressFactRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "Corrigido o bug do scheduler", Category: "fact"},
+	}
+	results := filter.Filter(items)
+	if results[0].Accepted {
+		t.Fatal("expected progress chatter to be rejected")
+	}
+}
+
+func TestFilter_QualityTerminalTraceFactRejected(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "panic: nil pointer dereference at line 42", Category: "fact"},
+	}
+	results := filter.Filter(items)
+	if results[0].Accepted {
+		t.Fatal("expected terminal trace to be rejected")
+	}
+}
+
+func TestFilter_QualityLongFactWithTriggerWordsAccepted(t *testing.T) {
+	// Long, articulate facts are NOT operational chatter even if they
+	// mention "passed", "rodando", etc.
+	filter := NewContentFilter()
+	long := "When testing the new sync path, our suite went from 200 to 245 tests with 0 failures, " +
+		"validating that the throttling fix in the engine prevents the regression we saw in v1.2 " +
+		"where concurrent batches were rodando over each other and double-counting tombstones."
+	items := []Filterable{
+		{ID: "1", Content: long, Category: "fact"},
+	}
+	results := filter.Filter(items)
+	if !results[0].Accepted {
+		t.Errorf("long fact with trigger words should pass, got rule=%s", results[0].Rule)
+	}
+}
+
+func TestFilter_QualityDecisionWithTriggerWordsAccepted(t *testing.T) {
+	// The short-content heuristic only applies to category=fact.
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "23 passed, 0 failed — ship it", Category: "decision"},
+	}
+	results := filter.Filter(items)
+	if !results[0].Accepted {
+		t.Errorf("decision with trigger words should pass, got rule=%s", results[0].Rule)
+	}
+}
+
+func TestFilter_LifecycleHandoffKindWithOperationalAccepted(t *testing.T) {
+	filter := NewContentFilter()
+	items := []Filterable{
+		{ID: "1", Content: "context bridge for the next session about the auth refactor",
+			Category: "summary",
+			Metadata: map[string]any{"memory_type": "operational", "kind": "handoff"}},
+	}
+	results := filter.Filter(items)
+	// Origin=handoff still blocks. memory_type=operational + kind=handoff
+	// passes operational check, but if origin is also handoff it would
+	// block via lifecycle_local_origin. With only memory_type/kind set,
+	// it passes. Validate that.
+	if !results[0].Accepted {
+		t.Errorf("operational+handoff should pass when origin isn't set, got rule=%s", results[0].Rule)
+	}
+}

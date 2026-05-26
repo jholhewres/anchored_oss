@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
+	"github.com/jholhewres/anchored_oss/internal/policy"
 	"github.com/lib/pq"
 )
 
@@ -19,7 +20,29 @@ const memoryUpsertCols = 12
 // below Postgres' 65535-parameter limit (12 cols * 5000 rows = 60000).
 const memoryBatchSize = 1000
 
-// SearchMemories does ILIKE pattern matching on content and keywords.
+// qualityFilterSQL hides low-signal / mis-categorized rows from read paths.
+// Threshold mirrors policy.RemoteQualityThreshold so write and read stay in
+// sync. The `pinned=true` escape hatch lets clients keep a memory visible
+// even if its score is low.
+var qualityFilterSQL = fmt.Sprintf(`
+		   AND (metadata IS NULL OR metadata->>'curation_status' IS DISTINCT FROM 'low_signal')
+		   AND (
+		     metadata IS NULL
+		     OR jsonb_typeof(metadata->'quality_score') IS DISTINCT FROM 'number'
+		     OR (metadata->>'quality_score')::double precision >= %f
+		     OR (metadata->>'pinned')::boolean IS TRUE
+		   )
+		   AND (metadata IS NULL OR metadata->>'scope' IS DISTINCT FROM 'user')
+		   AND (
+		     metadata IS NULL
+		     OR metadata->>'memory_type' IS DISTINCT FROM 'operational'
+		     OR metadata->>'kind' = 'handoff'
+		   )
+		   AND (metadata IS NULL OR metadata->>'origin' IS DISTINCT FROM 'precompact')
+		   AND (metadata IS NULL OR metadata->>'origin' IS DISTINCT FROM 'handoff')`,
+	policy.RemoteQualityThreshold,
+)
+
 func (s *PostgresStore) SearchMemories(ctx context.Context, projectID string, query string, limit int) ([]*model.Memory, error) {
 	if limit <= 0 {
 		limit = 20
@@ -32,7 +55,7 @@ func (s *PostgresStore) SearchMemories(ctx context.Context, projectID string, qu
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
-		 WHERE project_id = $1 AND deleted_at IS NULL
+		 WHERE project_id = $1 AND deleted_at IS NULL` + qualityFilterSQL + `
 		   AND (content ILIKE $2 OR keywords::text ILIKE $2)
 		 ORDER BY updated_at DESC
 		 LIMIT $3`,
@@ -64,6 +87,7 @@ func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error
 		`INSERT INTO memories (id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, metadata)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 ON CONFLICT (id) DO UPDATE SET
+		   project_id = EXCLUDED.project_id,
 		   category = EXCLUDED.category,
 		   content = EXCLUDED.content,
 		   content_hash = EXCLUDED.content_hash,
@@ -132,6 +156,7 @@ func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Mem
 	query := `INSERT INTO memories (id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, metadata) VALUES ` +
 		strings.Join(placeholders, ",") +
 		` ON CONFLICT (id) DO UPDATE SET
+		   project_id = EXCLUDED.project_id,
 		   category = EXCLUDED.category,
 		   content = EXCLUDED.content,
 		   content_hash = EXCLUDED.content_hash,
@@ -154,7 +179,7 @@ func (s *PostgresStore) GetMemoriesUpdatedSince(ctx context.Context, projectID s
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
-		 WHERE project_id = $1 AND updated_at > $2 AND deleted_at IS NULL
+		 WHERE project_id = $1 AND updated_at > $2 AND deleted_at IS NULL` + qualityFilterSQL + `
 		 ORDER BY updated_at`,
 		projectID, since,
 	)
@@ -196,7 +221,7 @@ func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID str
 		        author_id, author_name, created_at, updated_at, deleted_at, metadata,
 		        COUNT(*) OVER() AS total
 		 FROM memories
-		 WHERE project_id = $1 AND deleted_at IS NULL
+		 WHERE project_id = $1 AND deleted_at IS NULL` + qualityFilterSQL + `
 		 ORDER BY updated_at DESC
 		 LIMIT $2 OFFSET $3`,
 		projectID, limit, offset,

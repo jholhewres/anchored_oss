@@ -9,11 +9,34 @@ import (
 	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
+	"github.com/jholhewres/anchored_oss/internal/policy"
 )
 
 // ---------------------------------------------------------------------------
 // Memory methods for SQLiteStore
 // ---------------------------------------------------------------------------
+
+// sqliteQualityFilterSQL hides low-signal / mis-categorized rows from read
+// paths. Mirrors qualityFilterSQL in memory.go (Postgres) using SQLite's
+// json_extract for metadata access.
+var sqliteQualityFilterSQL = fmt.Sprintf(`
+		   AND (metadata IS NULL OR json_extract(metadata, '$.curation_status') IS NOT 'low_signal')
+		   AND (
+		     metadata IS NULL
+		     OR json_extract(metadata, '$.quality_score') IS NULL
+		     OR CAST(json_extract(metadata, '$.quality_score') AS REAL) >= %f
+		     OR json_extract(metadata, '$.pinned') = 1
+		   )
+		   AND (metadata IS NULL OR json_extract(metadata, '$.scope') IS NOT 'user')
+		   AND (
+		     metadata IS NULL
+		     OR json_extract(metadata, '$.memory_type') IS NOT 'operational'
+		     OR json_extract(metadata, '$.kind') = 'handoff'
+		   )
+		   AND (metadata IS NULL OR json_extract(metadata, '$.origin') IS NOT 'precompact')
+		   AND (metadata IS NULL OR json_extract(metadata, '$.origin') IS NOT 'handoff')`,
+	policy.RemoteQualityThreshold,
+)
 
 // SearchMemories does LIKE pattern matching on content and keywords.
 func (s *SQLiteStore) SearchMemories(ctx context.Context, projectID string, query string, limit int) ([]*model.Memory, error) {
@@ -30,7 +53,7 @@ func (s *SQLiteStore) SearchMemories(ctx context.Context, projectID string, quer
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
-		 WHERE project_id = ? AND deleted_at IS NULL
+		 WHERE project_id = ? AND deleted_at IS NULL`+sqliteQualityFilterSQL+`
 		   AND (content LIKE ? ESCAPE '\' OR keywords LIKE ? ESCAPE '\')
 		 ORDER BY updated_at DESC
 		 LIMIT ?`,
@@ -59,6 +82,7 @@ func (s *SQLiteStore) UpsertMemory(ctx context.Context, m *model.Memory) error {
 		`INSERT INTO memories (id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, metadata)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (id) DO UPDATE SET
+		   project_id = excluded.project_id,
 		   category = excluded.category,
 		   content = excluded.content,
 		   content_hash = excluded.content_hash,
@@ -147,7 +171,7 @@ func (s *SQLiteStore) GetMemoriesUpdatedSince(ctx context.Context, projectID str
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
-		 WHERE project_id = ? AND updated_at > ? AND deleted_at IS NULL
+		 WHERE project_id = ? AND updated_at > ? AND deleted_at IS NULL`+sqliteQualityFilterSQL+`
 		 ORDER BY updated_at`,
 		projectID, since,
 	)
@@ -190,7 +214,7 @@ func (s *SQLiteStore) ListMemoriesPaginated(ctx context.Context, projectID strin
 		        author_id, author_name, created_at, updated_at, deleted_at, metadata,
 		        COUNT(*) OVER() AS total
 		 FROM memories
-		 WHERE project_id = ? AND deleted_at IS NULL
+		 WHERE project_id = ? AND deleted_at IS NULL`+sqliteQualityFilterSQL+`
 		 ORDER BY updated_at DESC
 		 LIMIT ? OFFSET ?`,
 		projectID, limit, offset,
