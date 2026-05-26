@@ -117,7 +117,7 @@ func (e *SyncEngine) resolveProject(ctx context.Context, orgID, accountID string
 		return "", &SyncError{Code: "INVALID_REQUEST", Status: 400, Msg: "project_claim.name does not produce a valid slug"}
 	}
 
-	proj, err := e.store.CreateProject(ctx, orgID, claim.Name, slug, claim.RemoteKey, accountID)
+	proj, err := e.store.CreateProject(ctx, orgID, claim.Name, slug, claim.RemoteKey, accountID, "other")
 	if err != nil {
 		e.logger.Error("project creation from claim failed", "remote_key", claim.RemoteKey, "error", err)
 		return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "failed to create project"}

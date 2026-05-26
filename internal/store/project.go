@@ -11,13 +11,13 @@ import (
 
 const defaultTeamSlug = "default"
 
-func (s *PostgresStore) CreateProject(ctx context.Context, orgID, name, slug, remoteKey, createdBy string) (*model.Project, error) {
+func (s *PostgresStore) CreateProject(ctx context.Context, orgID, name, slug, remoteKey, createdBy, category string) (*model.Project, error) {
 	var p model.Project
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO projects (org_id, name, slug, remote_key, created_by) VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, org_id, name, slug, remote_key, created_by, created_at`,
-		orgID, name, slug, remoteKey, createdBy,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
+		`INSERT INTO projects (org_id, name, slug, remote_key, created_by, category) VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, org_id, name, slug, category, remote_key, created_by, created_at`,
+		orgID, name, slug, remoteKey, createdBy, category,
+	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create project: %w", err)
 	}
@@ -27,9 +27,9 @@ func (s *PostgresStore) CreateProject(ctx context.Context, orgID, name, slug, re
 func (s *PostgresStore) GetProjectByID(ctx context.Context, id string) (*model.Project, error) {
 	var p model.Project
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, remote_key, created_by, created_at FROM projects WHERE id = $1`,
+		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at FROM projects WHERE id = $1`,
 		id,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
+	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -45,10 +45,10 @@ func (s *PostgresStore) GetProjectByID(ctx context.Context, id string) (*model.P
 func (s *PostgresStore) GetActiveProjectByID(ctx context.Context, id string) (*model.Project, error) {
 	var p model.Project
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, remote_key, created_by, created_at
+		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at
 		 FROM projects WHERE id = $1 AND deleted_at IS NULL`,
 		id,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
+	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -110,9 +110,9 @@ func (s *PostgresStore) SoftDeleteProject(ctx context.Context, id string) error 
 func (s *PostgresStore) GetProjectByRemoteKey(ctx context.Context, orgID, remoteKey string) (*model.Project, error) {
 	var p model.Project
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, remote_key, created_by, created_at FROM projects WHERE org_id = $1 AND remote_key = $2`,
+		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at FROM projects WHERE org_id = $1 AND remote_key = $2`,
 		orgID, remoteKey,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
+	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -124,7 +124,7 @@ func (s *PostgresStore) GetProjectByRemoteKey(ctx context.Context, orgID, remote
 
 func (s *PostgresStore) ListProjectsByTeamAccess(ctx context.Context, accountID string) ([]*model.Project, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.remote_key, p.created_by, p.created_at
+		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.category, p.remote_key, p.created_by, p.created_at
 		 FROM projects p
 		 JOIN team_project_access tpa ON tpa.project_id = p.id
 		 JOIN team_members tm ON tm.team_id = tpa.team_id
@@ -140,7 +140,7 @@ func (s *PostgresStore) ListProjectsByTeamAccess(ctx context.Context, accountID 
 	var projects []*model.Project
 	for rows.Next() {
 		var p model.Project
-		if err := rows.Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan project: %w", err)
 		}
 		projects = append(projects, &p)

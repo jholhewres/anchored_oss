@@ -1,0 +1,98 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jholhewres/anchored_oss/internal/model"
+)
+
+func (s *SQLiteStore) GetMemoryByID(ctx context.Context, id string) (*model.Memory, error) {
+	var m model.Memory
+	var metadataBytes []byte
+	var kwBytes []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
+		 FROM memories WHERE id = ?`,
+		id,
+	).Scan(&m.ID, &m.ProjectID, &m.Category, &m.Content, &m.ContentHash,
+		&kwBytes, &m.Source, &m.AuthorID, &m.AuthorName,
+		scanTime(&m.CreatedAt), scanTime(&m.UpdatedAt), scanNullTime(&m.DeletedAt), &metadataBytes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get memory by id: %w", err)
+	}
+	if len(kwBytes) > 0 {
+		if err := json.Unmarshal(kwBytes, &m.Keywords); err != nil {
+			return nil, fmt.Errorf("unmarshal memory keywords: %w", err)
+		}
+	}
+	if metadataBytes != nil {
+		if err := json.Unmarshal(metadataBytes, &m.Metadata); err != nil {
+			return nil, fmt.Errorf("unmarshal memory metadata: %w", err)
+		}
+	}
+	return &m, nil
+}
+
+func (s *SQLiteStore) UpdateMemoryMetadata(ctx context.Context, id string, metadata any) error {
+	b, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
+	// SQLite: read existing metadata, merge in Go, write back.
+	var existing []byte
+	err = s.db.QueryRowContext(ctx, `SELECT metadata FROM memories WHERE id = ?`, id).Scan(&existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("read existing metadata: %w", err)
+	}
+
+	merged := make(map[string]any)
+	if len(existing) > 0 {
+		if err := json.Unmarshal(existing, &merged); err != nil {
+			return fmt.Errorf("unmarshal existing metadata: %w", err)
+		}
+	}
+	var patch map[string]any
+	if err := json.Unmarshal(b, &patch); err != nil {
+		return fmt.Errorf("unmarshal patch metadata: %w", err)
+	}
+	for k, v := range patch {
+		merged[k] = v
+	}
+	out, err := json.Marshal(merged)
+	if err != nil {
+		return fmt.Errorf("marshal merged metadata: %w", err)
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE memories SET metadata = ? WHERE id = ?`,
+		string(out), id,
+	); err != nil {
+		return fmt.Errorf("update memory metadata: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListProjectMemoriesSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
+		 FROM memories WHERE project_id = ? AND deleted_at IS NULL AND created_at >= ?
+		 ORDER BY created_at`,
+		projectID, since,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list project memories since: %w", err)
+	}
+	defer rows.Close()
+	return sqliteScanMemories(rows)
+}

@@ -31,7 +31,6 @@ type SetupConfig struct {
 type yamlConfig struct {
 	Server   yamlServer   `yaml:"server"`
 	Database yamlDatabase `yaml:"database"`
-	Mode     yamlMode     `yaml:"mode"`
 }
 
 type yamlServer struct {
@@ -41,10 +40,6 @@ type yamlServer struct {
 type yamlDatabase struct {
 	Driver string `yaml:"driver"`
 	DSN    string `yaml:"dsn"`
-}
-
-type yamlMode struct {
-	Type string `yaml:"type"`
 }
 
 func RunInteractive() error {
@@ -172,7 +167,6 @@ func writeConfigFile(cfg SetupConfig) error {
 			Driver: cfg.Driver,
 			DSN:    cfg.DSN,
 		},
-		Mode: yamlMode{Type: "selfhosted"},
 	}
 
 	data, err := yaml.Marshal(out)

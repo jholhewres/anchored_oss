@@ -19,6 +19,14 @@ func (s *PostgresStore) CreateOrganization(ctx context.Context, name, slug strin
 	return &o, nil
 }
 
+func (s *PostgresStore) CountOrganizations(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM organizations`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count organizations: %w", err)
+	}
+	return n, nil
+}
+
 func (s *PostgresStore) AddOrgMember(ctx context.Context, orgID, accountID, role string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO org_members (org_id, account_id, role) VALUES ($1, $2, $3)

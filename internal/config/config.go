@@ -13,19 +13,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DefaultMode is set via:
-//
-//	-ldflags "-X github.com/jholhewres/anchored_oss/internal/config.DefaultMode=cloud"
-//
-// at build time. Defaults to "selfhosted" for the self-hosted binary.
-var DefaultMode = "selfhosted"
-
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
 	CORS     CORSConfig     `yaml:"cors"`
-	Mode     ModeConfig     `yaml:"mode"`
 	Quota    QuotaConfig    `yaml:"quota"`
+	Curation CurationConfig `yaml:"curation"`
+}
+
+type CurationConfig struct {
+	WorkerEnabled    bool          `yaml:"worker_enabled"`
+	BatchSize        int           `yaml:"batch_size"`
+	Interval         time.Duration `yaml:"interval"`
+	NearDupWindow    time.Duration `yaml:"near_dup_window"`
+	NearDupThreshold float64       `yaml:"near_dup_threshold"`
 }
 
 type ServerConfig struct {
@@ -35,10 +36,10 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Driver         string        `yaml:"driver"`
-	DSN            string        `yaml:"dsn"`
-	MaxOpenConns   int           `yaml:"max_open_conns"`
-	MaxIdleConns   int           `yaml:"max_idle_conns"`
+	Driver          string        `yaml:"driver"`
+	DSN             string        `yaml:"dsn"`
+	MaxOpenConns    int           `yaml:"max_open_conns"`
+	MaxIdleConns    int           `yaml:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
 }
 
@@ -46,23 +47,8 @@ type CORSConfig struct {
 	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
-type ModeConfig struct {
-	Type string `yaml:"type"` // "cloud" or "selfhosted" (default)
-}
-
 type QuotaConfig struct {
 	MaxStorageBytes int64 `yaml:"max_storage_bytes"` // 0 = unlimited
-}
-
-// IsCloud returns true when the server runs in cloud (multi-tenant) mode.
-func (c *Config) IsCloud() bool {
-	return c.Mode.Type == "cloud"
-}
-
-// IsSelfHosted returns true when the server runs in self-hosted (single-tenant) mode.
-// This is the default.
-func (c *Config) IsSelfHosted() bool {
-	return c.Mode.Type != "cloud"
 }
 
 // DefaultConfig returns conservative defaults intended for local dev only.
@@ -85,11 +71,15 @@ func DefaultConfig() *Config {
 		CORS: CORSConfig{
 			AllowedOrigins: nil,
 		},
-		Mode: ModeConfig{
-			Type: DefaultMode,
-		},
 		Quota: QuotaConfig{
 			MaxStorageBytes: 0,
+		},
+		Curation: CurationConfig{
+			WorkerEnabled:    true,
+			BatchSize:        100,
+			Interval:         5 * time.Second,
+			NearDupWindow:    720 * time.Hour,
+			NearDupThreshold: 0.85,
 		},
 	}
 }
@@ -156,9 +146,6 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {
 		cfg.CORS.AllowedOrigins = parseCSV(origins)
-	}
-	if mode := os.Getenv("MODE"); mode != "" {
-		cfg.Mode.Type = mode
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/config"
+	"github.com/jholhewres/anchored_oss/internal/curation"
 	"github.com/jholhewres/anchored_oss/internal/server"
 	"github.com/jholhewres/anchored_oss/internal/setup"
 	"github.com/jholhewres/anchored_oss/internal/store"
@@ -86,15 +87,20 @@ func main() {
 
 	srv := server.New(cfg, st, logger)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.Curation.WorkerEnabled {
+		w := curation.NewWorker(cfg, st, logger)
+		go w.Start(ctx)
+	}
+
 	go func() {
 		if err := srv.Start(); err != nil {
 			logger.Error("server error", "error", err)
 			os.Exit(1)
 		}
 	}()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	<-ctx.Done()
 	slog.Info("shutting down")

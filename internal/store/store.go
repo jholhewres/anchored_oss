@@ -23,8 +23,13 @@ type Store interface {
 	SetAccountPassword(ctx context.Context, accountID, passwordHash string) error
 	GetOrCreateAccountByEmail(ctx context.Context, orgID, email, displayName string) (account *model.Account, created bool, err error)
 	ListAccountsByOrg(ctx context.Context, orgID string) ([]*model.AccountWithRole, error)
+	UpdateAccount(ctx context.Context, id, displayName, role string) error
+	SoftDeleteAccount(ctx context.Context, id string) error
+	ListAccountProjects(ctx context.Context, accountID string) ([]*model.Project, error)
+	SetAccountProjects(ctx context.Context, orgID, accountID string, projectIDs []string) error
 	CreateOrganization(ctx context.Context, name, slug string) (*model.Organization, error)
 	AddOrgMember(ctx context.Context, orgID, accountID, role string) error
+	CountOrganizations(ctx context.Context) (int, error)
 
 	// Teams.
 	CreateTeam(ctx context.Context, orgID, name, slug string) (*model.Team, error)
@@ -34,7 +39,7 @@ type Store interface {
 	RemoveTeamMember(ctx context.Context, teamID, accountID string) error
 
 	// Projects + team access.
-	CreateProject(ctx context.Context, orgID, name, slug, remoteKey, createdBy string) (*model.Project, error)
+	CreateProject(ctx context.Context, orgID, name, slug, remoteKey, createdBy, category string) (*model.Project, error)
 	GetProjectByID(ctx context.Context, id string) (*model.Project, error)
 	GetActiveProjectByID(ctx context.Context, id string) (*model.Project, error)
 	GetProjectByRemoteKey(ctx context.Context, orgID, remoteKey string) (*model.Project, error)
@@ -59,6 +64,9 @@ type Store interface {
 	ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int) (memories []*model.Memory, total int, err error)
 	SoftDeleteMemory(ctx context.Context, id, projectID string) error
 	GetTombstonesSince(ctx context.Context, projectID string, since time.Time) ([]string, error)
+	GetMemoryByID(ctx context.Context, id string) (*model.Memory, error)
+	UpdateMemoryMetadata(ctx context.Context, id string, metadata any) error
+	ListProjectMemoriesSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error)
 
 	// API keys.
 	CreateAPIKey(ctx context.Context, orgID, accountID, name, keyPrefix, keyHash, scope string, expiresAt *time.Time) (*model.APIKey, error)
@@ -85,4 +93,17 @@ type Store interface {
 	// GetOrgStorageBytes returns the total bytes used by non-deleted memories
 	// in all active projects under the given org.
 	GetOrgStorageBytes(ctx context.Context, orgID string) (int64, error)
+
+	// Invites.
+	CreateInvite(ctx context.Context, orgID, email, displayName, role, tokenHash string, expiresAt time.Time, createdBy string) (*model.Invite, error)
+	GetInviteByTokenHash(ctx context.Context, tokenHash string) (*model.Invite, error)
+	ListInvitesByOrg(ctx context.Context, orgID string) ([]*model.Invite, error)
+	DeleteInvite(ctx context.Context, id string) error
+	MarkInviteAccepted(ctx context.Context, id string) error
+
+	// Curation queue.
+	EnqueueCuration(ctx context.Context, memoryIDs []string) error
+	ClaimCurationBatch(ctx context.Context, batchSize int) ([]string, error)
+	SetCurationDone(ctx context.Context, memoryID string) error
+	SetCurationFailed(ctx context.Context, memoryID, errMsg string) error
 }

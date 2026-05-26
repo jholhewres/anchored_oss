@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 7
+const sqliteSchemaVersion = 10
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -176,14 +176,54 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_triples_logical
     WHERE valid_to IS NULL;
 `
 
+// sqliteMigration008 mirrors Postgres 008: project.category.
+const sqliteMigration008 = ``
+
+// sqliteMigration009 mirrors Postgres 009: invites table.
+const sqliteMigration009 = `
+CREATE TABLE IF NOT EXISTS invites (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'sync',
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT,
+    created_by TEXT REFERENCES accounts(id),
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_invites_org_pending ON invites(org_id) WHERE accepted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_invites_email ON invites(email);
+`
+
+// sqliteMigration010 mirrors Postgres 010: curation_queue.
+const sqliteMigration010 = `
+CREATE TABLE IF NOT EXISTS curation_queue (
+    memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    scheduled_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_curation_queue_pending
+    ON curation_queue(scheduled_at)
+    WHERE status = 'pending';
+`
+
 var sqliteMigrations = map[int]string{
-	1: sqliteMigration001,
-	2: sqliteMigration002,
-	3: sqliteMigration003,
-	4: sqliteMigration004,
-	5: sqliteMigration005,
-	6: sqliteMigration006,
-	7: sqliteMigration007,
+	1:  sqliteMigration001,
+	2:  sqliteMigration002,
+	3:  sqliteMigration003,
+	4:  sqliteMigration004,
+	5:  sqliteMigration005,
+	6:  sqliteMigration006,
+	7:  sqliteMigration007,
+	8:  sqliteMigration008,
+	9:  sqliteMigration009,
+	10: sqliteMigration010,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {
@@ -230,6 +270,18 @@ func MigrateSQLite(db *sql.DB) error {
 			if _, err := tx.Exec(`ALTER TABLE accounts ADD COLUMN password_hash TEXT`); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("migration %d add password_hash: %w", v, err)
+			}
+		}
+
+		// Handle ALTER TABLE ADD COLUMN for migration 8 (project.category).
+		if v == 8 && !columnExists(db, "projects", "category") {
+			if _, err := tx.Exec(`ALTER TABLE projects ADD COLUMN category TEXT NOT NULL DEFAULT 'other'`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d add category: %w", v, err)
+			}
+			if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_projects_org_category ON projects(org_id, category) WHERE deleted_at IS NULL`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d index category: %w", v, err)
 			}
 		}
 

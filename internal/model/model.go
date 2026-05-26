@@ -30,10 +30,25 @@ type Project struct {
 	OrgID     string     `json:"org_id"`
 	Name      string     `json:"name"`
 	Slug      string     `json:"slug"`
+	Category  string     `json:"category"`
 	RemoteKey string     `json:"remote_key"`
 	CreatedBy string     `json:"created_by"`
 	CreatedAt time.Time  `json:"created_at"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+}
+
+// ProjectCategories enumerates the canonical category values the dashboard
+// groups projects by. Anything else is normalized to "other" by the handler.
+var ProjectCategories = []string{"service", "library", "app", "infra", "experiment", "other"}
+
+// NormalizeCategory returns a valid category value, falling back to "other".
+func NormalizeCategory(c string) string {
+	for _, v := range ProjectCategories {
+		if v == c {
+			return c
+		}
+	}
+	return "other"
 }
 
 type Memory struct {
@@ -128,6 +143,19 @@ type Triple struct {
 	Confidence float64   `json:"confidence"`
 	ProjectID  string    `json:"project_id"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+type Invite struct {
+	ID          string     `json:"id"`
+	OrgID       string     `json:"org_id"`
+	Email       string     `json:"email"`
+	DisplayName string     `json:"display_name"`
+	Role        string     `json:"role"`
+	TokenHash   string     `json:"-"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	AcceptedAt  *time.Time `json:"accepted_at,omitempty"`
+	CreatedBy   string     `json:"created_by,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 type DashboardStats struct {

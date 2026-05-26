@@ -34,7 +34,12 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	healthHandler := handler.NewHealthHandler(version.Version, st)
 	mux.HandleFunc("GET /v1/health", healthHandler.ServeHTTP)
 
-	mux.HandleFunc("GET /v1/mode", modeHandler(cfg))
+	bootstrapStatusHandler := handler.NewBootstrapStatusHandler(st, logger)
+	mux.HandleFunc("GET /v1/bootstrap-status", bootstrapStatusHandler.Get)
+
+	onboardingHandler := handler.NewOnboardingHandler(st, logger)
+	mux.HandleFunc("POST /v1/onboarding/complete", onboardingHandler.Complete)
+
 	mux.Handle("GET /install", web.InstallHandler("anchored.sh"))
 	mux.Handle("GET /install-oss", web.InstallHandler("anchored-oss.sh"))
 
@@ -53,6 +58,17 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	accountHandler := handler.NewAccountHandler(st, logger)
 	mux.HandleFunc("GET /v1/accounts", authMW(requireAdmin(http.HandlerFunc(accountHandler.List))).ServeHTTP)
 	mux.HandleFunc("POST /v1/accounts", authMW(requireAdmin(http.HandlerFunc(accountHandler.Create))).ServeHTTP)
+	mux.HandleFunc("PATCH /v1/accounts/{id}", authMW(requireAdmin(http.HandlerFunc(accountHandler.Update))).ServeHTTP)
+	mux.HandleFunc("DELETE /v1/accounts/{id}", authMW(requireAdmin(http.HandlerFunc(accountHandler.Delete))).ServeHTTP)
+	mux.HandleFunc("GET /v1/accounts/{id}/projects", authMW(requireAdmin(http.HandlerFunc(accountHandler.ListProjects))).ServeHTTP)
+	mux.HandleFunc("PUT /v1/accounts/{id}/projects", authMW(requireAdmin(http.HandlerFunc(accountHandler.SetProjects))).ServeHTTP)
+
+	inviteHandler := handler.NewInviteHandler(st, logger)
+	mux.HandleFunc("POST /v1/invites", authMW(requireAdmin(http.HandlerFunc(inviteHandler.Create))).ServeHTTP)
+	mux.HandleFunc("GET /v1/invites", authMW(requireAdmin(http.HandlerFunc(inviteHandler.List))).ServeHTTP)
+	mux.HandleFunc("DELETE /v1/invites/{id}", authMW(requireAdmin(http.HandlerFunc(inviteHandler.Revoke))).ServeHTTP)
+	mux.HandleFunc("GET /v1/invites/accept/{token}", inviteHandler.Get)
+	mux.HandleFunc("POST /v1/invites/accept/{token}", inviteHandler.Accept)
 
 	teamHandler := handler.NewTeamHandler(st, logger)
 	mux.HandleFunc("GET /v1/teams", authMW(http.HandlerFunc(teamHandler.List)).ServeHTTP)
@@ -92,10 +108,8 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	mux.HandleFunc("POST /v1/memories", authMW(http.HandlerFunc(memoryHandler.Create)).ServeHTTP)
 	mux.HandleFunc("GET /v1/memories/search", authMW(http.HandlerFunc(memoryHandler.Search)).ServeHTTP)
 
-	if cfg.IsCloud() {
-		registerHandler := handler.NewRegisterHandler(st, logger)
-		mux.HandleFunc("POST /v1/auth/register", registerHandler.Register)
-	}
+	registerHandler := handler.NewRegisterHandler(st, logger)
+	mux.HandleFunc("POST /v1/auth/register", registerHandler.Register)
 
 	// SPA fallback. The handler internally returns 404 JSON for /v1/* and
 	// /api/* paths so the dashboard never masks an API typo.

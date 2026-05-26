@@ -21,6 +21,14 @@ func (s *SQLiteStore) CreateOrganization(ctx context.Context, name, slug string)
 	return &o, nil
 }
 
+func (s *SQLiteStore) CountOrganizations(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM organizations`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count organizations: %w", err)
+	}
+	return n, nil
+}
+
 func (s *SQLiteStore) AddOrgMember(ctx context.Context, orgID, accountID, role string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO org_members (id, org_id, account_id, role) VALUES (?, ?, ?, ?)

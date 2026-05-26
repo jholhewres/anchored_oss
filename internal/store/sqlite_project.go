@@ -9,14 +9,15 @@ import (
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
 
-func (s *SQLiteStore) CreateProject(ctx context.Context, orgID, name, slug, remoteKey, createdBy string) (*model.Project, error) {
+func (s *SQLiteStore) CreateProject(ctx context.Context, orgID, name, slug, remoteKey, createdBy, category string) (*model.Project, error) {
 	id := newUUID()
+	category = model.NormalizeCategory(category)
 	var p model.Project
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO projects (id, org_id, name, slug, remote_key, created_by) VALUES (?, ?, ?, ?, ?, ?)
-		 RETURNING id, org_id, name, slug, remote_key, created_by, created_at`,
-		id, orgID, name, slug, remoteKey, createdBy,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt))
+		`INSERT INTO projects (id, org_id, name, slug, remote_key, created_by, category) VALUES (?, ?, ?, ?, ?, ?, ?)
+		 RETURNING id, org_id, name, slug, category, remote_key, created_by, created_at`,
+		id, orgID, name, slug, remoteKey, createdBy, category,
+	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("create project: %w", err)
 	}
@@ -26,9 +27,9 @@ func (s *SQLiteStore) CreateProject(ctx context.Context, orgID, name, slug, remo
 func (s *SQLiteStore) GetProjectByID(ctx context.Context, id string) (*model.Project, error) {
 	var p model.Project
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, remote_key, created_by, created_at FROM projects WHERE id = ?`,
+		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at FROM projects WHERE id = ?`,
 		id,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt))
+	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -41,10 +42,10 @@ func (s *SQLiteStore) GetProjectByID(ctx context.Context, id string) (*model.Pro
 func (s *SQLiteStore) GetActiveProjectByID(ctx context.Context, id string) (*model.Project, error) {
 	var p model.Project
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, remote_key, created_by, created_at
+		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at
 		 FROM projects WHERE id = ? AND deleted_at IS NULL`,
 		id,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt))
+	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -57,9 +58,9 @@ func (s *SQLiteStore) GetActiveProjectByID(ctx context.Context, id string) (*mod
 func (s *SQLiteStore) GetProjectByRemoteKey(ctx context.Context, orgID, remoteKey string) (*model.Project, error) {
 	var p model.Project
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, remote_key, created_by, created_at FROM projects WHERE org_id = ? AND remote_key = ?`,
+		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at FROM projects WHERE org_id = ? AND remote_key = ?`,
 		orgID, remoteKey,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt))
+	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -71,7 +72,7 @@ func (s *SQLiteStore) GetProjectByRemoteKey(ctx context.Context, orgID, remoteKe
 
 func (s *SQLiteStore) ListProjectsByTeamAccess(ctx context.Context, accountID string) ([]*model.Project, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.remote_key, p.created_by, p.created_at
+		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.category, p.remote_key, p.created_by, p.created_at
 		 FROM projects p
 		 JOIN team_project_access tpa ON tpa.project_id = p.id
 		 JOIN team_members tm ON tm.team_id = tpa.team_id
@@ -87,7 +88,7 @@ func (s *SQLiteStore) ListProjectsByTeamAccess(ctx context.Context, accountID st
 	var projects []*model.Project
 	for rows.Next() {
 		var p model.Project
-		if err := rows.Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt)); err != nil {
+		if err := rows.Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, scanTime(&p.CreatedAt)); err != nil {
 			return nil, fmt.Errorf("scan project: %w", err)
 		}
 		projects = append(projects, &p)

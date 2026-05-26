@@ -26,6 +26,7 @@ type createProjectRequest struct {
 	Name      string `json:"name"`
 	Slug      string `json:"slug"`
 	RemoteKey string `json:"remote_key"`
+	Category  string `json:"category"`
 }
 
 type listMemoriesResponse struct {
@@ -90,7 +91,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, req.RemoteKey, accountID)
+	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, req.RemoteKey, accountID, model.NormalizeCategory(req.Category))
 	if err != nil {
 		h.logger.Error("create project failed", "error", err, "org_id", orgID)
 		jsonError(w, http.StatusInternalServerError, "failed to create project")

@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 7
+const schemaVersion = 10
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -196,14 +196,64 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_triples_logical
     WHERE valid_to IS NULL;
 `
 
+// migration008 adds a project.category column for organizing the dashboard.
+// Categories are validated at the application layer (service/library/app/
+// infra/experiment/other). 'other' is a safe default for legacy rows.
+const migration008 = `
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other';
+CREATE INDEX IF NOT EXISTS idx_projects_org_category ON projects(org_id, category) WHERE deleted_at IS NULL;
+`
+
+// migration009 introduces invite tokens for inviting new developers. Tokens
+// are stored hashed so the raw value never sits in the database; only the
+// /invite/:token URL carries it. Expiry is enforced at the handler level.
+const migration009 = `
+CREATE TABLE IF NOT EXISTS invites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'sync',
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    accepted_at TIMESTAMPTZ,
+    created_by UUID REFERENCES accounts(id),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_invites_org_pending ON invites(org_id) WHERE accepted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_invites_email ON invites(email);
+`
+
+// migration010 introduces the curation queue used by the async worker. Each
+// new memory inserts one queue row that the worker picks up to compute
+// quality_score, detect near-duplicates within the project, and update
+// metadata. Status transitions: pending -> processing -> done|failed.
+const migration010 = `
+CREATE TABLE IF NOT EXISTS curation_queue (
+    memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    scheduled_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_curation_queue_pending
+    ON curation_queue(scheduled_at)
+    WHERE status = 'pending';
+`
+
 var migrations = map[int]string{
-	1: migration001,
-	2: migration002,
-	3: migration003,
-	4: migration004,
-	5: migration005,
-	6: migration006,
-	7: migration007,
+	1:  migration001,
+	2:  migration002,
+	3:  migration003,
+	4:  migration004,
+	5:  migration005,
+	6:  migration006,
+	7:  migration007,
+	8:  migration008,
+	9:  migration009,
+	10: migration010,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

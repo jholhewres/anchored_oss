@@ -106,6 +106,7 @@ func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error
 	if err != nil {
 		return fmt.Errorf("upsert memory: %w", err)
 	}
+	_ = s.EnqueueCuration(ctx, []string{m.ID})
 	return nil
 }
 
@@ -172,6 +173,11 @@ func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Mem
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("upsert memories batch: %w", err)
 	}
+	ids := make([]string, len(ms))
+	for i, m := range ms {
+		ids[i] = m.ID
+	}
+	_ = s.EnqueueCuration(ctx, ids)
 	return nil
 }
 
