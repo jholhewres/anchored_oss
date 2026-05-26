@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AppLayout } from "@/components/layout/AppLayout";
-import { RequireAuth } from "@/lib/auth";
+import { RedirectIfAuth, RequireAuth } from "@/lib/auth";
 import { getMode } from "@/lib/api";
 import type { Mode } from "@/lib/types";
 import { LoginPage } from "@/pages/LoginPage";
@@ -28,7 +28,14 @@ export function App() {
   if (mode === "cloud") {
     return (
       <Routes>
-        <Route path="/" element={<LandingPage />} />
+        <Route
+          path="/"
+          element={
+            <RedirectIfAuth>
+              <LandingPage />
+            </RedirectIfAuth>
+          }
+        />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route
@@ -55,7 +62,14 @@ export function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
+      <Route
+        path="/"
+        element={
+          <RedirectIfAuth>
+            <LandingPage />
+          </RedirectIfAuth>
+        }
+      />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route

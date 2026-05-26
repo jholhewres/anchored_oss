@@ -7,6 +7,7 @@ import {
   Badge,
 } from "@/ds/components";
 import { I, AnchoredOSSLogo, AnchoredLogo } from "@/ds/icons";
+import { useAuth } from "@/lib/auth";
 
 export function LandingPage() {
   return (
@@ -1034,6 +1035,10 @@ export function LandingPage() {
 
 // ─── LandingHeader ──────────────────────────────────────────
 function LandingHeader() {
+  // Authenticated visitors land here only if RedirectIfAuth couldn't redirect
+  // (e.g., session still loading, or a stale /login bookmark). Show a Dashboard
+  // shortcut instead of the Sign-in CTA so the header reflects the real state.
+  const { me } = useAuth();
   return (
     <header
       style={{
@@ -1089,9 +1094,32 @@ function LandingHeader() {
           <I.github size={14} /> star
         </a>
         <span style={{ width: 1, height: 18, background: "var(--border)" }} />
-        <Btn as="a" href="#oss" variant="primary" size="sm" iconR={<I.arrowR />}>
-          anchored OSS
-        </Btn>
+        {me ? (
+          <Btn
+            as="a"
+            href="/projects"
+            variant="primary"
+            size="sm"
+            iconR={<I.arrowR />}
+          >
+            Go to dashboard
+          </Btn>
+        ) : (
+          <>
+            <Btn as="a" href="/login" variant="ghost" size="sm">
+              Sign in
+            </Btn>
+            <Btn
+              as="a"
+              href="#oss"
+              variant="primary"
+              size="sm"
+              iconR={<I.arrowR />}
+            >
+              anchored OSS
+            </Btn>
+          </>
+        )}
       </div>
     </header>
   );
