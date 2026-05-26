@@ -19,12 +19,13 @@ It is designed as the open/self-hosted counterpart to the future Anchored Cloud 
 curl -fsSL https://anchoredoss.dev/install | sh
 
 # Anchored OSS self-hosted team server
-curl -fsSL https://anchoredoss.dev/install-oss | sh
+curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored-oss/main/install.sh | sh
 ```
 
-The same scripts are versioned in this repository at `install/anchored.sh`
-and `install/install.sh`. The Go server also serves them directly from the
-binary at `/install` and `/install-oss`.
+The public distribution repository is `jholhewres/anchored-oss`. It contains
+only installer/version metadata and GitHub Release assets; the server source
+remains private. The embedded `/install-oss` endpoint serves the same PM2-based
+installer for deployments that prefer the product domain.
 
 ### Docker Compose
 

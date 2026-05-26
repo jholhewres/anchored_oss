@@ -464,7 +464,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinish: () => void }) {
   const [revealKey, setRevealKey] = useState(false);
   const origin = window.location.origin;
-  const installCmd = "curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored/main/install/install.sh | bash";
+  const installCmd = "curl -fsSL https://anchoredoss.dev/install | bash";
   const configureCmd = `anchored remote configure --server ${origin} --key ${result.api_key}`;
   const linkCmds = result.projects.map(p => `anchored remote link ${p.id}`);
 
