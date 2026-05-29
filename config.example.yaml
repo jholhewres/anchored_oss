@@ -31,3 +31,67 @@ quota:
   # Max storage per organization in bytes. 0 means unlimited.
   # In cloud mode the default limit is 1 GB (1073741824).
   max_storage_bytes: 0
+
+rate_limit:
+  # Per-client token-bucket limiter (client = first X-Forwarded-For hop, else
+  # RemoteAddr). The global bucket guards every endpoint; the auth bucket is a
+  # stricter limit on /v1/auth/login and /v1/auth/register against brute force.
+  # Override with RATE_LIMIT_ENABLED and RATE_LIMIT_RPM.
+  enabled: true
+  requests_per_minute: 600
+  burst: 120
+  auth_requests_per_minute: 10
+  auth_burst: 5
+
+audit:
+  # Audit retention sweep. Entries older than retention_days are deleted every
+  # purge_interval, bounding audit_log growth. Set retention_days to 0 to keep
+  # everything forever. Override retention with AUDIT_RETENTION_DAYS.
+  retention_days: 90
+  purge_interval: 6h
+
+embeddings:
+  # Semantic search embeddings. The curation worker embeds each accepted memory
+  # and the dashboard/API can search with ?mode=semantic.
+  #   provider: local  -> dependency-free hashing embedder (zero-config default).
+  #                       Captures lexical overlap only, NOT real semantics.
+  #             onnx   -> real local semantic model
+  #                       (paraphrase-multilingual-MiniLM-L12-v2, 384d, PT-BR+EN).
+  #                       No paid API; runs the model in-process via ONNX Runtime
+  #                       (downloaded on first run). Same vector space as the
+  #                       anchored CLI. Recommended for production semantic search.
+  #             openai -> any OpenAI-compatible /v1/embeddings endpoint
+  #             none   -> disable embeddings (text search only)
+  # dimensions MUST match the pgvector column (384). Changing provider/model
+  # requires a reindex (`anchored-oss -reindex`); the model is stored per-vector
+  # so reindex re-embeds only rows whose model differs.
+  provider: local
+  model: local-hash-v1
+  dimensions: 384
+  # For provider: onnx (real local semantic, recommended for production):
+  # provider: onnx
+  # dimensions: 384
+  # model_dir: /opt/anchored-oss/data/onnx   # model files live under a per-model
+  #                                           # subdir here; the runtime .so goes in
+  #                                           # a sibling lib/ dir. Both auto-download
+  #                                           # on first run (~470MB model, ~15MB lib).
+  #                                           # After enabling, run `anchored-oss -reindex`.
+  # For provider: openai (OpenAI, z.ai, OpenRouter, ...):
+  # provider: openai
+  # model: text-embedding-3-small
+  # dimensions: 1536            # note: != 384 needs a matching vector column
+  # base_url: https://api.openai.com/v1
+  # api_key_env: OPENAI_API_KEY  # key read from this env var, never stored here
+
+chat:
+  # Optional RAG chat (POST /v1/chat). OFF by default — it's a pre-context
+  # helper, not the product's core. When enabled, the endpoint retrieves
+  # relevant team memories via semantic search and asks the provider to answer
+  # grounded in them. provider: openai (covers OpenAI/z.ai/OpenRouter) or
+  # anthropic. The API key is read from api_key_env, never stored here.
+  enabled: false
+  # provider: openai
+  # model: gpt-4o-mini
+  # base_url: https://api.openai.com/v1   # or https://api.z.ai/... , openrouter, etc.
+  # api_key_env: OPENAI_API_KEY
+  # max_tokens: 1024
