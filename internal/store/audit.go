@@ -5,11 +5,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
 
-const auditInsertCols = 8
+// PurgeAuditOlderThan deletes audit entries older than before, returning the
+// number of rows removed.
+func (s *PostgresStore) PurgeAuditOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM audit_log WHERE created_at < $1`, before)
+	if err != nil {
+		return 0, fmt.Errorf("purge audit: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// auditInsertCols is the number of columns inserted per audit row by the
+// batched INSERT. It MUST match the 7 columns and placeholders below; an
+// incorrect stride leaves orphan parameters (e.g. $8) that pgx can't type,
+// failing the whole batch with SQLSTATE 42P18.
+const auditInsertCols = 7
 const auditBatchSize = 2000
 
 func (s *PostgresStore) AppendAudit(ctx context.Context, entry *model.AuditEntry) error {

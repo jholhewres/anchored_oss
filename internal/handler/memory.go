@@ -2,6 +2,7 @@ package handler
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -9,8 +10,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/jholhewres/anchored_oss/internal/ai/embeddings"
 	"github.com/jholhewres/anchored_oss/internal/config"
 	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/model"
@@ -27,14 +30,20 @@ var allowedCategories = map[string]bool{
 }
 
 type MemoryHandler struct {
-	store  store.Store
-	filter *policy.ContentFilter
-	cfg    *config.Config
-	logger *slog.Logger
+	store    store.Store
+	filter   *policy.ContentFilter
+	cfg      *config.Config
+	embedder embeddings.Embedder // nil when embeddings are disabled
+	logger   *slog.Logger
 }
 
-func NewMemoryHandler(st store.Store, filter *policy.ContentFilter, cfg *config.Config, logger *slog.Logger) *MemoryHandler {
-	return &MemoryHandler{store: st, filter: filter, cfg: cfg, logger: logger}
+// NewMemoryHandler wires the memory write/search routes. embedder is the
+// process-shared embedder (may be nil when embeddings are disabled); it is
+// injected rather than built here so a single instance is reused across all
+// handlers and the curation worker — important because the onnx provider keeps
+// a ~470MB model resident per instance.
+func NewMemoryHandler(st store.Store, filter *policy.ContentFilter, cfg *config.Config, embedder embeddings.Embedder, logger *slog.Logger) *MemoryHandler {
+	return &MemoryHandler{store: st, filter: filter, cfg: cfg, embedder: embedder, logger: logger}
 }
 
 type createMemoryRequest struct {
@@ -178,7 +187,22 @@ func (h *MemoryHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	memories, err := h.store.SearchMemories(r.Context(), projectID, query, limit)
+	// mode=semantic runs a vector KNN search when an embedder is configured;
+	// it falls back to text search if embeddings are disabled or the query
+	// can't be embedded. Default stays "text" for backward compatibility.
+	var memories []*model.Memory
+	var err error
+	if q.Get("mode") == "semantic" && h.embedder != nil {
+		vec, embErr := embeddings.EmbedOne(r.Context(), h.embedder, query)
+		if embErr != nil {
+			h.logger.Warn("semantic search embed failed; falling back to text", "error", embErr)
+			memories, err = h.store.SearchMemories(r.Context(), projectID, query, limit)
+		} else {
+			memories, err = h.store.SearchMemoriesByVector(r.Context(), projectID, vec, limit)
+		}
+	} else {
+		memories, err = h.store.SearchMemories(r.Context(), projectID, query, limit)
+	}
 	if err != nil {
 		h.logger.Error("search memories failed", "error", err, "project_id", projectID)
 		jsonError(w, http.StatusInternalServerError, "search failed")
@@ -288,10 +312,15 @@ func toSlug(name string) string {
 	return strings.Trim(result.String(), "-")
 }
 
+var memoryIDFallbackCounter uint64
+
 func newMemoryID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic(err)
+		// crypto/rand is effectively infallible on supported platforms; fall
+		// back to a time+counter value instead of crashing the request path.
+		binary.BigEndian.PutUint64(b, uint64(time.Now().UnixNano()))
+		binary.BigEndian.PutUint64(b[8:], atomic.AddUint64(&memoryIDFallbackCounter, 1))
 	}
 	return hex.EncodeToString(b)
 }

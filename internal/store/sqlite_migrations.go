@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 10
+const sqliteSchemaVersion = 12
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -213,6 +213,27 @@ CREATE INDEX IF NOT EXISTS idx_curation_queue_pending
     WHERE status = 'pending';
 `
 
+// sqliteMigration011 mirrors Postgres 011 for the embeddings columns. SQLite
+// has no pgvector, so the vector is stored as a JSON-encoded float array and
+// similarity search is brute-forced in Go (acceptable for single-node dev).
+const sqliteMigration011 = `
+ALTER TABLE memories ADD COLUMN embedding TEXT;
+ALTER TABLE memories ADD COLUMN embed_model TEXT;
+ALTER TABLE memories ADD COLUMN embed_dims INTEGER;
+`
+
+// sqliteMigration012 mirrors Postgres 012: per-org guardrail overrides.
+// blocked_categories is a JSON array (no array type in SQLite).
+const sqliteMigration012 = `
+CREATE TABLE IF NOT EXISTS org_policies (
+    org_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    blocked_categories TEXT NOT NULL DEFAULT '[]',
+    quality_threshold REAL NOT NULL DEFAULT 0.55,
+    near_dup_threshold REAL NOT NULL DEFAULT 0.85,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -224,6 +245,8 @@ var sqliteMigrations = map[int]string{
 	8:  sqliteMigration008,
 	9:  sqliteMigration009,
 	10: sqliteMigration010,
+	11: sqliteMigration011,
+	12: sqliteMigration012,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {

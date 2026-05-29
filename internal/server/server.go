@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jholhewres/anchored_oss/internal/ai/embeddings"
 	"github.com/jholhewres/anchored_oss/internal/config"
 	"github.com/jholhewres/anchored_oss/internal/handler"
 	"github.com/jholhewres/anchored_oss/internal/middleware"
@@ -28,8 +29,23 @@ type Server struct {
 	http   *http.Server
 }
 
-func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
+// New builds the HTTP server. embedder is the process-shared embedder (may be
+// nil when embeddings are disabled); it is injected into the memory and chat
+// handlers so a single instance is reused — the onnx provider keeps a ~470MB
+// model resident, so building one per handler would multiply memory use.
+func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embeddings.Embedder, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
+
+	// Rate limiters: a global per-client bucket plus a stricter bucket guarding
+	// the unauthenticated auth endpoints against brute force. Disabled when
+	// cfg.RateLimit.Enabled is false (NewRateLimiter with 0 rpm = pass-through).
+	globalRPM, authRPM := 0, 0
+	if cfg.RateLimit.Enabled {
+		globalRPM = cfg.RateLimit.RequestsPerMinute
+		authRPM = cfg.RateLimit.AuthRequestsPerMinute
+	}
+	globalRL := middleware.NewRateLimiter(ctx, globalRPM, cfg.RateLimit.Burst)
+	authRL := middleware.NewRateLimiter(ctx, authRPM, cfg.RateLimit.AuthBurst)
 
 	healthHandler := handler.NewHealthHandler(version.Version, st)
 	mux.HandleFunc("GET /v1/health", healthHandler.ServeHTTP)
@@ -44,7 +60,7 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	mux.Handle("GET /install-oss", web.InstallHandler("anchored-oss.sh"))
 
 	authHandler := handler.NewAuthHandler(st, logger)
-	mux.HandleFunc("POST /v1/auth/login", authHandler.Login)
+	mux.Handle("POST /v1/auth/login", authRL.Middleware(http.HandlerFunc(authHandler.Login)))
 
 	authMW := middleware.Auth(st, logger)
 	requireAdmin := middleware.RequireScope("admin")
@@ -97,6 +113,14 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	quotaHandler := handler.NewQuotaHandler(st, cfg, logger)
 	mux.HandleFunc("GET /v1/quota", authMW(requireAdmin(http.HandlerFunc(quotaHandler.Get))).ServeHTTP)
 
+	policyHandler := handler.NewPolicyHandler(st, logger)
+	mux.HandleFunc("GET /v1/policies", authMW(requireAdmin(http.HandlerFunc(policyHandler.Get))).ServeHTTP)
+	mux.HandleFunc("PUT /v1/policies", authMW(requireAdmin(http.HandlerFunc(policyHandler.Update))).ServeHTTP)
+
+	chatHandler := handler.NewChatHandler(st, cfg, embedder, logger)
+	mux.HandleFunc("GET /v1/chat/status", authMW(http.HandlerFunc(chatHandler.Status)).ServeHTTP)
+	mux.HandleFunc("POST /v1/chat", authMW(http.HandlerFunc(chatHandler.Complete)).ServeHTTP)
+
 	syncEngine := syncpkg.NewSyncEngine(st, policy.NewContentFilter(), logger)
 	syncHandler := handler.NewSyncHandler(syncEngine, st, logger)
 	mux.HandleFunc("POST /v1/sync", authMW(http.HandlerFunc(syncHandler.ServeHTTP)).ServeHTTP)
@@ -104,12 +128,12 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	mux.HandleFunc("POST /api/v1/sync/push", authMW(http.HandlerFunc(syncHandler.CompatPush)).ServeHTTP)
 	mux.HandleFunc("POST /api/v1/sync/pull", authMW(http.HandlerFunc(syncHandler.CompatPull)).ServeHTTP)
 
-	memoryHandler := handler.NewMemoryHandler(st, policy.NewContentFilter(), cfg, logger)
+	memoryHandler := handler.NewMemoryHandler(st, policy.NewContentFilter(), cfg, embedder, logger)
 	mux.HandleFunc("POST /v1/memories", authMW(http.HandlerFunc(memoryHandler.Create)).ServeHTTP)
 	mux.HandleFunc("GET /v1/memories/search", authMW(http.HandlerFunc(memoryHandler.Search)).ServeHTTP)
 
 	registerHandler := handler.NewRegisterHandler(st, logger)
-	mux.HandleFunc("POST /v1/auth/register", registerHandler.Register)
+	mux.Handle("POST /v1/auth/register", authRL.Middleware(http.HandlerFunc(registerHandler.Register)))
 
 	// SPA fallback. The handler internally returns 404 JSON for /v1/* and
 	// /api/* paths so the dashboard never masks an API typo.
@@ -126,6 +150,7 @@ func New(cfg *config.Config, st store.Store, logger *slog.Logger) *Server {
 	h = middleware.BodyLimit(defaultBodyLimit)(h)
 	h = middleware.Recovery(h)
 	h = middleware.Logging(h)
+	h = globalRL.Middleware(h)
 	h = middleware.CORS(cfg.CORS.AllowedOrigins)(h)
 
 	return &Server{

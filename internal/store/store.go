@@ -55,6 +55,20 @@ type Store interface {
 
 	// Memories.
 	SearchMemories(ctx context.Context, projectID string, query string, limit int) ([]*model.Memory, error)
+	// SearchMemoriesByVector ranks project memories by cosine similarity to the
+	// query vector (semantic search). Postgres uses pgvector; SQLite brute-forces.
+	SearchMemoriesByVector(ctx context.Context, projectID string, vec []float32, k int) ([]*model.Memory, error)
+	// UpdateMemoryEmbedding stores (or replaces) a memory's vector and model.
+	UpdateMemoryEmbedding(ctx context.Context, memoryID string, vec []float32, model string) error
+	// MemoriesMissingEmbedding pages non-deleted memories lacking a vector
+	// (id > afterID, ordered by id) for the reindex/backfill command.
+	MemoriesMissingEmbedding(ctx context.Context, afterID string, limit int) ([]*model.Memory, error)
+	// MemoriesStaleEmbedding pages non-deleted memories whose embedding is
+	// missing OR was produced by a different model than `model` (id > afterID,
+	// ordered by id). Used by reindex to re-embed an existing corpus after an
+	// embeddings provider/model change so the whole vector space stays
+	// consistent. Only id and content are populated.
+	MemoriesStaleEmbedding(ctx context.Context, model, afterID string, limit int) ([]*model.Memory, error)
 	UpsertMemory(ctx context.Context, m *model.Memory) error
 	// UpsertMemories upserts a batch of memories in a single statement.
 	// Chunks larger than ~5000 should be split by the caller to stay
@@ -80,6 +94,13 @@ type Store interface {
 	// AppendAudits inserts a batch of audit entries in a single statement.
 	AppendAudits(ctx context.Context, entries []*model.AuditEntry) error
 	ListAuditEntries(ctx context.Context, orgID string, filters model.AuditFilters) (entries []*model.AuditEntry, total int, err error)
+	// PurgeAuditOlderThan deletes audit entries created before the cutoff,
+	// returning the number removed. Used by the retention sweep.
+	PurgeAuditOlderThan(ctx context.Context, before time.Time) (int64, error)
+
+	// Guardrail policy (per-org overrides).
+	GetOrgPolicy(ctx context.Context, orgID string) (*model.OrgPolicy, error)
+	UpsertOrgPolicy(ctx context.Context, p *model.OrgPolicy) error
 
 	// Dashboard.
 	GetDashboardStats(ctx context.Context, orgID string) (*model.DashboardStats, error)

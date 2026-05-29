@@ -3,11 +3,13 @@ package sync
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/middleware"
@@ -171,7 +173,15 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 			Metadata: meta,
 		}
 	}
-	filterResults := e.filter.Filter(filterables)
+	// Enforce the org's customizable guardrails (blocked categories / quality
+	// threshold). Falls back to the default filter if the policy can't load.
+	filter := e.filter
+	if pol, err := e.store.GetOrgPolicy(ctx, orgID); err == nil {
+		filter = policy.NewContentFilterWithConfig(pol.BlockedCategories, pol.QualityThreshold)
+	} else {
+		e.logger.Warn("sync: org policy load failed; using default filter", "org_id", orgID, "error", err)
+	}
+	filterResults := filter.Filter(filterables)
 
 	results := make([]model.SyncResult, len(pushes))
 	accepted := make([]*model.Memory, 0, len(pushes))
@@ -366,10 +376,16 @@ func toSlug(name string) string {
 	return strings.Trim(result.String(), "-")
 }
 
+var idFallbackCounter uint64
+
 func newID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic(err)
+		// crypto/rand is effectively infallible on supported platforms; if it
+		// ever fails, fall back to a time+counter value instead of crashing the
+		// request path. These IDs are row identifiers, not secrets.
+		binary.BigEndian.PutUint64(b, uint64(time.Now().UnixNano()))
+		binary.BigEndian.PutUint64(b[8:], atomic.AddUint64(&idFallbackCounter, 1))
 	}
 	return hex.EncodeToString(b)
 }

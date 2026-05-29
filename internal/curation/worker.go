@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/jholhewres/anchored_oss/internal/ai/embeddings"
 	"github.com/jholhewres/anchored_oss/internal/config"
 	"github.com/jholhewres/anchored_oss/internal/policy"
 	"github.com/jholhewres/anchored_oss/internal/store"
@@ -17,19 +18,24 @@ import (
 
 // Worker processes the curation_queue on a ticker interval.
 type Worker struct {
-	cfg    config.CurationConfig
-	store  store.Store
-	filter *policy.ContentFilter
-	logger *slog.Logger
+	cfg      config.CurationConfig
+	store    store.Store
+	filter   *policy.ContentFilter
+	embedder embeddings.Embedder // nil when embeddings are disabled
+	logger   *slog.Logger
 }
 
-// NewWorker creates a Worker that is ready to Start.
-func NewWorker(cfg *config.Config, st store.Store, logger *slog.Logger) *Worker {
+// NewWorker creates a Worker that is ready to Start. embedder is the
+// process-shared embedder (injected, may be nil); embedding generation is
+// folded into the curation pass (the worker already loads each memory's
+// content), so it covers both the /v1/memories and sync push write paths.
+func NewWorker(cfg *config.Config, st store.Store, embedder embeddings.Embedder, logger *slog.Logger) *Worker {
 	return &Worker{
-		cfg:    cfg.Curation,
-		store:  st,
-		filter: policy.NewContentFilter(),
-		logger: logger,
+		cfg:      cfg.Curation,
+		store:    st,
+		filter:   policy.NewContentFilter(),
+		embedder: embedder,
+		logger:   logger,
 	}
 }
 
@@ -132,7 +138,25 @@ func (w *Worker) processOne(ctx context.Context, memID string) error {
 		}
 	}
 
-	return w.store.UpdateMemoryMetadata(ctx, memID, patch)
+	if err := w.store.UpdateMemoryMetadata(ctx, memID, patch); err != nil {
+		return err
+	}
+
+	// Generate the semantic embedding for accepted, non-duplicate memories.
+	// Best-effort: an embedding failure must not fail curation (the memory is
+	// still searchable by text). Skip low-signal/duplicate rows to avoid
+	// indexing noise.
+	if w.embedder != nil && patch["curation_status"] == "ok" {
+		vec, err := embeddings.EmbedOne(ctx, w.embedder, mem.Content)
+		if err != nil {
+			w.logger.Warn("curation: embed failed", "memory_id", memID, "error", err)
+			return nil
+		}
+		if err := w.store.UpdateMemoryEmbedding(ctx, memID, vec, w.embedder.Model()); err != nil {
+			w.logger.Warn("curation: store embedding failed", "memory_id", memID, "error", err)
+		}
+	}
+	return nil
 }
 
 // normalizeForNgram lower-cases and strips non-letter/digit runes so that

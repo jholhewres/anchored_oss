@@ -52,19 +52,19 @@ func NormalizeCategory(c string) string {
 }
 
 type Memory struct {
-	ID          string    `json:"id"`
-	ProjectID   string    `json:"project_id"`
-	Category    string    `json:"category"`
-	Content     string    `json:"content"`
-	ContentHash string    `json:"content_hash"`
-	Keywords    []string  `json:"keywords"`
-	Source      string    `json:"source"`
-	AuthorID    string    `json:"author_id"`
-	AuthorName  string    `json:"author_name"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string     `json:"id"`
+	ProjectID   string     `json:"project_id"`
+	Category    string     `json:"category"`
+	Content     string     `json:"content"`
+	ContentHash string     `json:"content_hash"`
+	Keywords    []string   `json:"keywords"`
+	Source      string     `json:"source"`
+	AuthorID    string     `json:"author_id"`
+	AuthorName  string     `json:"author_name"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
-	Metadata    any       `json:"metadata,omitempty"`
+	Metadata    any        `json:"metadata,omitempty"`
 }
 
 type APIKey struct {
@@ -93,14 +93,14 @@ type AuditEntry struct {
 }
 
 type AuditFilters struct {
-	ProjectID  string    `json:"project_id,omitempty"`
-	ActorID    string    `json:"actor_id,omitempty"`
-	Action     string    `json:"action,omitempty"`
-	TargetType string    `json:"target_type,omitempty"`
+	ProjectID  string     `json:"project_id,omitempty"`
+	ActorID    string     `json:"actor_id,omitempty"`
+	Action     string     `json:"action,omitempty"`
+	TargetType string     `json:"target_type,omitempty"`
 	From       *time.Time `json:"from,omitempty"`
 	To         *time.Time `json:"to,omitempty"`
-	Limit      int       `json:"limit,omitempty"`
-	Offset     int       `json:"offset,omitempty"`
+	Limit      int        `json:"limit,omitempty"`
+	Offset     int        `json:"offset,omitempty"`
 }
 
 type AccountWithRole struct {
@@ -167,4 +167,15 @@ type DashboardStats struct {
 	KeysActive      int            `json:"keys_active"`
 	AuditEntries24h int            `json:"audit_entries_24h"`
 	RecentPushes    []PushActivity `json:"recent_pushes"`
+}
+
+// OrgPolicy holds an organization's customizable guardrails. Absent fields fall
+// back to server defaults. Secret and local-path guardrails are NOT represented
+// here — they are always-on and live in code.
+type OrgPolicy struct {
+	OrgID             string    `json:"org_id"`
+	BlockedCategories []string  `json:"blocked_categories"`
+	QualityThreshold  float64   `json:"quality_threshold"`
+	NearDupThreshold  float64   `json:"near_dup_threshold"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }

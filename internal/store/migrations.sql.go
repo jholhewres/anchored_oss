@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 10
+const schemaVersion = 12
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -243,6 +243,37 @@ CREATE INDEX IF NOT EXISTS idx_curation_queue_pending
     WHERE status = 'pending';
 `
 
+// migration011 adds semantic-search embeddings. It enables the pgvector
+// extension and stores one 384-dim vector per memory alongside the model name
+// (so a provider/model change can be detected and reindexed). The HNSW index
+// uses cosine ops to match the L2-normalized vectors the embedders emit.
+//
+// NOTE: CREATE EXTENSION requires the database role to have the vector
+// extension available (run once by a superuser on managed Postgres). Self-host
+// installs should provision pgvector before first start.
+const migration011 = `
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding vector(384);
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS embed_model TEXT;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS embed_dims INT;
+CREATE INDEX IF NOT EXISTS idx_memories_embedding
+    ON memories USING hnsw (embedding vector_cosine_ops);
+`
+
+// migration012 adds per-org guardrail overrides. A row is optional: absent
+// means "use defaults". blocked_categories overrides the default event/preference
+// set; thresholds override the curation/quality defaults. The secret and
+// local-path guardrails are never configurable and live in code.
+const migration012 = `
+CREATE TABLE IF NOT EXISTS org_policies (
+    org_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    blocked_categories TEXT[] NOT NULL DEFAULT '{}',
+    quality_threshold DOUBLE PRECISION NOT NULL DEFAULT 0.55,
+    near_dup_threshold DOUBLE PRECISION NOT NULL DEFAULT 0.85,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -254,6 +285,8 @@ var migrations = map[int]string{
 	8:  migration008,
 	9:  migration009,
 	10: migration010,
+	11: migration011,
+	12: migration012,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

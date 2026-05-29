@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
@@ -255,10 +258,16 @@ func isBuiltinFunctional(name string) bool {
 	return false
 }
 
+var hexIDFallbackCounter uint64
+
 func newHexID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic(err)
+		// crypto/rand is effectively infallible on supported platforms; fall
+		// back to a time+counter value instead of crashing. These are row
+		// identifiers, not secrets.
+		binary.BigEndian.PutUint64(b, uint64(time.Now().UnixNano()))
+		binary.BigEndian.PutUint64(b[8:], atomic.AddUint64(&hexIDFallbackCounter, 1))
 	}
 	return hex.EncodeToString(b)
 }

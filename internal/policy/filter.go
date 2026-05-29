@@ -17,8 +17,8 @@ const RemoteQualityThreshold = 0.55
 // already filters most of these, but old data and misbehaving clients still
 // reach the server.
 var (
-	testOutputRe   = regexp.MustCompile(`(?i)\b(\d+\s+(passed|failed|skipped)|0\s+failures?|testes?\s+passando|suite\s+completa|rodando\s+suite|go\s+test|pytest|npm\s+test)\b`)
-	progressRe     = regexp.MustCompile(`(?i)\b(corrigido|rodando|testando|retestar)\b`)
+	testOutputRe    = regexp.MustCompile(`(?i)\b(\d+\s+(passed|failed|skipped)|0\s+failures?|testes?\s+passando|suite\s+completa|rodando\s+suite|go\s+test|pytest|npm\s+test)\b`)
+	progressRe      = regexp.MustCompile(`(?i)\b(corrigido|rodando|testando|retestar)\b`)
 	terminalTraceRe = regexp.MustCompile(`(?i)(?:^|\n)\s*(?:error:|warning:|panic:|traceback\b|stack trace\b|expected\b|actual\b|assert\b)`)
 )
 
@@ -38,19 +38,39 @@ type Filterable struct {
 	Metadata map[string]any
 }
 
-// ContentFilter validates incoming sync content against security rules.
+// DefaultBlockedCategories are the categories rejected at sync time unless an
+// org overrides them. event/preference are local-only by default.
+var DefaultBlockedCategories = []string{"event", "preference"}
+
+// ContentFilter validates incoming sync content against security rules. The
+// blocked-category set and quality threshold are configurable per org; the
+// secret and local-path guardrails are NOT configurable (defense in depth).
 type ContentFilter struct {
 	blockedCategories map[string]bool
+	qualityThreshold  float64
 }
 
-// NewContentFilter creates a ContentFilter with default blocked categories.
+// NewContentFilter creates a ContentFilter with default blocked categories and
+// the default quality threshold.
 func NewContentFilter() *ContentFilter {
-	return &ContentFilter{
-		blockedCategories: map[string]bool{
-			"event":      true,
-			"preference": true,
-		},
+	return NewContentFilterWithConfig(DefaultBlockedCategories, RemoteQualityThreshold)
+}
+
+// NewContentFilterWithConfig builds a filter from an org's policy. An empty
+// blockedCategories falls back to the defaults; a non-positive threshold falls
+// back to RemoteQualityThreshold.
+func NewContentFilterWithConfig(blockedCategories []string, qualityThreshold float64) *ContentFilter {
+	if len(blockedCategories) == 0 {
+		blockedCategories = DefaultBlockedCategories
 	}
+	if qualityThreshold <= 0 {
+		qualityThreshold = RemoteQualityThreshold
+	}
+	blocked := make(map[string]bool, len(blockedCategories))
+	for _, c := range blockedCategories {
+		blocked[strings.ToLower(strings.TrimSpace(c))] = true
+	}
+	return &ContentFilter{blockedCategories: blocked, qualityThreshold: qualityThreshold}
 }
 
 // Filter validates each item and returns a FilterResult per item.
@@ -126,7 +146,7 @@ func (f *ContentFilter) checkQuality(item Filterable) (rule string, detail strin
 		if v, ok := item.Metadata["pinned"].(bool); ok {
 			pinned = v
 		}
-		if score, ok := numberFromMetadata(item.Metadata["quality_score"]); ok && score > 0 && score < RemoteQualityThreshold && !pinned {
+		if score, ok := numberFromMetadata(item.Metadata["quality_score"]); ok && score > 0 && score < f.qualityThreshold && !pinned {
 			return "low_quality", "quality_score below remote threshold"
 		}
 	}

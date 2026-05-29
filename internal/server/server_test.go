@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -15,7 +16,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	cfg := config.DefaultConfig()
 	logger := slog.Default()
-	srv := New(cfg, nil, logger)
+	srv := New(context.Background(), cfg, nil, nil, logger)
 	return httptest.NewServer(srv.http.Handler)
 }
 

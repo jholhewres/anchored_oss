@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jholhewres/anchored_oss/internal/ai/embeddings"
 	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/config"
 	"github.com/jholhewres/anchored_oss/internal/curation"
@@ -25,6 +26,7 @@ func main() {
 	addr := flag.String("addr", "", "override server address")
 	bootstrap := flag.Bool("bootstrap", false, "create default org, admin account, and API key, then exit")
 	setupFlag := flag.Bool("setup", false, "run interactive setup wizard")
+	reindex := flag.Bool("reindex", false, "backfill embeddings for all memories lacking a vector, then exit")
 	flag.Parse()
 
 	if *setupFlag {
@@ -80,19 +82,47 @@ func main() {
 		return
 	}
 
+	if *reindex {
+		if err := runReindex(context.Background(), st, cfg, logger); err != nil {
+			slog.Error("reindex failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	slog.Info("starting anchored-oss",
 		"version", version.Version,
 		"address", cfg.Server.Address,
 	)
 
-	srv := server.New(cfg, st, logger)
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Build the embedder once and share it across the server handlers and the
+	// curation worker. The onnx provider keeps a ~470MB model resident, so a
+	// single instance avoids multiplying memory use. A bad config degrades to
+	// "no embeddings" rather than blocking startup.
+	embedder, err := embeddings.New(cfg.Embeddings, logger)
+	if err != nil {
+		slog.Error("embeddings disabled (config error)", "error", err)
+		embedder = nil
+	}
+	if embedder != nil {
+		slog.Info("embeddings enabled", "provider", embedder.Name(), "model", embedder.Model(), "dims", embedder.Dimensions())
+		if closer, ok := embedder.(interface{ Close() error }); ok {
+			defer closer.Close()
+		}
+	}
+
+	srv := server.New(ctx, cfg, st, embedder, logger)
+
 	if cfg.Curation.WorkerEnabled {
-		w := curation.NewWorker(cfg, st, logger)
+		w := curation.NewWorker(cfg, st, embedder, logger)
 		go w.Start(ctx)
+	}
+
+	if cfg.Audit.RetentionDays > 0 {
+		go runAuditPurge(ctx, st, cfg, logger)
 	}
 
 	go func() {
@@ -113,6 +143,92 @@ func main() {
 	}
 
 	slog.Info("shutdown complete")
+}
+
+// runAuditPurge periodically deletes audit entries older than the configured
+// retention window, bounding unbounded audit_log growth. Runs an initial sweep
+// immediately, then every cfg.Audit.PurgeInterval until ctx is cancelled.
+func runAuditPurge(ctx context.Context, st store.Store, cfg *config.Config, logger *slog.Logger) {
+	interval := cfg.Audit.PurgeInterval
+	if interval <= 0 {
+		interval = 6 * time.Hour
+	}
+	purge := func() {
+		cutoff := time.Now().UTC().AddDate(0, 0, -cfg.Audit.RetentionDays)
+		n, err := st.PurgeAuditOlderThan(ctx, cutoff)
+		if err != nil {
+			logger.Error("audit purge failed", "error", err)
+			return
+		}
+		if n > 0 {
+			logger.Info("audit purge", "removed", n, "older_than", cutoff)
+		}
+	}
+	purge()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			purge()
+		}
+	}
+}
+
+// runReindex backfills embeddings for every memory that lacks a vector. Unlike
+// the curation worker (which only embeds freshly-enqueued "ok" memories), this
+// covers an existing corpus — e.g. memories synced before embeddings shipped,
+// whose curation_queue rows are already 'done'. Pages by id so a mid-run
+// failure still makes forward progress.
+func runReindex(ctx context.Context, st store.Store, cfg *config.Config, logger *slog.Logger) error {
+	embedder, err := embeddings.New(cfg.Embeddings, logger)
+	if err != nil {
+		return fmt.Errorf("build embedder: %w", err)
+	}
+	if closer, ok := embedder.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	if embedder == nil {
+		logger.Info("reindex: embeddings disabled in config; nothing to do")
+		return nil
+	}
+	logger.Info("reindex: starting", "provider", embedder.Name(), "model", embedder.Model(), "dims", embedder.Dimensions())
+
+	model := embedder.Model()
+	var afterID string
+	total, failures := 0, 0
+	for {
+		// Model-aware: re-embeds rows that are missing a vector OR were produced
+		// by a different model, so switching embeddings providers backfills the
+		// whole corpus into a single consistent vector space.
+		batch, err := st.MemoriesStaleEmbedding(ctx, model, afterID, 200)
+		if err != nil {
+			return fmt.Errorf("list memories stale embedding: %w", err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, m := range batch {
+			afterID = m.ID // advance the cursor even on failure to guarantee progress
+			vec, err := embeddings.EmbedOne(ctx, embedder, m.Content)
+			if err != nil {
+				failures++
+				logger.Warn("reindex: embed failed", "memory_id", m.ID, "error", err)
+				continue
+			}
+			if err := st.UpdateMemoryEmbedding(ctx, m.ID, vec, embedder.Model()); err != nil {
+				failures++
+				logger.Warn("reindex: store embedding failed", "memory_id", m.ID, "error", err)
+				continue
+			}
+			total++
+		}
+		logger.Info("reindex: progress", "embedded", total, "failures", failures)
+	}
+	logger.Info("reindex: done", "embedded", total, "failures", failures)
+	return nil
 }
 
 func runBootstrap(s store.Store) error {

@@ -5,9 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
+
+// PurgeAuditOlderThan deletes audit entries older than before, returning the
+// number of rows removed.
+func (s *SQLiteStore) PurgeAuditOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM audit_log WHERE created_at < ?`, before.UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return 0, fmt.Errorf("purge audit: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
 
 func (s *SQLiteStore) AppendAudit(ctx context.Context, entry *model.AuditEntry) error {
 	var metadataBytes []byte

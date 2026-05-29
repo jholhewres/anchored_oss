@@ -6,19 +6,46 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jholhewres/anchored_oss/internal/ai/chat"
+	"github.com/jholhewres/anchored_oss/internal/ai/embeddings"
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	CORS     CORSConfig     `yaml:"cors"`
-	Quota    QuotaConfig    `yaml:"quota"`
-	Curation CurationConfig `yaml:"curation"`
+	Server     ServerConfig      `yaml:"server"`
+	Database   DatabaseConfig    `yaml:"database"`
+	CORS       CORSConfig        `yaml:"cors"`
+	Quota      QuotaConfig       `yaml:"quota"`
+	Curation   CurationConfig    `yaml:"curation"`
+	RateLimit  RateLimitConfig   `yaml:"rate_limit"`
+	Audit      AuditConfig       `yaml:"audit"`
+	Embeddings embeddings.Config `yaml:"embeddings"`
+	Chat       chat.Config       `yaml:"chat"`
+}
+
+// RateLimitConfig controls the per-client token-bucket limiter. The global
+// limit applies to every request; the auth limit is a stricter bucket guarding
+// login/register against brute force. Set a RequestsPerMinute to 0 to disable
+// that bucket.
+type RateLimitConfig struct {
+	Enabled               bool `yaml:"enabled"`
+	RequestsPerMinute     int  `yaml:"requests_per_minute"`
+	Burst                 int  `yaml:"burst"`
+	AuthRequestsPerMinute int  `yaml:"auth_requests_per_minute"`
+	AuthBurst             int  `yaml:"auth_burst"`
+}
+
+// AuditConfig bounds audit_log growth. A purge sweep deletes entries older than
+// RetentionDays at PurgeInterval. RetentionDays <= 0 disables purging (keep
+// everything).
+type AuditConfig struct {
+	RetentionDays int           `yaml:"retention_days"`
+	PurgeInterval time.Duration `yaml:"purge_interval"`
 }
 
 type CurationConfig struct {
@@ -81,6 +108,19 @@ func DefaultConfig() *Config {
 			NearDupWindow:    720 * time.Hour,
 			NearDupThreshold: 0.85,
 		},
+		RateLimit: RateLimitConfig{
+			Enabled:               true,
+			RequestsPerMinute:     600,
+			Burst:                 120,
+			AuthRequestsPerMinute: 10,
+			AuthBurst:             5,
+		},
+		Audit: AuditConfig{
+			RetentionDays: 90,
+			PurgeInterval: 6 * time.Hour,
+		},
+		Embeddings: embeddings.DefaultConfig(),
+		Chat:       chat.DefaultConfig(),
 	}
 }
 
@@ -146,6 +186,35 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {
 		cfg.CORS.AllowedOrigins = parseCSV(origins)
+	}
+	if v := os.Getenv("RATE_LIMIT_ENABLED"); v != "" {
+		cfg.RateLimit.Enabled = v == "1" || strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("RATE_LIMIT_RPM"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RateLimit.RequestsPerMinute = n
+		}
+	}
+	if v := os.Getenv("AUDIT_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Audit.RetentionDays = n
+		}
+	}
+	// Embeddings env overrides let env-only deployments (no config.yaml) select
+	// the provider — e.g. EMBEDDINGS_PROVIDER=onnx with a staged model dir.
+	if v := os.Getenv("EMBEDDINGS_PROVIDER"); v != "" {
+		cfg.Embeddings.Provider = v
+	}
+	if v := os.Getenv("EMBEDDINGS_MODEL"); v != "" {
+		cfg.Embeddings.Model = v
+	}
+	if v := os.Getenv("EMBEDDINGS_MODEL_DIR"); v != "" {
+		cfg.Embeddings.ModelDir = v
+	}
+	if v := os.Getenv("EMBEDDINGS_DIMENSIONS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Embeddings.Dimensions = n
+		}
 	}
 }
 
