@@ -14,6 +14,7 @@ interface BtnProps extends React.HTMLAttributes<HTMLElement> {
   target?: string;
   rel?: string;
   type?: "button" | "submit" | "reset";
+  disabled?: boolean;
 }
 
 export const Btn: React.FC<BtnProps> = ({
@@ -104,6 +105,7 @@ interface InputProps {
   className?: string;
   onFocus?: React.FocusEventHandler<HTMLInputElement>;
   onBlur?: React.FocusEventHandler<HTMLInputElement>;
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
   placeholder?: string;
   value?: string;
   defaultValue?: string;
@@ -136,6 +138,7 @@ export const Input: React.FC<InputProps> = ({
   style = {},
   onFocus,
   onBlur,
+  onKeyDown,
   className,
   placeholder,
   value,
@@ -205,6 +208,7 @@ export const Input: React.FC<InputProps> = ({
         value={value}
         defaultValue={defaultValue}
         onChange={onChange}
+        onKeyDown={onKeyDown}
         type={type}
         disabled={disabled}
         readOnly={readOnly}

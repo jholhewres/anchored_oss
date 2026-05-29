@@ -15,12 +15,33 @@ const actionTones: Record<string, string> = {
   "policy.update": "neutral",
 };
 
+const selectStyle: React.CSSProperties = {
+  height: 28, padding: "0 8px", fontSize: 12,
+  background: "var(--bg-2)", color: "var(--text)",
+  border: "1px solid var(--border)", borderRadius: "var(--radius)",
+  fontFamily: "var(--font-mono)", cursor: "pointer",
+};
+
+// rangeFrom returns an ISO timestamp for the start of the selected window, or
+// undefined for "all". Used to populate the audit `from` filter.
+function rangeFrom(key: string): string | undefined {
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  switch (key) {
+    case "24h": return new Date(now - day).toISOString();
+    case "7d": return new Date(now - 7 * day).toISOString();
+    case "30d": return new Date(now - 30 * day).toISOString();
+    default: return undefined;
+  }
+}
+
 export function AuditPage() {
   const [entries, setEntries] = React.useState<AuditEntry[]>([]);
   const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [filters, setFilters] = React.useState<AuditFilters>({ limit: 50, offset: 0 });
   const [search, setSearch] = React.useState("");
+  const [rangeKey, setRangeKey] = React.useState("all");
 
   React.useEffect(() => {
     setLoading(true);
@@ -36,10 +57,29 @@ export function AuditPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-        <Input icon={<I.search />} placeholder="filter by actor, scope, kind..." size="sm" style={{ width: 360 }} value={search} onChange={e => setSearch(e.target.value)} />
-        <Btn variant="outline" size="sm" icon={<I.filter />}>kind: all</Btn>
-        <Btn variant="outline" size="sm" icon={<I.user />}>actor: all</Btn>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <Input
+          icon={<I.user />}
+          placeholder="actor id… (Enter)"
+          size="sm"
+          style={{ width: 220 }}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") setFilters(f => ({ ...f, actor: search.trim() || undefined, offset: 0 })); }}
+        />
+        <select value={filters.action ?? ""} onChange={e => setFilters(f => ({ ...f, action: e.target.value || undefined, offset: 0 }))} style={selectStyle}>
+          <option value="">kind: all</option>
+          {Object.keys(actionTones).map(a => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <select value={rangeKey} onChange={e => { setRangeKey(e.target.value); setFilters(f => ({ ...f, from: rangeFrom(e.target.value), offset: 0 })); }} style={selectStyle}>
+          <option value="all">time: all</option>
+          <option value="24h">last 24h</option>
+          <option value="7d">last 7d</option>
+          <option value="30d">last 30d</option>
+        </select>
+        {(filters.action || filters.actor || filters.from) && (
+          <Btn variant="ghost" size="sm" onClick={() => { setSearch(""); setRangeKey("all"); setFilters({ limit: 50, offset: 0 }); }}>Clear</Btn>
+        )}
         <div style={{ flex: 1 }} />
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>{total} events</span>
       </div>

@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { Card, Badge, Status, Btn, Input, Tabs } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
-import type { Project, Memory, Triple } from "@/lib/types";
+import type { Project, Memory, Triple, OrgPolicy, ChatAnswer } from "@/lib/types";
 import { GraphView } from "@/components/GraphView";
 
 function truncate(s: string, n: number) {
@@ -69,6 +69,213 @@ function PolicyRow({ title, description, items }: {
   );
 }
 
+function MetaField({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: 12, padding: "8px 0", borderTop: "1px solid color-mix(in srgb, var(--border) 50%, transparent)" }}>
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)", minWidth: 120, flex: "none" }}>{label}</span>
+      <span style={{ fontSize: 12.5, color: "var(--text-muted)", wordBreak: "break-word" }}>{value}</span>
+    </div>
+  );
+}
+
+// MemoryDetail is a right-side drawer showing a memory's full content plus its
+// curation/lifecycle metadata (status, quality, scope) so admins can see why a
+// memory was kept, demoted, or flagged as a near-duplicate.
+function MemoryDetail({ memory, onClose }: { memory: Memory; onClose: () => void }) {
+  const meta = (memory.metadata ?? {}) as Record<string, unknown>;
+  const str = (k: string): string | undefined => {
+    const v = meta[k];
+    return v == null ? undefined : String(v);
+  };
+  const status = str("curation_status");
+  const statusTone = status === "low_signal" || status === "near_duplicate" ? "warn" : status ? "ok" : "neutral";
+  const known = new Set(["curation_status", "curation_rule", "quality_score", "scope", "pinned", "canonical_of", "memory_type", "origin", "kind"]);
+  const extra = Object.keys(meta).filter(k => !known.has(k));
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "color-mix(in srgb, black 55%, transparent)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ width: "min(560px, 92vw)", height: "100%", background: "var(--bg-1)", borderLeft: "1px solid var(--border)", overflowY: "auto", padding: "24px 26px" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Badge tone={categoryTones[memory.category] || "neutral"}>{memory.category}</Badge>
+            {status && <Badge tone={statusTone as "ok" | "warn" | "neutral"}>{status}</Badge>}
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: 0, color: "var(--text-dim)", cursor: "pointer", padding: 6 }} aria-label="Close">
+            <I.x size={16} />
+          </button>
+        </div>
+
+        <div style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--text)", whiteSpace: "pre-wrap", marginBottom: 20 }}>
+          {memory.content}
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <MetaField label="id" value={<span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{memory.id}</span>} />
+          <MetaField label="author" value={memory.author_name || "unknown"} />
+          <MetaField label="created" value={`${timeAgo(memory.created_at)} (${new Date(memory.created_at).toLocaleString()})`} />
+          <MetaField label="updated" value={timeAgo(memory.updated_at)} />
+          {memory.source && <MetaField label="source" value={memory.source} />}
+          {memory.keywords && memory.keywords.length > 0 && <MetaField label="keywords" value={memory.keywords.join(", ")} />}
+          {str("quality_score") && <MetaField label="quality_score" value={str("quality_score")} />}
+          {str("scope") && <MetaField label="scope" value={str("scope")} />}
+          {str("pinned") && <MetaField label="pinned" value={str("pinned")} />}
+          {str("canonical_of") && <MetaField label="canonical_of" value={<span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{str("canonical_of")}</span>} />}
+          {str("curation_rule") && <MetaField label="curation_rule" value={str("curation_rule")} />}
+          {extra.length > 0 && (
+            <MetaField label="metadata" value={<code style={{ fontSize: 11, color: "var(--text-dim)" }}>{JSON.stringify(Object.fromEntries(extra.map(k => [k, meta[k]])))}</code>} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ChatTab is the optional RAG chat panel. It self-hides its input when the
+// server reports chat disabled, so the feature stays opt-in.
+function ChatTab({ projectId }: { projectId: string }) {
+  const [enabled, setEnabled] = React.useState<boolean | null>(null);
+  const [model, setModel] = React.useState("");
+  const [q, setQ] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [ans, setAns] = React.useState<ChatAnswer | null>(null);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    api.getChatStatus().then(s => { setEnabled(s.enabled); setModel(s.model); }).catch(() => setEnabled(false));
+  }, []);
+
+  const ask = () => {
+    const query = q.trim();
+    if (!query) return;
+    setBusy(true); setErr(null); setAns(null);
+    api.chat(projectId, query)
+      .then(setAns)
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : "chat failed"))
+      .finally(() => setBusy(false));
+  };
+
+  if (enabled === null) return <div style={{ color: "var(--text-dim)", padding: 20 }}>Loading…</div>;
+  if (!enabled) {
+    return (
+      <Card style={{ padding: "32px 22px", textAlign: "center" }}>
+        <I.brain size={22} />
+        <div style={{ fontSize: 14, fontWeight: 500, marginTop: 10 }}>Chat is not enabled</div>
+        <div style={{ fontSize: 12.5, color: "var(--text-dim)", marginTop: 6, maxWidth: 420, marginInline: "auto" }}>
+          An admin can enable the optional AI chat by configuring an LLM provider (OpenAI, z.ai, Anthropic, OpenRouter) in the server config. It answers using this project's memories.
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+        <Input full size="sm" placeholder="ask about this project's memories…" value={q}
+          onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter") ask(); }} />
+        <Btn variant="primary" size="sm" onClick={ask} disabled={busy}>{busy ? "Thinking…" : "Ask"}</Btn>
+      </div>
+      {model && <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 12, fontFamily: "var(--font-mono)" }}>model: {model}</div>}
+      {err && <Card style={{ padding: 16, color: "var(--err)", fontSize: 13 }}>{err}</Card>}
+      {ans && (
+        <Card style={{ padding: 18 }}>
+          <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{ans.answer}</div>
+          {ans.sources.length > 0 && (
+            <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+              <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginBottom: 8, fontFamily: "var(--font-mono)" }}>sources</div>
+              {ans.sources.map((s, i) => (
+                <div key={s.id} style={{ display: "flex", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
+                  <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>[{i + 1}]</span>
+                  <Badge tone={categoryTones[s.category] || "neutral"}>{s.category}</Badge>
+                  <span style={{ color: "var(--text-muted)" }}>{s.snippet}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// OrgGuardrails is the admin-editable guardrail panel backed by GET/PUT
+// /v1/policies (org-level). Empty blocked-categories means "server defaults".
+function OrgGuardrails() {
+  const [pol, setPol] = React.useState<OrgPolicy | null>(null);
+  const [blocked, setBlocked] = React.useState("");
+  const [quality, setQuality] = React.useState("");
+  const [nearDup, setNearDup] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const [msg, setMsg] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    api.getPolicy().then(p => {
+      setPol(p);
+      setBlocked(p.blocked_categories.join(", "));
+      setQuality(String(p.quality_threshold));
+      setNearDup(String(p.near_dup_threshold));
+    }).catch(() => {});
+  }, []);
+
+  if (!pol) return null;
+
+  const save = () => {
+    setSaving(true);
+    setMsg(null);
+    api.updatePolicy({
+      blocked_categories: blocked.split(",").map(s => s.trim()).filter(Boolean),
+      quality_threshold: parseFloat(quality) || 0,
+      near_dup_threshold: parseFloat(nearDup) || 0,
+    })
+      .then(p => { setPol(p); setMsg("Saved"); })
+      .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "Failed to save"))
+      .finally(() => setSaving(false));
+  };
+
+  const label = (t: string) => (
+    <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginBottom: 6, fontFamily: "var(--font-mono)" }}>{t}</div>
+  );
+
+  return (
+    <Card style={{ padding: 0, marginBottom: 16 }}>
+      <div style={{ padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ fontSize: 15, fontWeight: 500 }}>Customizable guardrails</div>
+        <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
+          Org-level overrides enforced on every sync. Leave categories empty to use server defaults.
+        </div>
+      </div>
+      <div style={{ padding: "16px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          {label("Blocked categories (comma-separated)")}
+          <Input full size="sm" value={blocked} onChange={e => setBlocked(e.target.value)} placeholder="event, preference" />
+        </div>
+        <div style={{ display: "flex", gap: 14 }}>
+          <div style={{ flex: 1 }}>
+            {label("Quality threshold (0–1)")}
+            <Input full size="sm" type="number" value={quality} onChange={e => setQuality(e.target.value)} />
+          </div>
+          <div style={{ flex: 1 }}>
+            {label("Near-duplicate threshold (0–1)")}
+            <Input full size="sm" type="number" value={nearDup} onChange={e => setNearDup(e.target.value)} />
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <Btn variant="primary" size="sm" onClick={save} disabled={saving}>{saving ? "Saving..." : "Save guardrails"}</Btn>
+          {msg && <span style={{ fontSize: 12, color: msg === "Saved" ? "var(--ok)" : "var(--err)" }}>{msg}</span>}
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>always-on:</span>
+          {pol.always_on?.map(a => <Badge key={a} tone="outline">{a}</Badge>)}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = React.useState<Project | null>(null);
@@ -80,6 +287,23 @@ export function ProjectDetailPage() {
   const [activeTab, setActiveTab] = React.useState("memories");
   const [triples, setTriples] = React.useState<Triple[]>([]);
   const [tripleTotal, setTripleTotal] = React.useState(0);
+  const [graphPred, setGraphPred] = React.useState("");
+  const [graphSearch, setGraphSearch] = React.useState("");
+  const [searchMode, setSearchMode] = React.useState<"text" | "semantic">("text");
+  const [results, setResults] = React.useState<Memory[] | null>(null);
+  const [searching, setSearching] = React.useState(false);
+  const [selected, setSelected] = React.useState<Memory | null>(null);
+
+  const runSearch = React.useCallback(() => {
+    if (!id) return;
+    const term = search.trim();
+    if (!term) { setResults(null); return; }
+    setSearching(true);
+    api.searchMemories(id, term, searchMode, 50)
+      .then(setResults)
+      .catch(() => setResults([]))
+      .finally(() => setSearching(false));
+  }, [id, search, searchMode]);
 
   React.useEffect(() => {
     if (!id) return;
@@ -113,9 +337,11 @@ export function ProjectDetailPage() {
   if (loading) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Loading...</div>;
   if (!project) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Project not found.</div>;
 
-  const filtered = search
+  // Server results take precedence; until a search is submitted, fall back to
+  // a client-side substring filter over the loaded page for responsiveness.
+  const displayed = results ?? (search
     ? memories.filter(m => m.content.toLowerCase().includes(search.toLowerCase()) || m.category.toLowerCase().includes(search.toLowerCase()))
-    : memories;
+    : memories);
 
   return (
     <div>
@@ -153,6 +379,7 @@ export function ProjectDetailPage() {
         tabs={[
           { key: "memories", label: "Memories", icon: <I.cube />, count: memTotal },
           { key: "graph", label: "Knowledge graph", icon: <I.graph />, count: tripleTotal },
+          { key: "chat", label: "Chat", icon: <I.brain /> },
           { key: "policies", label: "Policies", icon: <I.shield /> },
           { key: "settings", label: "Settings", icon: <I.settings /> },
         ]}
@@ -161,21 +388,39 @@ export function ProjectDetailPage() {
       {activeTab === "memories" && (
         <div style={{ marginTop: 22 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-            <Input icon={<I.search />} placeholder="search memories..." size="sm" style={{ flex: 1, maxWidth: 480 }} value={search} onChange={e => setSearch(e.target.value)} />
+            <Input
+              icon={<I.search />}
+              placeholder={searchMode === "semantic" ? "search by meaning..." : "search memories..."}
+              size="sm"
+              style={{ flex: 1, maxWidth: 420 }}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") runSearch(); }}
+            />
+            <div style={{ display: "inline-flex", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
+              <Btn variant={searchMode === "text" ? "outline" : "ghost"} size="sm" onClick={() => setSearchMode("text")}>Text</Btn>
+              <Btn variant={searchMode === "semantic" ? "outline" : "ghost"} size="sm" onClick={() => setSearchMode("semantic")}>Semantic</Btn>
+            </div>
+            <Btn variant="primary" size="sm" onClick={runSearch} disabled={searching}>{searching ? "Searching..." : "Search"}</Btn>
+            {results !== null && (
+              <Btn variant="ghost" size="sm" onClick={() => { setResults(null); setSearch(""); }}>Clear</Btn>
+            )}
             <div style={{ flex: 1 }} />
             <Btn variant="ghost" size="sm" iconR={<I.chevD />}>Newest first</Btn>
           </div>
 
-          {filtered.length === 0 ? (
+          {displayed.length === 0 ? (
             <Card style={{ padding: "40px 22px", textAlign: "center" }}>
-              <div style={{ fontSize: 13, color: "var(--text-dim)" }}>No memories yet.</div>
+              <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
+                {results !== null ? "No matches for this search." : "No memories yet."}
+              </div>
             </Card>
           ) : (
             <Card style={{ padding: 0 }}>
-              {filtered.map((m, i, arr) => (
-                <div key={m.id} style={{
+              {displayed.map((m, i, arr) => (
+                <div key={m.id} onClick={() => setSelected(m)} style={{
                   padding: "18px 22px", borderBottom: i < arr.length - 1 ? "1px solid var(--border)" : "none",
-                  display: "grid", gridTemplateColumns: "110px 1fr 80px 40px", gap: 18, alignItems: "flex-start",
+                  display: "grid", gridTemplateColumns: "110px 1fr 80px 40px", gap: 18, alignItems: "flex-start", cursor: "pointer",
                 }}>
                   <Badge tone={categoryTones[m.category] || "neutral"}>{m.category}</Badge>
                   <div>
@@ -192,7 +437,7 @@ export function ProjectDetailPage() {
                   <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)", display: "inline-flex", alignItems: "center", gap: 5 }}>
                     <I.link size={12} />
                   </div>
-                  <button style={{ background: "transparent", border: 0, color: "var(--text-dim)", padding: 6, cursor: "pointer", borderRadius: 4 }}>
+                  <button onClick={e => { e.stopPropagation(); setSelected(m); }} style={{ background: "transparent", border: 0, color: "var(--text-dim)", padding: 6, cursor: "pointer", borderRadius: 4 }}>
                     <I.more size={14} />
                   </button>
                 </div>
@@ -201,28 +446,67 @@ export function ProjectDetailPage() {
           )}
 
           <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>
-            <span>showing {filtered.length} of {memTotal.toLocaleString()} · sorted by recency</span>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Btn variant="ghost" size="sm" style={offset === 0 ? { opacity: 0.4, pointerEvents: "none" } : {}} onClick={() => setOffset(Math.max(0, offset - 20))}>Previous</Btn>
-              <Btn variant="ghost" size="sm" style={offset + 20 >= memTotal ? { opacity: 0.4, pointerEvents: "none" } : {}} onClick={() => setOffset(offset + 20)}>Load more</Btn>
-            </div>
+            <span>
+              {results !== null
+                ? `${displayed.length} ${searchMode} result${displayed.length === 1 ? "" : "s"}`
+                : `showing ${displayed.length} of ${memTotal.toLocaleString()} · sorted by recency`}
+            </span>
+            {results === null && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn variant="ghost" size="sm" style={offset === 0 ? { opacity: 0.4, pointerEvents: "none" } : {}} onClick={() => setOffset(Math.max(0, offset - 20))}>Previous</Btn>
+                <Btn variant="ghost" size="sm" style={offset + 20 >= memTotal ? { opacity: 0.4, pointerEvents: "none" } : {}} onClick={() => setOffset(offset + 20)}>Load more</Btn>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {activeTab === "graph" && (
+      {selected && <MemoryDetail memory={selected} onClose={() => setSelected(null)} />}
+
+      {activeTab === "graph" && (() => {
+        const predicates = Array.from(new Set(triples.map(t => t.predicate))).sort();
+        const gq = graphSearch.trim().toLowerCase();
+        const filteredTriples = triples.filter(t =>
+          (!graphPred || t.predicate === graphPred) &&
+          (!gq || t.subject.toLowerCase().includes(gq) || t.object.toLowerCase().includes(gq))
+        );
+        return (
+          <div style={{ marginTop: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+              <Input icon={<I.search />} placeholder="filter nodes (subject/object)…" size="sm" style={{ width: 280 }}
+                value={graphSearch} onChange={e => setGraphSearch(e.target.value)} />
+              <select value={graphPred} onChange={e => setGraphPred(e.target.value)} style={{
+                height: 28, padding: "0 8px", fontSize: 12, background: "var(--bg-2)", color: "var(--text)",
+                border: "1px solid var(--border)", borderRadius: "var(--radius)", fontFamily: "var(--font-mono)", cursor: "pointer",
+              }}>
+                <option value="">predicate: all</option>
+                {predicates.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+              {(graphPred || gq) && <Btn variant="ghost" size="sm" onClick={() => { setGraphPred(""); setGraphSearch(""); }}>Clear</Btn>}
+              <div style={{ flex: 1 }} />
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)" }}>
+                {filteredTriples.length} of {tripleTotal} edges{tripleTotal > triples.length ? ` (showing first ${triples.length})` : ""}
+              </span>
+            </div>
+            <GraphView triples={filteredTriples} total={tripleTotal} />
+          </div>
+        );
+      })()}
+
+      {activeTab === "chat" && id && (
         <div style={{ marginTop: 22 }}>
-          <GraphView triples={triples} total={tripleTotal} />
+          <ChatTab projectId={id} />
         </div>
       )}
 
       {activeTab === "policies" && (
         <div style={{ marginTop: 22 }}>
+          <OrgGuardrails />
           <Card style={{ padding: 0 }}>
             <div style={{ padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
-              <div style={{ fontSize: 15, fontWeight: 500 }}>Sync guardrails</div>
+              <div style={{ fontSize: 15, fontWeight: 500 }}>Always-on guardrails</div>
               <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
-                Server-side rules enforced on every incoming sync. Non-negotiable.
+                Enforced on every incoming sync and not configurable (defense in depth).
               </div>
             </div>
 

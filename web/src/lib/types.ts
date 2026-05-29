@@ -161,6 +161,30 @@ export interface Memory {
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ChatStatus {
+  enabled: boolean;
+  model: string;
+}
+
+export interface ChatSource {
+  id: string;
+  category: string;
+  snippet: string;
+}
+
+export interface ChatAnswer {
+  answer: string;
+  sources: ChatSource[];
+}
+
+export interface OrgPolicy {
+  blocked_categories: string[];
+  quality_threshold: number;
+  near_dup_threshold: number;
+  always_on: string[];
 }
 
 export interface ListMemoriesResponse {

@@ -14,6 +14,10 @@ import type {
   ListMemoriesResponse,
   ListTriplesResponse,
   Me,
+  Memory,
+  OrgPolicy,
+  ChatStatus,
+  ChatAnswer,
   OnboardingComplete,
   Project,
   ProjectCategory,
@@ -127,6 +131,13 @@ export const api = {
       "GET",
       `/v1/projects/${id}/graph?limit=${limit}&offset=${offset}`,
     ),
+  // searchMemories runs server-side search. mode "semantic" uses vector KNN
+  // (falls back to text on the server if embeddings are disabled); "text" runs
+  // substring/keyword search. Returns a flat ranked array.
+  searchMemories: (projectId: string, q: string, mode: "text" | "semantic", limit = 20) => {
+    const params = new URLSearchParams({ project_id: projectId, q, mode, limit: String(limit) });
+    return request<Memory[]>("GET", `/v1/memories/search?${params.toString()}`);
+  },
   deleteProject: (id: string) => request<void>("DELETE", `/v1/projects/${id}`),
 
   getAccounts: () => request<AccountWithRole[]>("GET", "/v1/accounts"),
@@ -202,4 +213,14 @@ export const api = {
   // Projects
   createProject: (body: { name: string; slug?: string; category: ProjectCategory; remote_key?: string }) =>
     request<Project>("POST", "/v1/projects", body),
+
+  // Optional RAG chat
+  getChatStatus: () => request<ChatStatus>("GET", "/v1/chat/status"),
+  chat: (project_id: string, query: string) =>
+    request<ChatAnswer>("POST", "/v1/chat", { project_id, query }),
+
+  // Guardrail policy (org-level, admin only)
+  getPolicy: () => request<OrgPolicy>("GET", "/v1/policies"),
+  updatePolicy: (body: { blocked_categories: string[]; quality_threshold: number; near_dup_threshold: number }) =>
+    request<OrgPolicy>("PUT", "/v1/policies", body),
 };

@@ -255,6 +255,7 @@ export function APIKeysPage() {
   }
 
   async function revokeKey(id: string) {
+    if (!window.confirm("Revoke this API key? Any client or agent still using it will immediately stop syncing. This cannot be undone.")) return;
     try {
       await api.revokeAPIKey(id);
       setKeys(prev => prev.map(k => k.id === id ? { ...k, revoked_at: new Date().toISOString() } : k));
@@ -266,6 +267,7 @@ export function APIKeysPage() {
   }
 
   async function rotateKey(k: APIKey) {
+    if (!window.confirm(`Rotate "${k.name}"? The current key is revoked immediately and replaced with a new one — update any client using it.`)) return;
     try {
       await api.revokeAPIKey(k.id);
       const res: APIKeyMintResponse = await api.createAPIKey(k.name, k.scope, k.account_id, undefined);
