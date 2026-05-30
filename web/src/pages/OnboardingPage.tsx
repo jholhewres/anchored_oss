@@ -459,33 +459,36 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-// ConnectStep is shown after a successful onboarding. Single centered column
-// with one key card and one terminal-style snippet block — keeps it scannable.
+// ConnectStep is shown after a successful onboarding. A scannable, numbered
+// sequence: save the key, then four labeled steps. Project link commands are
+// shown per-project with name/category/slug and a "sync default" badge on the
+// first, so it's always clear which id is which.
 function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinish: () => void }) {
   const [revealKey, setRevealKey] = useState(false);
   const origin = window.location.origin;
   const installCmd = "curl -fsSL https://anchoredoss.dev/install | bash";
   const configureCmd = `anchored remote configure --server ${origin} --key ${result.api_key}`;
-  const linkCmds = result.projects.map(p => `anchored remote link ${p.id}`);
+  const hasProjects = result.projects.length > 0;
 
-  const scriptLines: { kind: "comment" | "cmd"; text: string }[] = [
-    { kind: "comment", text: "1) Install the Anchored CLI / MCP" },
-    { kind: "cmd", text: installCmd },
-    { kind: "comment", text: "2) Wire it to this server" },
-    { kind: "cmd", text: configureCmd },
+  // "Copy all" script: link lines carry an inline comment naming the project
+  // (and flagging the sync default) so the pasted block is self-documenting.
+  const scriptParts: string[] = [
+    "# 1. Install the Anchored CLI",
+    installCmd,
+    "# 2. Connect it to this server",
+    configureCmd,
   ];
-  if (linkCmds.length > 0) {
-    scriptLines.push({ kind: "comment", text: "3) Subscribe to your projects (first link is the sync default)" });
-    for (const c of linkCmds) scriptLines.push({ kind: "cmd", text: c });
-    scriptLines.push({ kind: "comment", text: "4) Push your memories" });
+  if (hasProjects) {
+    scriptParts.push("# 3. Link the projects whose memories should sync");
+    result.projects.forEach((p, i) => {
+      scriptParts.push(`anchored remote link ${p.id}   # ${p.name}${i === 0 ? " (sync default)" : ""}`);
+    });
+    scriptParts.push("# 4. Sync your memories");
   } else {
-    scriptLines.push({ kind: "comment", text: "3) Push your memories" });
+    scriptParts.push("# 3. Sync your memories");
   }
-  scriptLines.push({ kind: "cmd", text: "anchored remote sync" });
-
-  const fullScript = scriptLines
-    .map(l => (l.kind === "comment" ? `# ${l.text}` : l.text))
-    .join("\n");
+  scriptParts.push("anchored remote sync");
+  const fullScript = scriptParts.join("\n");
 
   return (
     <div style={{
@@ -493,7 +496,7 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
       display: "flex", flexDirection: "column", alignItems: "center",
       padding: "40px 32px 60px",
     }}>
-      <div style={{ width: "100%", maxWidth: 720 }}>
+      <div style={{ width: "100%", maxWidth: 640 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32 }}>
           <AnchoredOSSLogo size={22} />
           <StepIndicator step={4} />
@@ -511,19 +514,19 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
             <I.check size={12} /> setup complete
           </div>
           <h1 style={{ fontSize: 30, fontWeight: 500, letterSpacing: -0.8, margin: "0 0 8px", lineHeight: 1.1 }}>
-            Connect the CLI
+            Connect your machine
           </h1>
           <p style={{ fontSize: 14, color: "var(--text-muted)", margin: 0, lineHeight: 1.55 }}>
-            Save your API key — you won't see it again. Then run the snippet on your dev machine.
+            Four steps on your dev machine to sync memories with this server.
           </p>
         </div>
 
-        {/* API Key — single compact row */}
-        <Card style={{ padding: 14, marginBottom: 20 }}>
+        {/* API Key — save first */}
+        <Card style={{ padding: 14, marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
             <span style={{ color: "var(--warn)", display: "inline-flex" }}><I.key size={13} /></span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--warn)", letterSpacing: 0.4, textTransform: "uppercase" as const, flex: 1 }}>
-              Admin API key — save this now
+              Admin API key — save it now, it won't be shown again
             </span>
             <button type="button" onClick={() => setRevealKey(v => !v)} style={{
               background: "transparent", border: "1px solid var(--border)",
@@ -551,65 +554,37 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
           </div>
         </Card>
 
-        {/* Single terminal block with the full setup sequence */}
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const }}>
-              Run on your dev machine
-            </div>
-            <CopyButton text={fullScript} label="copy all" inline />
-          </div>
-          <Terminal lines={scriptLines} />
+        {/* Numbered steps */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <Step n={1} title="Install the Anchored CLI">
+            <CommandBox cmd={installCmd} />
+          </Step>
+
+          <Step n={2} title="Connect it to this server" hint="Authenticates the CLI with the API key above.">
+            <CommandBox cmd={configureCmd} />
+          </Step>
+
+          {hasProjects ? (
+            <Step
+              n={3}
+              title="Link the projects to sync"
+              hint="Each command subscribes that project on this machine. The sync default is where anchored remote sync pushes unless you pass --project-id."
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {result.projects.map((p, i) => (
+                  <ProjectLinkRow key={p.id} project={p} isDefault={i === 0} />
+                ))}
+              </div>
+            </Step>
+          ) : null}
+
+          <Step n={hasProjects ? 4 : 3} title="Sync your memories" hint="Pushes local memories up and pulls team memories down.">
+            <CommandBox cmd="anchored remote sync" />
+          </Step>
         </div>
 
-        {result.projects.length > 0 && (
-          <Card style={{ padding: 16, marginBottom: 28 }}>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 4 }}>
-              Subscribe to your projects
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
-              Run <code style={{ fontFamily: "var(--font-mono)", color: "var(--text)" }}>anchored remote link &lt;project_id&gt;</code> for every project whose memories should sync from this machine.
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {result.projects.map(p => {
-                const linkCmd = `anchored remote link ${p.id}`;
-                return (
-                  <div key={p.id} style={{
-                    display: "flex", flexDirection: "column", gap: 6,
-                    padding: 10, background: "var(--bg-1)",
-                    border: "1px solid var(--border)", borderRadius: "var(--radius)",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 2px" }}>
-                      <span style={{ color: "var(--text-muted)", display: "inline-flex" }}>
-                        {CATEGORY_ICONS[p.category as ProjectCategory] ?? <I.folder size={13} />}
-                      </span>
-                      <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{p.name}</span>
-                      <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)" }}>
-                        {p.slug}
-                      </code>
-                    </div>
-                    <div style={{
-                      display: "flex", alignItems: "stretch",
-                      background: "var(--bg-2)", border: "1px solid var(--border)",
-                      borderRadius: "var(--radius)", overflow: "hidden",
-                    }}>
-                      <code style={{
-                        flex: 1, padding: "8px 12px",
-                        fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text)",
-                        whiteSpace: "nowrap", overflowX: "auto",
-                      }}>
-                        <span style={{ color: "var(--accent)" }}>$</span> {linkCmd}
-                      </code>
-                      <CopyButton text={linkCmd} label="copy" />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-        )}
-
-        <div style={{ display: "flex", justifyContent: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 32 }}>
+          <CopyButton text={fullScript} label="copy all commands" inline />
           <Btn variant="primary" size="lg" iconR={<I.arrowR />} onClick={onFinish}>
             Go to dashboard
           </Btn>
@@ -619,43 +594,85 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
   );
 }
 
-// Terminal mimics a real shell session — comments dim, commands with $ prompt.
-function Terminal({ lines }: { lines: { kind: "comment" | "cmd"; text: string }[] }) {
+// Step renders a numbered block: a circled index, a title, optional hint, and
+// the command(s) for that step.
+function Step({ n, title, hint, children }: { n: number; title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+      <div style={{
+        width: 26, height: 26, borderRadius: "50%", flex: "none", marginTop: 1,
+        background: "var(--accent-bg)", border: "1px solid var(--accent-border)",
+        color: "var(--accent)", display: "inline-flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600,
+      }}>
+        {n}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)", marginBottom: hint ? 3 : 8 }}>
+          {title}
+        </div>
+        {hint && (
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 8 }}>
+            {hint}
+          </div>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ProjectLinkRow shows one project's identity (name, category, slug) above its
+// link command, with a "sync default" badge on the first project.
+function ProjectLinkRow({ project, isDefault }: { project: OnboardingComplete["projects"][number]; isDefault: boolean }) {
+  const linkCmd = `anchored remote link ${project.id}`;
   return (
     <div style={{
-      background: "var(--bg-1)", border: "1px solid var(--border)",
+      padding: 10, background: "var(--bg-1)",
+      border: `1px solid ${isDefault ? "var(--accent-border)" : "var(--border)"}`,
+      borderRadius: "var(--radius)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "0 2px", flexWrap: "wrap" as const }}>
+        <span style={{ color: "var(--text-muted)", display: "inline-flex" }}>
+          {CATEGORY_ICONS[project.category as ProjectCategory] ?? <I.folder size={13} />}
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{project.name}</span>
+        <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)" }}>
+          {project.slug}
+        </code>
+        {isDefault && (
+          <span style={{
+            marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4,
+            background: "var(--accent-bg)", color: "var(--accent)",
+            border: "1px solid var(--accent-border)", borderRadius: 999,
+            padding: "2px 8px", fontFamily: "var(--font-mono)", fontSize: 10,
+            letterSpacing: 0.3, textTransform: "uppercase" as const,
+          }}>
+            <I.check size={10} /> sync default
+          </span>
+        )}
+      </div>
+      <CommandBox cmd={linkCmd} />
+    </div>
+  );
+}
+
+// CommandBox: a single shell command line with a $ prompt and a copy button.
+function CommandBox({ cmd }: { cmd: string }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "stretch",
+      background: "var(--bg-2)", border: "1px solid var(--border)",
       borderRadius: "var(--radius)", overflow: "hidden",
     }}>
-      <div style={{
-        background: "var(--bg-2)", borderBottom: "1px solid var(--border)",
-        padding: "8px 14px", display: "flex", alignItems: "center", gap: 6,
-        fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)",
+      <code style={{
+        flex: 1, padding: "9px 12px",
+        fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text)",
+        whiteSpace: "nowrap", overflowX: "auto",
       }}>
-        <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#ff5f57" }} />
-        <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#febc2e" }} />
-        <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#28c840" }} />
-        <span style={{ marginLeft: 10 }}>~/anchored</span>
-      </div>
-      <pre style={{
-        margin: 0, padding: "14px 16px",
-        fontFamily: "var(--font-mono)", fontSize: 12.5, lineHeight: 1.7,
-        color: "var(--text)", whiteSpace: "pre", overflowX: "auto", overflowY: "hidden",
-      }}>
-        {lines.map((l, i) => {
-          if (l.kind === "comment") {
-            return (
-              <div key={i} style={{ color: "var(--text-dim)", marginTop: i === 0 ? 0 : 6 }}>
-                # {l.text}
-              </div>
-            );
-          }
-          return (
-            <div key={i} style={{ color: "var(--text)" }}>
-              <span style={{ color: "var(--accent)" }}>$</span> {l.text}
-            </div>
-          );
-        })}
-      </pre>
+        <span style={{ color: "var(--accent)" }}>$</span> {cmd}
+      </code>
+      <CopyButton text={cmd} label="copy" />
     </div>
   );
 }
