@@ -15,6 +15,7 @@ import (
 	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/store"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -88,7 +89,7 @@ func RunInteractive() error {
 
 	orgName := promptLine(scanner, "Organization name:", "default")
 	adminEmail := promptLine(scanner, "Admin email:", "admin@anchored.local")
-	adminPassword := promptLine(scanner, "Admin password:", "changeme")
+	adminPassword := promptPassword(scanner, "Admin password", "changeme")
 	adminName := promptLine(scanner, "Admin display name:", "Admin")
 	portStr := promptLine(scanner, "Server port:", "8080")
 
@@ -236,7 +237,7 @@ func promptPostgresDSN(scanner *bufio.Scanner) string {
 	port := promptLine(scanner, "PostgreSQL port", "5432")
 	dbName := promptLine(scanner, "Database name", "anchored_oss")
 	user := promptLine(scanner, "Database user", "anchored")
-	password := promptLine(scanner, "Database password (leave blank if none)", "")
+	password := promptPassword(scanner, "Database password (leave blank if none)", "")
 	sslMode := promptChoice(scanner, "SSL mode", []string{"disable", "require", "verify-full"}, "disable")
 
 	u := url.URL{
@@ -253,6 +254,30 @@ func promptPostgresDSN(scanner *bufio.Scanner) string {
 	q.Set("sslmode", sslMode)
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// promptPassword reads a secret without echoing it to the terminal. When stdin
+// is a real terminal (the normal interactive case, including `curl | sh` via
+// /dev/tty) it uses term.ReadPassword; otherwise (piped/non-interactive input)
+// it falls back to a normal scanner line so automation still works. A blank
+// entry yields defaultVal.
+func promptPassword(scanner *bufio.Scanner, prompt, defaultVal string) string {
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		fmt.Printf("%s: ", prompt)
+		b, err := term.ReadPassword(fd)
+		fmt.Println() // ReadPassword swallows the Enter; emit the newline ourselves
+		if err != nil {
+			return defaultVal
+		}
+		val := strings.TrimSpace(string(b))
+		if val == "" {
+			return defaultVal
+		}
+		return val
+	}
+	// Non-terminal: read a normal line (keeps piped setups working).
+	return promptLine(scanner, prompt, defaultVal)
 }
 
 func promptLine(scanner *bufio.Scanner, prompt, defaultVal string) string {
