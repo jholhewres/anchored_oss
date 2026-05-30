@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -80,10 +82,7 @@ func RunInteractive() error {
 				fmt.Println("PostgreSQL is ready.")
 			}
 		} else {
-			dsn = promptLine(scanner, "PostgreSQL connection string:", "")
-			if dsn == "" {
-				return fmt.Errorf("connection string is required")
-			}
+			dsn = promptPostgresDSN(scanner)
 		}
 	}
 
@@ -226,6 +225,34 @@ func bootstrapData(s store.Store, cfg SetupConfig) (string, error) {
 	}
 
 	return full, nil
+}
+
+// promptPostgresDSN collects PostgreSQL connection fields one at a time and
+// assembles a valid DSN, so the user never has to hand-craft a connection
+// string. The password is URL-encoded via url.UserPassword, so special
+// characters are handled safely.
+func promptPostgresDSN(scanner *bufio.Scanner) string {
+	host := promptLine(scanner, "PostgreSQL host", "localhost")
+	port := promptLine(scanner, "PostgreSQL port", "5432")
+	dbName := promptLine(scanner, "Database name", "anchored_oss")
+	user := promptLine(scanner, "Database user", "anchored")
+	password := promptLine(scanner, "Database password (leave blank if none)", "")
+	sslMode := promptChoice(scanner, "SSL mode", []string{"disable", "require", "verify-full"}, "disable")
+
+	u := url.URL{
+		Scheme: "postgres",
+		Host:   net.JoinHostPort(host, port),
+		Path:   "/" + dbName,
+	}
+	if password != "" {
+		u.User = url.UserPassword(user, password)
+	} else {
+		u.User = url.User(user)
+	}
+	q := url.Values{}
+	q.Set("sslmode", sslMode)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func promptLine(scanner *bufio.Scanner, prompt, defaultVal string) string {
