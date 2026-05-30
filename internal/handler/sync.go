@@ -60,10 +60,16 @@ func (h *SyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // --- Compat adapters for clients that speak the simpler split protocol -----
 
 // compatPushRequest mirrors the client's SyncPushRequest shape.
+//
+// ProjectClaim is optional: repo-scoped clients send it (name + git-origin
+// remote_key) so a project auto-created from a push gets a human-readable name
+// instead of the "auto-<hash>" fallback. Older clients omit it and keep the
+// previous behaviour.
 type compatPushRequest struct {
-	ClientID  string              `json:"client_id"`
-	ProjectID string              `json:"project_id"`
-	Memories  []compatPushMemory  `json:"memories"`
+	ClientID     string              `json:"client_id"`
+	ProjectID    string              `json:"project_id"`
+	ProjectClaim *model.ProjectClaim `json:"project_claim,omitempty"`
+	Memories     []compatPushMemory  `json:"memories"`
 }
 
 type compatPushMemory struct {
@@ -208,9 +214,15 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 		if g.projectID != "" {
 			sr.ProjectID = g.projectID
 		} else {
+			// Prefer the client-supplied friendly name when the claim matches
+			// this group's remote_key; otherwise fall back to "auto-<hash>".
+			name := autoProjectName(g.claimKey)
+			if req.ProjectClaim != nil && req.ProjectClaim.RemoteKey == g.claimKey && req.ProjectClaim.Name != "" {
+				name = req.ProjectClaim.Name
+			}
 			sr.ProjectClaim = &model.ProjectClaim{
 				RemoteKey: g.claimKey,
-				Name:      autoProjectName(g.claimKey),
+				Name:      name,
 			}
 		}
 
