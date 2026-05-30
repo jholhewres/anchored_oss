@@ -39,6 +39,7 @@ function NewProjectModal({ onClose, onCreated }: NewProjectModalProps) {
   const toast = useToast();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
   const [category, setCategory] = useState<ProjectCategory>("service");
   const [submitting, setSubmitting] = useState(false);
 
@@ -56,6 +57,7 @@ function NewProjectModal({ onClose, onCreated }: NewProjectModalProps) {
         name: name.trim(),
         slug: slug.trim() || slugify(name),
         category,
+        repo_url: repoUrl.trim() || undefined,
       });
       onCreated(p);
     } catch (err) {
@@ -105,6 +107,17 @@ function NewProjectModal({ onClose, onCreated }: NewProjectModalProps) {
               </div>
               <Input full size="md" placeholder="my-service" value={slug}
                 onChange={e => setSlug(e.target.value)} mono />
+            </div>
+            <div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>
+                Repository (optional)
+              </div>
+              <Input full size="md" placeholder="git@github.com:org/repo.git" value={repoUrl}
+                onChange={e => setRepoUrl(e.target.value)} mono />
+              <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
+                Paste the git remote (ssh or https — both resolve to the same repo).
+                Memories synced from this repo will land here automatically.
+              </div>
             </div>
             <div>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>

@@ -189,7 +189,7 @@ export const api = {
   completeOnboarding: (body: {
     org: { name: string; slug: string };
     admin: { email: string; password: string; display_name: string };
-    projects: { name: string; category: ProjectCategory }[];
+    projects: { name: string; category: ProjectCategory; repo_url?: string }[];
   }) => request<OnboardingComplete>("POST", "/v1/onboarding/complete", body, { auth: false }),
 
   // Invites
@@ -211,7 +211,7 @@ export const api = {
     request<void>("PUT", `/v1/accounts/${id}/projects`, { project_ids }),
 
   // Projects
-  createProject: (body: { name: string; slug?: string; category: ProjectCategory; remote_key?: string }) =>
+  createProject: (body: { name: string; slug?: string; category: ProjectCategory; remote_key?: string; repo_url?: string }) =>
     request<Project>("POST", "/v1/projects", body),
 
   // Optional RAG chat

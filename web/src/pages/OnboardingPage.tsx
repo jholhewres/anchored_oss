@@ -27,6 +27,7 @@ const CATEGORY_ICONS: Record<ProjectCategory, React.ReactNode> = {
 interface ProjectRow {
   name: string;
   category: ProjectCategory;
+  repoUrl?: string;
 }
 
 function slugify(s: string): string {
@@ -195,7 +196,7 @@ export function OnboardingPage() {
       const res = await api.completeOnboarding({
         org: { name: orgName.trim(), slug: orgSlug.trim() || slugify(orgName) },
         admin: { email: adminEmail.trim(), password: adminPassword, display_name: adminName.trim() },
-        projects: validProjects.map(p => ({ name: p.name.trim(), category: p.category })),
+        projects: validProjects.map(p => ({ name: p.name.trim(), category: p.category, repo_url: p.repoUrl?.trim() || undefined })),
       });
       setToken(res.api_key);
       setResult(res);
@@ -315,39 +316,54 @@ export function OnboardingPage() {
                 Add projects
               </h2>
               <p style={{ fontSize: 14, color: "var(--text-muted)", margin: "0 0 20px", lineHeight: 1.55 }}>
-                Optional — you can add more later. Max 10 at setup.
+                Optional — you can add more later. Max 10 at setup. Add a repository
+                URL (ssh or https) to auto-link a project: memories synced from that
+                repo land here, no matter the local folder name.
               </p>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
                 {projects.map((p, i) => (
-                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <div key={i} style={{
+                    display: "flex", flexDirection: "column", gap: 8,
+                    padding: 12, border: "1px solid var(--border)", borderRadius: "var(--radius)",
+                  }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <Input
+                        style={{ flex: 1 }}
+                        size="md"
+                        placeholder={`Project ${i + 1} name`}
+                        value={p.name}
+                        onChange={e => updateProject(i, "name", e.target.value)}
+                      />
+                      <CategoryPill
+                        value={p.category}
+                        onChange={c => updateProject(i, "category", c)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeProject(i)}
+                        disabled={projects.length === 1}
+                        style={{
+                          width: 36, height: 36, display: "inline-flex", alignItems: "center",
+                          justifyContent: "center", background: "transparent",
+                          border: "1px solid var(--border)", borderRadius: "var(--radius)",
+                          color: projects.length === 1 ? "var(--text-ghost)" : "var(--text-dim)",
+                          cursor: projects.length === 1 ? "not-allowed" : "pointer",
+                          flex: "none",
+                        }}
+                        aria-label="Remove project"
+                      >
+                        <I.x size={14} />
+                      </button>
+                    </div>
                     <Input
-                      style={{ flex: 1 }}
+                      full
                       size="md"
-                      placeholder={`Project ${i + 1} name`}
-                      value={p.name}
-                      onChange={e => updateProject(i, "name", e.target.value)}
+                      mono
+                      placeholder="Repository (optional) — git@github.com:org/repo.git"
+                      value={p.repoUrl ?? ""}
+                      onChange={e => updateProject(i, "repoUrl", e.target.value)}
                     />
-                    <CategoryPill
-                      value={p.category}
-                      onChange={c => updateProject(i, "category", c)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeProject(i)}
-                      disabled={projects.length === 1}
-                      style={{
-                        width: 36, height: 36, display: "inline-flex", alignItems: "center",
-                        justifyContent: "center", background: "transparent",
-                        border: "1px solid var(--border)", borderRadius: "var(--radius)",
-                        color: projects.length === 1 ? "var(--text-ghost)" : "var(--text-dim)",
-                        cursor: projects.length === 1 ? "not-allowed" : "pointer",
-                        flex: "none",
-                      }}
-                      aria-label="Remove project"
-                    >
-                      <I.x size={14} />
-                    </button>
                   </div>
                 ))}
               </div>

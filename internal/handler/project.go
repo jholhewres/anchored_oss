@@ -10,6 +10,7 @@ import (
 
 	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/model"
+	projectpkg "github.com/jholhewres/anchored_oss/internal/project"
 	"github.com/jholhewres/anchored_oss/internal/store"
 )
 
@@ -26,7 +27,11 @@ type createProjectRequest struct {
 	Name      string `json:"name"`
 	Slug      string `json:"slug"`
 	RemoteKey string `json:"remote_key"`
-	Category  string `json:"category"`
+	// RepoURL is an optional git remote URL (ssh or https). When set and
+	// RemoteKey is empty, the server derives RemoteKey from it using the same
+	// normalization as the CLI, so a repo's sync resolves to this project.
+	RepoURL  string `json:"repo_url"`
+	Category string `json:"category"`
 }
 
 type listMemoriesResponse struct {
@@ -91,7 +96,37 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, req.RemoteKey, accountID, model.NormalizeCategory(req.Category))
+	// Derive the remote_key from a pasted git URL (ssh or https) when no key was
+	// given, so the project matches the key the CLI stamps on sync. Identical
+	// normalization on both sides is enforced by internal/project parity tests.
+	remoteKey := req.RemoteKey
+	if remoteKey == "" && req.RepoURL != "" {
+		remoteKey = projectpkg.DeriveRemoteKey(req.RepoURL)
+	}
+
+	// Idempotent on remote_key: if a project for this repo already exists (e.g.
+	// the repo synced first, or the form was submitted twice), return it instead
+	// of creating a duplicate — duplicates are exactly what repo-keying prevents.
+	if remoteKey != "" {
+		if existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, remoteKey); err == nil {
+			if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, existing.ID); err != nil {
+				h.logger.Error("grant creator access failed", "error", err, "project_id", existing.ID)
+			}
+			jsonResponse(w, http.StatusOK, existing)
+			return
+		} else if !errors.Is(err, store.ErrNotFound) {
+			h.logger.Error("project by remote_key lookup failed", "error", err, "org_id", orgID)
+			jsonError(w, http.StatusInternalServerError, "failed to check existing project")
+			return
+		}
+	} else {
+		// Manual project (no repo linked): synthesize a unique, unmatchable key
+		// so multiple keyless projects don't collide on UNIQUE(org_id,
+		// remote_key). No repo's git-origin hash can collide with this form.
+		remoteKey = req.Slug + "-" + randomSuffix(8)
+	}
+
+	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, accountID, model.NormalizeCategory(req.Category))
 	if err != nil {
 		h.logger.Error("create project failed", "error", err, "org_id", orgID)
 		jsonError(w, http.StatusInternalServerError, "failed to create project")

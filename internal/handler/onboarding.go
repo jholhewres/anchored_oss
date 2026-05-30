@@ -9,6 +9,7 @@ import (
 
 	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/model"
+	projectpkg "github.com/jholhewres/anchored_oss/internal/project"
 	"github.com/jholhewres/anchored_oss/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -36,6 +37,10 @@ type onboardingAdminInput struct {
 type onboardingProjectInput struct {
 	Name     string `json:"name"`
 	Category string `json:"category"`
+	// RepoURL is an optional git remote URL (ssh or https). When set, the
+	// project's remote_key is derived from it so the repo's sync resolves to
+	// this project. When empty, the project is "manual" (a synthetic key).
+	RepoURL string `json:"repo_url"`
 }
 
 type onboardingRequest struct {
@@ -151,7 +156,12 @@ func (h *OnboardingHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		if pSlug == "" {
 			continue
 		}
-		remoteKey := pSlug + "-" + randomSuffix(8)
+		// Derive the key from the repo URL (ssh/https) so the repo's sync lands
+		// here; fall back to a unique synthetic key for manual (no-repo) projects.
+		remoteKey := projectpkg.DeriveRemoteKey(pi.RepoURL)
+		if remoteKey == "" {
+			remoteKey = pSlug + "-" + randomSuffix(8)
+		}
 		cat := model.NormalizeCategory(pi.Category)
 		proj, err := h.store.CreateProject(r.Context(), org.ID, pi.Name, pSlug, remoteKey, admin.ID, cat)
 		if err != nil {
