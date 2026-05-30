@@ -2,7 +2,6 @@ package setup
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -12,9 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/store"
-	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
@@ -22,10 +19,6 @@ import (
 type SetupConfig struct {
 	Driver         string
 	DSN            string
-	OrgName        string
-	AdminEmail     string
-	AdminPassword  string
-	AdminName      string
 	Port           int
 	ConfigPath     string
 	DockerPostgres bool
@@ -87,11 +80,7 @@ func RunInteractive() error {
 		}
 	}
 
-	orgName := promptLine(scanner, "Organization name:", "default")
-	adminEmail := promptLine(scanner, "Admin email:", "admin@anchored.local")
-	adminPassword := promptPassword(scanner, "Admin password", "changeme")
-	adminName := promptLine(scanner, "Admin display name:", "Admin")
-	portStr := promptLine(scanner, "Server port:", "8080")
+	portStr := promptLine(scanner, "Server port", "8080")
 
 	var port int
 	fmt.Sscanf(portStr, "%d", &port)
@@ -102,10 +91,6 @@ func RunInteractive() error {
 	cfg := SetupConfig{
 		Driver:         driver,
 		DSN:            dsn,
-		OrgName:        orgName,
-		AdminEmail:     adminEmail,
-		AdminPassword:  adminPassword,
-		AdminName:      adminName,
 		Port:           port,
 		ConfigPath:     "config.yaml",
 		DockerPostgres: dockerPostgres,
@@ -130,27 +115,24 @@ func RunNonInteractive(cfg SetupConfig) error {
 	}
 	slog.Info("wrote config file", "path", cfg.ConfigPath)
 
+	// Open the store once to validate the connection and run migrations, so the
+	// schema is ready before the server boots. Identity setup (organization,
+	// admin, projects) is intentionally NOT done here — it happens once in the
+	// dashboard's first-run onboarding, so the operator never enters it twice.
 	st, err := openStore(cfg)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	defer st.Close()
-
-	apiKey, err := bootstrapData(st, cfg)
-	if err != nil {
-		return fmt.Errorf("bootstrap: %w", err)
-	}
+	st.Close()
 
 	fmt.Println()
 	fmt.Println("=== Setup Complete ===")
 	fmt.Printf("Config file: %s\n", cfg.ConfigPath)
 	fmt.Printf("Database:    %s (%s)\n", cfg.Driver, redactDSN(cfg.DSN))
-	fmt.Printf("Org:         %s\n", cfg.OrgName)
-	fmt.Printf("Admin:       %s (%s)\n", cfg.AdminEmail, cfg.AdminName)
 	fmt.Printf("Server:      http://localhost:%d\n", cfg.Port)
 	fmt.Println()
-	fmt.Println("API Key (copy now — it cannot be retrieved later):")
-	fmt.Println(apiKey)
+	fmt.Println("Next: open the dashboard and complete onboarding to create your")
+	fmt.Println("organization, admin login, and first projects.")
 	fmt.Println()
 
 	return nil
@@ -187,45 +169,6 @@ func openStore(cfg SetupConfig) (store.Store, error) {
 		MaxIdleConns:    5,
 		ConnMaxLifetime: 5 * time.Minute,
 	})
-}
-
-func bootstrapData(s store.Store, cfg SetupConfig) (string, error) {
-	ctx := context.Background()
-
-	slug := slugify(cfg.OrgName)
-	org, err := s.CreateOrganization(ctx, cfg.OrgName, slug)
-	if err != nil {
-		return "", fmt.Errorf("create organization: %w", err)
-	}
-
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return "", fmt.Errorf("hash password: %w", err)
-	}
-
-	account, err := s.CreateAccount(ctx, cfg.AdminEmail, cfg.AdminName, string(passwordHash))
-	if err != nil {
-		return "", fmt.Errorf("create account: %w", err)
-	}
-
-	if err := s.AddOrgMember(ctx, org.ID, account.ID, "admin"); err != nil {
-		return "", fmt.Errorf("add org member: %w", err)
-	}
-
-	if err := s.EnsureDefaultTeamMembership(ctx, org.ID, account.ID); err != nil {
-		return "", fmt.Errorf("ensure default team membership: %w", err)
-	}
-
-	full, prefix, hash, err := auth.GenerateAPIKey()
-	if err != nil {
-		return "", fmt.Errorf("generate api key: %w", err)
-	}
-
-	if _, err := s.CreateAPIKey(ctx, org.ID, account.ID, "admin", prefix, hash, "admin", nil); err != nil {
-		return "", fmt.Errorf("create api key: %w", err)
-	}
-
-	return full, nil
 }
 
 // promptPostgresDSN collects PostgreSQL connection fields one at a time and
@@ -316,24 +259,6 @@ func promptChoice(scanner *bufio.Scanner, prompt string, options []string, defau
 		}
 	}
 	return defaultVal
-}
-
-var wizardStripChars = strings.NewReplacer(
-	"!", "", "@", "", "#", "", "$", "", "%", "", "^", "", "&", "", "*", "",
-	"(", "", ")", "", "+", "", "=", "", "{", "", "}", "", "[", "", "]", "",
-	"|", "", "\\", "", ":", "", ";", "", "'", "", "<", "", ">", "",
-	",", "", "?", "", "/", "", "~", "", "`", "", "\"", "",
-)
-
-func slugify(name string) string {
-	s := strings.ToLower(name)
-	s = strings.ReplaceAll(s, " ", "-")
-	s = wizardStripChars.Replace(s)
-	for strings.Contains(s, "--") {
-		s = strings.ReplaceAll(s, "--", "-")
-	}
-	s = strings.Trim(s, "-")
-	return s
 }
 
 func redactDSN(dsn string) string {

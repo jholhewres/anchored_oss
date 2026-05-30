@@ -129,7 +129,7 @@ configure_database() {
   fi
 
   if [ "${ANCHORED_OSS_NONINTERACTIVE:-0}" != "1" ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
-    log "Launching interactive setup (database, admin, API key)"
+    log "Launching interactive setup (database configuration)"
     printf '\n'
     # cd into INSTALL_ROOT so the wizard writes config.yaml exactly where pm2
     # reads it; /dev/tty gives the wizard a real terminal under curl|sh.
@@ -217,12 +217,8 @@ main() {
   pm2 save
 
   log "Installed Anchored OSS in $INSTALL_ROOT"
-  log "Dashboard: http://localhost:${ANCHORED_OSS_PORT:-8080}"
-  if [ "$SETUP_RAN" = "1" ]; then
-    log "Setup complete — log in with the admin credentials you chose (API key shown above)."
-  else
-    log "Bootstrap admin key when needed: $INSTALL_BIN -config $CONFIG_PATH -bootstrap"
-  fi
+  log "Open the dashboard to finish setup — create your organization, admin login, and projects:"
+  log "  http://localhost:${ANCHORED_OSS_PORT:-8080}"
 }
 
 main "$@"
