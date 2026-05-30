@@ -90,11 +90,7 @@ install_pm2() {
   fi
 }
 
-write_config() {
-  if [ -f "$CONFIG_PATH" ]; then
-    return
-  fi
-
+write_default_config() {
   cat > "$CONFIG_PATH" <<EOF
 server:
   address: ":${ANCHORED_OSS_PORT:-8080}"
@@ -116,6 +112,36 @@ curation:
   near_dup_window: 720h
   near_dup_threshold: 0.85
 EOF
+}
+
+# configure_database runs the interactive setup wizard when a terminal is
+# available (reading from /dev/tty so it works even under `curl | sh`, where
+# stdin is the piped script). The wizard writes config.yaml into $INSTALL_ROOT,
+# provisions the chosen database, and bootstraps the admin + first API key
+# (printed once). Falls back to a non-interactive sqlite default when there is
+# no TTY or when ANCHORED_OSS_NONINTERACTIVE=1 is set. Sets SETUP_RAN=1 when the
+# wizard handled bootstrap so the caller can skip the manual bootstrap hint.
+SETUP_RAN=0
+configure_database() {
+  if [ -f "$CONFIG_PATH" ]; then
+    log "Existing config at $CONFIG_PATH — keeping it (delete it to reconfigure)."
+    return
+  fi
+
+  if [ "${ANCHORED_OSS_NONINTERACTIVE:-0}" != "1" ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    log "Launching interactive setup (database, admin, API key)"
+    printf '\n'
+    # cd into INSTALL_ROOT so the wizard writes config.yaml exactly where pm2
+    # reads it; /dev/tty gives the wizard a real terminal under curl|sh.
+    if ( cd "$INSTALL_ROOT" && "$INSTALL_BIN" -setup < /dev/tty ); then
+      SETUP_RAN=1
+      return
+    fi
+    log "Interactive setup did not complete; falling back to default config."
+  fi
+
+  log "Writing default config (sqlite). Reconfigure later with: $INSTALL_BIN -setup"
+  write_default_config
 }
 
 write_ecosystem() {
@@ -183,7 +209,7 @@ main() {
   chmod +x "$INSTALL_BIN"
   rm -f "$tmp_checksums"
 
-  write_config
+  configure_database
   write_ecosystem
 
   log "Starting $APP_NAME with pm2"
@@ -192,7 +218,11 @@ main() {
 
   log "Installed Anchored OSS in $INSTALL_ROOT"
   log "Dashboard: http://localhost:${ANCHORED_OSS_PORT:-8080}"
-  log "Bootstrap admin key when needed: $INSTALL_BIN -config $CONFIG_PATH -bootstrap"
+  if [ "$SETUP_RAN" = "1" ]; then
+    log "Setup complete — log in with the admin credentials you chose (API key shown above)."
+  else
+    log "Bootstrap admin key when needed: $INSTALL_BIN -config $CONFIG_PATH -bootstrap"
+  fi
 }
 
 main "$@"
