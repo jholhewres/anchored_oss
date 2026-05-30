@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
@@ -143,13 +144,26 @@ func NewONNXEmbedder(modelDir string, logger *slog.Logger) (*ONNXEmbedder, error
 		return nil, fmt.Errorf("onnx: create output tensor: %w", err)
 	}
 
+	// Session options: use all cores for intra-op parallelism (the default
+	// often pins to ~1 thread, which makes per-inference latency dominate a
+	// bulk reindex) and enable full graph optimization.
+	opts, err := ort.NewSessionOptions()
+	if err != nil {
+		return nil, fmt.Errorf("onnx: create session options: %w", err)
+	}
+	defer opts.Destroy()
+	if n := runtime.NumCPU(); n > 0 {
+		_ = opts.SetIntraOpNumThreads(n)
+	}
+	_ = opts.SetGraphOptimizationLevel(ort.GraphOptimizationLevelEnableAll)
+
 	session, err := ort.NewAdvancedSession(
 		paths.ModelFile,
 		[]string{"input_ids", "attention_mask", "token_type_ids"},
 		[]string{"last_hidden_state"},
 		[]ort.Value{inputIDs, attentionMask, tokenTypeIDs},
 		[]ort.Value{output},
-		nil,
+		opts,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("onnx: create session: %w", err)
@@ -195,11 +209,30 @@ func (e *ONNXEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 	return results, nil
 }
 
+// maxEmbedInputBytes bounds the text handed to the tokenizer. The model only
+// consumes onnxMaxSeqLen (128) tokens, so anything past a few hundred bytes is
+// discarded anyway — but the Unigram tokenizer's longest-match loop is O(n²)
+// per whitespace-delimited "word", so a large no-whitespace blob (pasted log,
+// base64, minified JSON) would otherwise pin a core for minutes. Capping the
+// input keeps tokenization bounded and is lossless for normal text.
+const maxEmbedInputBytes = 2048
+
+func truncateForEmbedding(s string) string {
+	if len(s) <= maxEmbedInputBytes {
+		return s
+	}
+	cut := maxEmbedInputBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
 func (e *ONNXEmbedder) embedSingle(text string) ([]float32, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	ids, mask, typeIDs := e.tokenizer.Tokenize(text)
+	ids, mask, typeIDs := e.tokenizer.Tokenize(truncateForEmbedding(text))
 
 	copy(e.inputIDs.GetData(), ids)
 	copy(e.attentionMask.GetData(), mask)
