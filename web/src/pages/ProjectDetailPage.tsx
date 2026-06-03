@@ -184,6 +184,10 @@ export function ProjectDetailPage() {
   const [results, setResults] = React.useState<Memory[] | null>(null);
   const [searching, setSearching] = React.useState(false);
   const [selected, setSelected] = React.useState<Memory | null>(null);
+  const [categoryFilter, setCategoryFilter] = React.useState<string>("");
+
+  // Reset offset when category changes to avoid empty pages.
+  React.useEffect(() => { setOffset(0); }, [categoryFilter]);
 
   const runSearch = React.useCallback(() => {
     if (!id) return;
@@ -200,7 +204,7 @@ export function ProjectDetailPage() {
     if (!id) return;
     Promise.all([
       api.getProject(id),
-      api.getProjectMemories(id, 20, 0),
+      api.getProjectMemories(id, 20, 0, categoryFilter || undefined),
     ])
       .then(([p, m]) => {
         setProject(p);
@@ -209,14 +213,14 @@ export function ProjectDetailPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, categoryFilter]);
 
   React.useEffect(() => {
     if (!id || offset === 0) return;
-    api.getProjectMemories(id, 20, offset)
+    api.getProjectMemories(id, 20, offset, categoryFilter || undefined)
       .then(m => { setMemories(m.memories); setMemTotal(m.total); })
       .catch(() => {});
-  }, [id, offset]);
+  }, [id, offset, categoryFilter]);
 
   React.useEffect(() => {
     if (!id || activeTab !== "graph") return;
@@ -297,6 +301,25 @@ export function ProjectDetailPage() {
             )}
             <div style={{ flex: 1 }} />
             <Btn variant="ghost" size="sm" iconR={<I.chevD />}>Newest first</Btn>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11.5, color: "var(--text-dim)", fontFamily: "var(--font-mono)", marginRight: 4 }}>category:</span>
+            <button onClick={() => setCategoryFilter("")} style={{
+              padding: "3px 10px", fontSize: 11.5, fontWeight: 500, cursor: "pointer", border: "1px solid transparent",
+              borderRadius: "var(--radius)", background: categoryFilter === "" ? "var(--accent-bg)" : "transparent",
+              color: categoryFilter === "" ? "var(--accent)" : "var(--text-dim)", transition: "background .12s, color .12s",
+            }}>all</button>
+            {(["decision", "fact", "learning", "plan", "summary", "event", "preference"] as const).map(cat => (
+              <button key={cat} onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)} style={{
+                padding: "3px 10px", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
+                border: categoryFilter === cat ? `1px solid var(--accent-border)` : "1px solid transparent",
+                borderRadius: "var(--radius)",
+                background: categoryFilter === cat ? "var(--accent-bg)" : "transparent",
+                color: categoryFilter === cat ? "var(--accent)" : "var(--text-dim)",
+                transition: "background .12s, color .12s, border-color .12s",
+              }}>{cat}</button>
+            ))}
           </div>
 
           {displayed.length === 0 ? (

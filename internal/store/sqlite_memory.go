@@ -190,7 +190,7 @@ func (s *SQLiteStore) GetMemoriesUpdatedSince(ctx context.Context, projectID str
 }
 
 // ListMemoriesPaginated returns a page of memories for a non-deleted project.
-func (s *SQLiteStore) ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int) ([]*model.Memory, int, error) {
+func (s *SQLiteStore) ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int, category string) ([]*model.Memory, int, error) {
 	{
 		var exists bool
 		err := s.db.QueryRowContext(ctx,
@@ -215,16 +215,26 @@ func (s *SQLiteStore) ListMemoriesPaginated(ctx context.Context, projectID strin
 		offset = 0
 	}
 
-	rows, err := s.db.QueryContext(ctx,
+	catFilter := ""
+	args := []any{projectID}
+	if category != "" {
+		catFilter = ` AND category = ?`
+		args = append(args, category)
+	}
+	args = append(args, limit, offset)
+
+	query := fmt.Sprintf(
 		`SELECT id, project_id, category, content, content_hash, keywords, source,
 		        author_id, author_name, created_at, updated_at, deleted_at, metadata,
 		        COUNT(*) OVER() AS total
 		 FROM memories
-		 WHERE project_id = ? AND deleted_at IS NULL`+sqliteQualityFilterSQL+`
+		 WHERE project_id = ? AND deleted_at IS NULL%s`+sqliteQualityFilterSQL+`
 		 ORDER BY updated_at DESC
 		 LIMIT ? OFFSET ?`,
-		projectID, limit, offset,
+		catFilter,
 	)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list memories paginated: %w", err)
 	}

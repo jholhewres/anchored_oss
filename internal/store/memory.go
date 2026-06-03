@@ -205,7 +205,7 @@ const (
 // ListMemoriesPaginated returns a page of memories for a non-deleted project.
 // Returns ErrNotFound when the project is missing or soft-deleted so handlers
 // can map directly to 404.
-func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int) ([]*model.Memory, int, error) {
+func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int, category string) ([]*model.Memory, int, error) {
 	// Guard: project must be live. We piggyback on GetActiveProjectByID so the
 	// caller cannot peek at a soft-deleted project's memories.
 	if _, err := s.GetActiveProjectByID(ctx, projectID); err != nil {
@@ -222,16 +222,29 @@ func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID str
 		offset = 0
 	}
 
-	rows, err := s.db.QueryContext(ctx,
+	catFilter := ""
+	args := []any{projectID}
+	if category != "" {
+		catFilter = ` AND category = $2`
+		args = append(args, category)
+	}
+	args = append(args, limit, offset)
+
+	limitIdx := len(args) - 1
+	offsetIdx := len(args)
+
+	query := fmt.Sprintf(
 		`SELECT id, project_id, category, content, content_hash, keywords, source,
 		        author_id, author_name, created_at, updated_at, deleted_at, metadata,
 		        COUNT(*) OVER() AS total
 		 FROM memories
-		 WHERE project_id = $1 AND deleted_at IS NULL` + qualityFilterSQL + `
+		 WHERE project_id = $1 AND deleted_at IS NULL%s` + qualityFilterSQL + `
 		 ORDER BY updated_at DESC
-		 LIMIT $2 OFFSET $3`,
-		projectID, limit, offset,
+		 LIMIT $%d OFFSET $%d`,
+		catFilter, limitIdx, offsetIdx,
 	)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list memories paginated: %w", err)
 	}

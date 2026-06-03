@@ -216,8 +216,9 @@ func (h *ProjectHandler) ListMemories(w http.ResponseWriter, r *http.Request) {
 		}
 		offset = n
 	}
+	category := q.Get("category")
 
-	memories, total, err := h.store.ListMemoriesPaginated(r.Context(), id, limit, offset)
+	memories, total, err := h.store.ListMemoriesPaginated(r.Context(), id, limit, offset, category)
 	if errors.Is(err, store.ErrNotFound) {
 		jsonError(w, http.StatusNotFound, "project not found")
 		return

@@ -75,7 +75,7 @@ type Store interface {
 	// under Postgres' 65535-parameter limit.
 	UpsertMemories(ctx context.Context, ms []*model.Memory) error
 	GetMemoriesUpdatedSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error)
-	ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int) (memories []*model.Memory, total int, err error)
+	ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int, category string) (memories []*model.Memory, total int, err error)
 	SoftDeleteMemory(ctx context.Context, id, projectID string) error
 	GetTombstonesSince(ctx context.Context, projectID string, since time.Time) ([]string, error)
 	GetMemoryByID(ctx context.Context, id string) (*model.Memory, error)

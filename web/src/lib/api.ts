@@ -122,11 +122,11 @@ export const api = {
 
   getProjects: () => request<Project[]>("GET", "/v1/projects"),
   getProject: (id: string) => request<Project>("GET", `/v1/projects/${id}`),
-  getProjectMemories: (id: string, limit: number, offset: number) =>
-    request<ListMemoriesResponse>(
-      "GET",
-      `/v1/projects/${id}/memories?limit=${limit}&offset=${offset}`,
-    ),
+  getProjectMemories: (id: string, limit: number, offset: number, category?: string) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (category) params.set("category", category);
+    return request<ListMemoriesResponse>("GET", `/v1/projects/${id}/memories?${params.toString()}`);
+  },
   getProjectGraph: (id: string, limit: number, offset: number) =>
     request<ListTriplesResponse>(
       "GET",
