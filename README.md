@@ -19,13 +19,13 @@ It is designed as the open/self-hosted counterpart to the future Anchored Cloud 
 curl -fsSL https://anchoredoss.dev/install | sh
 
 # Anchored OSS self-hosted team server
-curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored-oss/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored_oss/main/install/install.sh | sh
 ```
 
-The public distribution repository is `jholhewres/anchored-oss`. It contains
-only installer/version metadata and GitHub Release assets; the server source
-remains private. The embedded `/install-oss` endpoint serves the same PM2-based
-installer for deployments that prefer the product domain.
+This repository (`jholhewres/anchored_oss`) is the canonical, public source for
+the self-hosted server. The running server also serves the same installers from
+its embedded `/install` and `/install-oss` endpoints, so deployments can pull
+them from the product domain without depending on GitHub.
 
 ### Docker Compose
 
@@ -56,7 +56,7 @@ Config can be supplied via `config.yaml` (see `config.example.yaml`), environmen
 
 ## Admin Dashboard
 
-The server ships with a React + shadcn/ui admin dashboard embedded directly into the binary. Open `http://localhost:8080` after bootstrap, paste an admin API key, and you have access to Overview, Projects, Accounts, Teams, API keys, Audit, and Health screens.
+The server ships with a React + shadcn/ui admin dashboard embedded directly into the binary. Open `http://localhost:8080` after bootstrap (or complete the first-run onboarding wizard), and you have access to Overview, Projects, Developers, API keys, Guardrails, Audit, and Health screens.
 
 ### Building the dashboard
 
@@ -93,6 +93,11 @@ The UI is served by the same Go binary (no separate process or CDN). API paths (
 | `POST` | `/v1/api-keys` | admin | Mint a new API key (optional expiry 7d/30d/90d). |
 | `DELETE` | `/v1/api-keys/{id}` | admin | Revoke a key. |
 | `GET` | `/v1/audit` | admin | Audit entries with project/actor/action/date filters. |
+| `GET` | `/v1/guardrails` | admin | List the org's sync-time guardrail rules. |
+| `POST` | `/v1/guardrails` | admin | Add a custom guardrail (category block, keyword, or RE2 regex). |
+| `PATCH` | `/v1/guardrails/{id}` | admin | Enable/disable or edit a guardrail (builtins toggle-only). |
+| `DELETE` | `/v1/guardrails/{id}` | admin | Delete a custom guardrail (builtins cannot be deleted). |
+| `GET` `PUT` | `/v1/policies` | admin | Scoring thresholds (quality, near-duplicate). |
 
 API key scopes: `admin` (full + bypasses team-access checks), `sync` (push + pull), `readonly` (pull only).
 
@@ -110,11 +115,11 @@ Account
     ├── Teams
     │   ├── Members
     │   └── Permissions
+    ├── Guardrails (org-wide, admin-managed)
+    ├── Audit log
     └── Projects
         ├── Shared memories
-        ├── Knowledge graph
-        ├── Policies / guardrails
-        └── Audit log
+        └── Knowledge graph
 ```
 
 - **Account**: human user.
@@ -122,24 +127,24 @@ Account
 - **Team**: group of organization members with project access. Every org has an auto-managed `default` team; new projects grant write access to it so creators are immediately wired in.
 - **Project**: organization-level shared memory scope. Projects may be created manually or automatically claimed from a non-personal repository identifier.
 
-## Privacy Rules
+## Guardrails (privacy-first, configurable)
 
-Remote sync is privacy-first. By default, Anchored OSS accepts only project-scoped team knowledge:
+Remote sync is privacy-first. Each organization has a **guardrail set** — a list
+of sync-time rules enforced per-item (rejections carry a `rule` in the response).
+Admins manage it from the **Guardrails** screen; every org is seeded with a useful
+default set that can be disabled, adjusted, or extended.
 
-- facts
-- decisions
-- learnings
-- plans
-- summaries
-- knowledge graph triples
+Seeded defaults:
 
-The server rejects (per-item, with a `rule` in the response) anything that looks like:
+- **Secret detection** — Stripe / GitHub / Slack tokens, AWS access keys, Google API keys, PEM private keys, credential-bearing URIs (`postgres://user:pass@`, `mongodb://...:...@`, `mysql://...`, `redis://:pass@`).
+- **Local path block** — `/home/...`, `/Users/...`, `C:\Users\...`, `~/`, `/tmp/`, `/var/folders/`, `C:\Windows\`, ... Use repository-relative paths (e.g. `pkg/memory/service.go`).
+- **User-scope block** — memories scoped to a single developer (personal, not team).
+- **Category blocks** — `event` and `preference` are local-only by default.
 
-- local filesystem paths (`/home/...`, `/Users/...`, `C:\Users\...`, `~/`, `/tmp/`, `/var/folders/`, `C:\Windows\`, ...)
-- secrets: Stripe / GitHub / Slack tokens, AWS access keys, Google API keys, PEM private keys, and credential-bearing URIs (`postgres://user:pass@`, `mongodb://...:...@`, `mysql://...`, `redis://:pass@`)
-- categories `event` and `preference` (local-only by design)
-
-Remote references should use repository-relative paths, e.g. `pkg/memory/service.go`, never developer-local absolute paths.
+Admins can additionally create **custom rules**: block extra categories, or reject
+content matching a **keyword** (case-insensitive) or an **RE2 regex** (e.g. internal
+codenames or ticket IDs). The default-accepted, team-shareable categories are
+facts, decisions, learnings, plans, summaries, and knowledge-graph triples.
 
 ## Layout
 
@@ -151,9 +156,9 @@ anchored_oss/
 ├── internal/handler/   # REST handlers (health, sync, projects, api-keys)
 ├── internal/middleware/# auth, CORS, body limit, logging, recovery
 ├── internal/model/     # shared DTOs and domain types
-├── internal/policy/    # guardrails (local paths, secrets, blocked categories)
+├── internal/policy/    # guardrail content filter (secrets, paths, categories, custom rules)
 ├── internal/server/    # http.Server wiring
-├── internal/store/     # Postgres store + migrations
+├── internal/store/     # Postgres + SQLite stores, interface, and migrations
 ├── internal/sync/      # bidirectional sync engine
 ├── internal/version/   # build-time version
 ├── docs/               # protocol + error reference
@@ -164,8 +169,37 @@ anchored_oss/
 
 ## Documentation
 
+- [Architecture](ARCHITECTURE.md) — system overview, client↔server flow, onboarding, and feature map (with diagrams)
 - [Sync Protocol](docs/sync-protocol.md) — bidirectional sync protocol specification
 - [Error Codes](docs/error-codes.md) — API error codes and item-level rejection rules
+
+## Contributing
+
+Contributions are welcome. Anchored OSS is a Go server with an embedded React
+dashboard.
+
+1. **Build & test**
+
+   ```bash
+   make build          # Go-only build (CGO disabled; pure-Go SQLite + Postgres)
+   go test ./...       # unit + store/integration tests
+   go vet ./...
+   cd web && npm run build   # type-check + bundle the dashboard
+   ```
+
+2. **Conventions**
+   - English-first for code, comments, commits, and docs.
+   - Conventional Commit messages (`feat:`, `fix:`, `docs:`, `chore:` ...), small and thematic.
+   - Keep the two store backends in parity: any new query must be implemented for
+     **both** Postgres (`internal/store/*.go`) and SQLite (`internal/store/sqlite_*.go`).
+     SQLite returns `DATETIME` as strings — wrap timestamp scans with `scanTime`/`scanNullTime`.
+   - Add tests for new behavior; preserve the privacy guardrails.
+
+3. **Workflow** — open an issue to discuss non-trivial changes first, branch from
+   `main`, ensure `go test ./...`, `go vet ./...`, and `npm run build` are green, then
+   open a pull request describing the change and how you verified it.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a map of the codebase before diving in.
 
 ## License
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="${ANCHORED_OSS_REPO:-jholhewres/anchored-oss}"
+REPO="${ANCHORED_OSS_REPO:-jholhewres/anchored_oss}"
 APP_NAME="${ANCHORED_OSS_APP_NAME:-anchored-oss}"
 INSTALL_ROOT="${ANCHORED_OSS_HOME:-$HOME/.anchored-oss}"
 BIN_DIR="$INSTALL_ROOT/bin"

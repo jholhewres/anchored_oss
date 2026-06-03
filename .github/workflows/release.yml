@@ -11,8 +11,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      PUBLIC_RELEASE_REPO: jholhewres/anchored-oss
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,15 +70,17 @@ jobs:
           cat > dist/release-notes.md <<'EOF'
           ## Anchored OSS ${{ steps.vars.outputs.version }}
 
-          This public release contains downloadable Anchored OSS server binaries only. Source code remains private.
+          Self-hosted team memory sync for Anchored — open source, local-first, organization-owned.
 
           ### Install
 
           ```bash
-          curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored-oss/main/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored_oss/main/install/install.sh | sh
           ```
 
-          The installer reads `VERSION.md` from `jholhewres/anchored-oss`, downloads the matching release asset, installs it under `~/.anchored-oss`, and starts it with PM2.
+          The installer downloads the matching `selfhosted` asset below, installs it under
+          `~/.anchored-oss`, and starts it with PM2. You can also build from source
+          (`make build-prod`) or run via Docker Compose — see the README.
 
           ### Binaries
 
@@ -102,49 +102,31 @@ jobs:
           Built on ${{ steps.vars.outputs.build_date }} with Go 1.25 (CGO_ENABLED=0).
           EOF
 
-      - name: Create private build archive release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             dist/anchored-oss-*
             dist/checksums-sha256.txt
-          body: |
-            See the public distribution release at https://github.com/${{ env.PUBLIC_RELEASE_REPO }}/releases/tag/${{ steps.vars.outputs.version }}.
+          body_path: dist/release-notes.md
 
-            This private release exists only as a build/archive mirror for maintainers.
-
-      - name: Publish public distribution release
+      - name: Update VERSION.md on main
         env:
-          GH_TOKEN: ${{ secrets.ANCHORED_OSS_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.vars.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "Set ANCHORED_OSS_RELEASE_TOKEN with contents:write on $PUBLIC_RELEASE_REPO to publish public releases." >&2
-            exit 1
-          fi
-
-          if gh release view "$VERSION" --repo "$PUBLIC_RELEASE_REPO" >/dev/null 2>&1; then
-            gh release upload "$VERSION" dist/anchored-oss-* dist/checksums-sha256.txt --repo "$PUBLIC_RELEASE_REPO" --clobber
-            gh release edit "$VERSION" --repo "$PUBLIC_RELEASE_REPO" --title "Anchored OSS $VERSION" --notes-file dist/release-notes.md
-          else
-            gh release create "$VERSION" dist/anchored-oss-* dist/checksums-sha256.txt --repo "$PUBLIC_RELEASE_REPO" --title "Anchored OSS $VERSION" --notes-file dist/release-notes.md
-          fi
-
-      - name: Update public VERSION.md
-        env:
-          GH_TOKEN: ${{ secrets.ANCHORED_OSS_RELEASE_TOKEN }}
-          VERSION: ${{ steps.vars.outputs.version }}
-        run: |
-          sha=$(gh api "repos/$PUBLIC_RELEASE_REPO/contents/VERSION.md" --jq .sha 2>/dev/null || true)
+          # Best-effort: the installer reads VERSION.md to pin a version, but it
+          # also falls back to releases/latest, so a failure here is non-fatal.
+          sha=$(gh api "repos/$REPO/contents/VERSION.md" --jq .sha 2>/dev/null || true)
           body=$(printf '%s\n' "$VERSION" | base64 -w0)
           if [ -n "$sha" ]; then
-            gh api --method PUT "repos/$PUBLIC_RELEASE_REPO/contents/VERSION.md" \
+            gh api --method PUT "repos/$REPO/contents/VERSION.md" \
               -f message="chore: update VERSION.md to $VERSION" \
-              -f content="$body" \
-              -f sha="$sha"
+              -f content="$body" -f sha="$sha" || true
           else
-            gh api --method PUT "repos/$PUBLIC_RELEASE_REPO/contents/VERSION.md" \
+            gh api --method PUT "repos/$REPO/contents/VERSION.md" \
               -f message="chore: add VERSION.md for $VERSION" \
-              -f content="$body"
+              -f content="$body" || true
           fi
