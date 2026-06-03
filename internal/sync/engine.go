@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -20,14 +21,12 @@ import (
 
 type SyncEngine struct {
 	store  store.Store
-	filter *policy.ContentFilter
 	logger *slog.Logger
 }
 
-func NewSyncEngine(st store.Store, f *policy.ContentFilter, logger *slog.Logger) *SyncEngine {
+func NewSyncEngine(st store.Store, logger *slog.Logger) *SyncEngine {
 	return &SyncEngine{
 		store:  st,
-		filter: f,
 		logger: logger,
 	}
 }
@@ -155,6 +154,67 @@ func (e *SyncEngine) authorize(ctx context.Context, accountID, projectID string)
 	return &SyncError{Code: "FORBIDDEN", Status: 403, Msg: "no team access to this project"}
 }
 
+// filterForOrg builds the per-org content filter from its guardrail set. An org
+// with no guardrail rows (created before the guardrail manager, or a seed
+// failure) falls back to the legacy default filter, so enforcement is never
+// weaker than before. With rows present, disabling every category guardrail
+// legitimately blocks no categories.
+func (e *SyncEngine) filterForOrg(ctx context.Context, orgID string) *policy.ContentFilter {
+	guards, err := e.store.ListGuardrails(ctx, orgID)
+	if err != nil {
+		e.logger.Warn("sync: guardrails load failed; using safe default filter", "org_id", orgID, "error", err)
+		return policy.NewContentFilter()
+	}
+
+	var quality float64
+	if pol, perr := e.store.GetOrgPolicy(ctx, orgID); perr == nil {
+		quality = pol.QualityThreshold
+	}
+
+	if len(guards) == 0 {
+		// Pre-migration / unseeded org: legacy default (all security on, default
+		// blocked categories).
+		return policy.NewContentFilterWithConfig(nil, quality)
+	}
+
+	cfg := policy.Config{QualityThreshold: quality}
+	cats := make([]string, 0)
+	for _, g := range guards {
+		if !g.Enabled {
+			continue
+		}
+		switch g.Kind {
+		case model.GuardrailSecretDetection:
+			cfg.SecretDetection = true
+		case model.GuardrailLocalPathRedaction:
+			cfg.PathRedaction = true
+		case model.GuardrailUserScopeBlock:
+			cfg.UserScopeBlock = true
+		case model.GuardrailCategory:
+			if g.Value != "" {
+				cats = append(cats, g.Value)
+			}
+		case model.GuardrailRegex:
+			re, cerr := regexp.Compile(g.Value)
+			if cerr != nil {
+				e.logger.Warn("sync: skipping invalid regex guardrail", "id", g.ID, "error", cerr)
+				continue
+			}
+			cfg.CustomRules = append(cfg.CustomRules, policy.CustomRule{Label: g.Label, Re: re})
+		case model.GuardrailKeyword:
+			if g.Value == "" {
+				continue
+			}
+			cfg.CustomRules = append(cfg.CustomRules, policy.CustomRule{
+				Label: g.Label,
+				Re:    regexp.MustCompile("(?i)" + regexp.QuoteMeta(g.Value)),
+			})
+		}
+	}
+	cfg.BlockedCategories = cats
+	return policy.NewContentFilterFromConfig(cfg)
+}
+
 func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, projectID string, pushes []model.SyncMemory) ([]model.SyncResult, error) {
 	if len(pushes) == 0 {
 		return nil, nil
@@ -173,15 +233,9 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 			Metadata: meta,
 		}
 	}
-	// Enforce the org's customizable guardrails (blocked categories / quality
-	// threshold). Falls back to the default filter if the policy can't load.
-	filter := e.filter
-	if pol, err := e.store.GetOrgPolicy(ctx, orgID); err == nil {
-		filter = policy.NewContentFilterWithConfig(pol.BlockedCategories, pol.QualityThreshold)
-	} else {
-		e.logger.Warn("sync: org policy load failed; using default filter", "org_id", orgID, "error", err)
-	}
-	filterResults := filter.Filter(filterables)
+	// Enforce the org's guardrail set (security toggles, blocked categories,
+	// custom regex/keyword rules). Falls back to the default filter on error.
+	filterResults := e.filterForOrg(ctx, orgID).Filter(filterables)
 
 	results := make([]model.SyncResult, len(pushes))
 	accepted := make([]*model.Memory, 0, len(pushes))

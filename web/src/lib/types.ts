@@ -187,6 +187,27 @@ export interface OrgPolicy {
   always_on: string[];
 }
 
+export type GuardrailKind =
+  | "secret_detection"
+  | "local_path_redaction"
+  | "user_scope_block"
+  | "category"
+  | "regex"
+  | "keyword";
+
+export interface Guardrail {
+  id: string;
+  org_id: string;
+  kind: GuardrailKind;
+  value: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  builtin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ListMemoriesResponse {
   memories: Memory[];
   total: number;

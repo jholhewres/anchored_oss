@@ -16,6 +16,7 @@ import type {
   Me,
   Memory,
   OrgPolicy,
+  Guardrail,
   ChatStatus,
   ChatAnswer,
   OnboardingComplete,
@@ -223,4 +224,12 @@ export const api = {
   getPolicy: () => request<OrgPolicy>("GET", "/v1/policies"),
   updatePolicy: (body: { blocked_categories: string[]; quality_threshold: number; near_dup_threshold: number }) =>
     request<OrgPolicy>("PUT", "/v1/policies", body),
+
+  // Guardrail manager (org-level, admin only)
+  listGuardrails: () => request<Guardrail[]>("GET", "/v1/guardrails"),
+  createGuardrail: (body: { kind: string; value: string; label?: string; description?: string }) =>
+    request<Guardrail>("POST", "/v1/guardrails", body),
+  updateGuardrail: (id: string, body: { enabled?: boolean; value?: string; label?: string; description?: string }) =>
+    request<Guardrail>("PATCH", `/v1/guardrails/${id}`, body),
+  deleteGuardrail: (id: string) => request<void>("DELETE", `/v1/guardrails/${id}`),
 };

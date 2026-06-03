@@ -31,6 +31,7 @@ const groups: NavGroup[] = [
   {
     label: "Admin",
     items: [
+      { to: "/guardrails", icon: <I.shield />, label: "Guardrails", adminOnly: true },
       { to: "/api-keys", icon: <I.key />, label: "API keys", adminOnly: true },
       { to: "/audit", icon: <I.activity />, label: "Audit log", adminOnly: true },
       { to: "/health", icon: <I.pulse />, label: "Health", status: "ok" },

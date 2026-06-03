@@ -15,6 +15,7 @@ import { ProjectDetailPage } from "@/pages/ProjectDetailPage";
 import { DevelopersPage } from "@/pages/DevelopersPage";
 import { APIKeysPage } from "@/pages/APIKeysPage";
 import { AuditPage } from "@/pages/AuditPage";
+import { GuardrailsPage } from "@/pages/GuardrailsPage";
 import { HealthPage } from "@/pages/HealthPage";
 
 function RootRouter() {
@@ -64,6 +65,7 @@ export function App() {
         <Route path="/accounts" element={<Navigate to="/developers" replace />} />
         <Route path="/api-keys" element={<APIKeysPage />} />
         <Route path="/audit" element={<AuditPage />} />
+        <Route path="/guardrails" element={<GuardrailsPage />} />
         <Route path="/health" element={<HealthPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

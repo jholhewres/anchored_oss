@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 12
+const sqliteSchemaVersion = 13
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -234,6 +234,23 @@ CREATE TABLE IF NOT EXISTS org_policies (
 );
 `
 
+// sqliteMigration013 mirrors Postgres 013: the per-org guardrail manager.
+const sqliteMigration013 = `
+CREATE TABLE IF NOT EXISTS org_guardrails (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    builtin INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_org_guardrails_org ON org_guardrails(org_id);
+`
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -247,6 +264,7 @@ var sqliteMigrations = map[int]string{
 	10: sqliteMigration010,
 	11: sqliteMigration011,
 	12: sqliteMigration012,
+	13: sqliteMigration013,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {

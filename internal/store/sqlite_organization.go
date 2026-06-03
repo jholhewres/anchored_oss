@@ -9,13 +9,26 @@ import (
 
 func (s *SQLiteStore) CreateOrganization(ctx context.Context, name, slug string) (*model.Organization, error) {
 	id := newUUID()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create organization: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful commit
+
 	var o model.Organization
-	err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)
 		 RETURNING id, name, slug, created_at`,
 		id, name, slug,
-	).Scan(&o.ID, &o.Name, &o.Slug, scanTime(&o.CreatedAt))
-	if err != nil {
+	).Scan(&o.ID, &o.Name, &o.Slug, scanTime(&o.CreatedAt)); err != nil {
+		return nil, fmt.Errorf("create organization: %w", err)
+	}
+	// Seed in the same transaction: an org must never commit with a partial
+	// guardrail set (which would silently disable security rules at sync time).
+	if err := seedDefaultGuardrailsSQLite(ctx, tx, o.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("create organization: %w", err)
 	}
 	return &o, nil

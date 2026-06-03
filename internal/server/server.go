@@ -117,11 +117,17 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	mux.HandleFunc("GET /v1/policies", authMW(requireAdmin(http.HandlerFunc(policyHandler.Get))).ServeHTTP)
 	mux.HandleFunc("PUT /v1/policies", authMW(requireAdmin(http.HandlerFunc(policyHandler.Update))).ServeHTTP)
 
+	guardrailHandler := handler.NewGuardrailHandler(st, logger)
+	mux.HandleFunc("GET /v1/guardrails", authMW(requireAdmin(http.HandlerFunc(guardrailHandler.List))).ServeHTTP)
+	mux.HandleFunc("POST /v1/guardrails", authMW(requireAdmin(http.HandlerFunc(guardrailHandler.Create))).ServeHTTP)
+	mux.HandleFunc("PATCH /v1/guardrails/{id}", authMW(requireAdmin(http.HandlerFunc(guardrailHandler.Update))).ServeHTTP)
+	mux.HandleFunc("DELETE /v1/guardrails/{id}", authMW(requireAdmin(http.HandlerFunc(guardrailHandler.Delete))).ServeHTTP)
+
 	chatHandler := handler.NewChatHandler(st, cfg, embedder, logger)
 	mux.HandleFunc("GET /v1/chat/status", authMW(http.HandlerFunc(chatHandler.Status)).ServeHTTP)
 	mux.HandleFunc("POST /v1/chat", authMW(http.HandlerFunc(chatHandler.Complete)).ServeHTTP)
 
-	syncEngine := syncpkg.NewSyncEngine(st, policy.NewContentFilter(), logger)
+	syncEngine := syncpkg.NewSyncEngine(st, logger)
 	syncHandler := handler.NewSyncHandler(syncEngine, st, logger)
 	mux.HandleFunc("POST /v1/sync", authMW(http.HandlerFunc(syncHandler.ServeHTTP)).ServeHTTP)
 	// Compat split-protocol routes for the anchored CLI client.

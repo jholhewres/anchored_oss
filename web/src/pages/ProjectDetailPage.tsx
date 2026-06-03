@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { Card, Badge, Status, Btn, Input, Tabs } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
-import type { Project, Memory, Triple, OrgPolicy, ChatAnswer } from "@/lib/types";
+import type { Project, Memory, Triple, ChatAnswer } from "@/lib/types";
 import { GraphView } from "@/components/GraphView";
 
 function truncate(s: string, n: number) {
@@ -31,42 +31,6 @@ function timeAgo(dateStr: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
-}
-
-function PolicyRow({ title, description, items }: {
-  title: string;
-  description: string;
-  items: { label: string; tone: string; detail: string }[];
-}) {
-  return (
-    <div style={{ borderBottom: "1px solid var(--border)" }}>
-      <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 500 }}>{title}</div>
-        <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{description}</div>
-      </div>
-      <div style={{ padding: "0 22px 12px" }}>
-        {items.map((it, i) => (
-          <div key={i} style={{
-            display: "flex", alignItems: "flex-start", gap: 10,
-            padding: "7px 0",
-            borderTop: i > 0 ? "1px solid color-mix(in srgb, var(--border) 50%, transparent)" : "none",
-          }}>
-            <span style={{
-              fontFamily: "var(--font-mono)", fontSize: 10.5, padding: "2px 8px",
-              borderRadius: "var(--radius-sm)",
-              background: `var(--${it.tone === "neutral" ? "bg-3" : it.tone + "-bg"})`,
-              color: `var(--${it.tone === "neutral" ? "text-dim" : it.tone})`,
-              border: `1px solid var(--${it.tone === "neutral" ? "border" : it.tone + "-border"})`,
-              whiteSpace: "nowrap", flex: "none",
-            }}>
-              {it.label}
-            </span>
-            <span style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5 }}>{it.detail}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function MetaField({ label, value }: { label: string; value: React.ReactNode }) {
@@ -203,79 +167,6 @@ function ChatTab({ projectId }: { projectId: string }) {
   );
 }
 
-// OrgGuardrails is the admin-editable guardrail panel backed by GET/PUT
-// /v1/policies (org-level). Empty blocked-categories means "server defaults".
-function OrgGuardrails() {
-  const [pol, setPol] = React.useState<OrgPolicy | null>(null);
-  const [blocked, setBlocked] = React.useState("");
-  const [quality, setQuality] = React.useState("");
-  const [nearDup, setNearDup] = React.useState("");
-  const [saving, setSaving] = React.useState(false);
-  const [msg, setMsg] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    api.getPolicy().then(p => {
-      setPol(p);
-      setBlocked(p.blocked_categories.join(", "));
-      setQuality(String(p.quality_threshold));
-      setNearDup(String(p.near_dup_threshold));
-    }).catch(() => {});
-  }, []);
-
-  if (!pol) return null;
-
-  const save = () => {
-    setSaving(true);
-    setMsg(null);
-    api.updatePolicy({
-      blocked_categories: blocked.split(",").map(s => s.trim()).filter(Boolean),
-      quality_threshold: parseFloat(quality) || 0,
-      near_dup_threshold: parseFloat(nearDup) || 0,
-    })
-      .then(p => { setPol(p); setMsg("Saved"); })
-      .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "Failed to save"))
-      .finally(() => setSaving(false));
-  };
-
-  const label = (t: string) => (
-    <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginBottom: 6, fontFamily: "var(--font-mono)" }}>{t}</div>
-  );
-
-  return (
-    <Card style={{ padding: 0, marginBottom: 16 }}>
-      <div style={{ padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
-        <div style={{ fontSize: 15, fontWeight: 500 }}>Customizable guardrails</div>
-        <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
-          Org-level overrides enforced on every sync. Leave categories empty to use server defaults.
-        </div>
-      </div>
-      <div style={{ padding: "16px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
-        <div>
-          {label("Blocked categories (comma-separated)")}
-          <Input full size="sm" value={blocked} onChange={e => setBlocked(e.target.value)} placeholder="event, preference" />
-        </div>
-        <div style={{ display: "flex", gap: 14 }}>
-          <div style={{ flex: 1 }}>
-            {label("Quality threshold (0–1)")}
-            <Input full size="sm" type="number" value={quality} onChange={e => setQuality(e.target.value)} />
-          </div>
-          <div style={{ flex: 1 }}>
-            {label("Near-duplicate threshold (0–1)")}
-            <Input full size="sm" type="number" value={nearDup} onChange={e => setNearDup(e.target.value)} />
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <Btn variant="primary" size="sm" onClick={save} disabled={saving}>{saving ? "Saving..." : "Save guardrails"}</Btn>
-          {msg && <span style={{ fontSize: 12, color: msg === "Saved" ? "var(--ok)" : "var(--err)" }}>{msg}</span>}
-          <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>always-on:</span>
-          {pol.always_on?.map(a => <Badge key={a} tone="outline">{a}</Badge>)}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = React.useState<Project | null>(null);
@@ -380,7 +271,6 @@ export function ProjectDetailPage() {
           { key: "memories", label: "Memories", icon: <I.cube />, count: memTotal },
           { key: "graph", label: "Knowledge graph", icon: <I.graph />, count: tripleTotal },
           { key: "chat", label: "Chat", icon: <I.brain /> },
-          { key: "policies", label: "Policies", icon: <I.shield /> },
           { key: "settings", label: "Settings", icon: <I.settings /> },
         ]}
       />
@@ -496,64 +386,6 @@ export function ProjectDetailPage() {
       {activeTab === "chat" && id && (
         <div style={{ marginTop: 22 }}>
           <ChatTab projectId={id} />
-        </div>
-      )}
-
-      {activeTab === "policies" && (
-        <div style={{ marginTop: 22 }}>
-          <OrgGuardrails />
-          <Card style={{ padding: 0 }}>
-            <div style={{ padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
-              <div style={{ fontSize: 15, fontWeight: 500 }}>Always-on guardrails</div>
-              <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
-                Enforced on every incoming sync and not configurable (defense in depth).
-              </div>
-            </div>
-
-            <div style={{ padding: 0 }}>
-              <PolicyRow
-                title="Blocked categories"
-                description="These categories are local-only and rejected at sync time."
-                items={[
-                  { label: "event", tone: "err", detail: "Session events are transient and machine-local" },
-                  { label: "preference", tone: "err", detail: "User preferences are personal, not team-shared" },
-                ]}
-              />
-
-              <PolicyRow
-                title="Allowed categories"
-                description="Only these categories are accepted into the project."
-                items={[
-                  { label: "fact", tone: "ok", detail: "Stable project truths" },
-                  { label: "decision", tone: "accent", detail: "Architectural and product decisions" },
-                  { label: "plan", tone: "info", detail: "Forward-looking intent" },
-                  { label: "summary", tone: "neutral", detail: "Consolidated recaps" },
-                  { label: "learning", tone: "warn", detail: "Non-obvious lessons and insights" },
-                ]}
-              />
-
-              <PolicyRow
-                title="Content filtering"
-                description="Patterns detected in memory content that trigger rejection."
-                items={[
-                  { label: "Local paths", tone: "err", detail: "/home/..., /Users/..., ~/..., C:\\Users\\..., /tmp/... — use repo-relative paths" },
-                  { label: "Secrets", tone: "err", detail: "Stripe/GitHub/Slack tokens, AWS keys, PEM private keys, credential URIs" },
-                  { label: "User-scoped", tone: "warn", detail: "Memories with metadata.scope = 'user' are personal, not team" },
-                  { label: "Operational", tone: "warn", detail: "metadata.memory_type = 'operational' is local session context" },
-                  { label: "Pre-compact/handoff", tone: "warn", detail: "metadata.origin = 'precompact'|'handoff' — local session artifacts" },
-                ]}
-              />
-
-              <PolicyRow
-                title="Storage quota"
-                description="Per-organization limits."
-                items={[
-                  { label: "1 GB (cloud)", tone: "info", detail: "Free tier storage limit per org in cloud mode" },
-                  { label: "Unlimited (self-hosted)", tone: "ok", detail: "No storage limit when running your own server" },
-                ]}
-              />
-            </div>
-          </Card>
         </div>
       )}
 

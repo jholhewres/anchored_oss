@@ -179,3 +179,29 @@ type OrgPolicy struct {
 	NearDupThreshold  float64   `json:"near_dup_threshold"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
+
+// Guardrail kinds. The three security kinds are seeded as builtins (toggleable
+// but not deletable); category/regex/keyword are admin-managed (full CRUD).
+const (
+	GuardrailSecretDetection   = "secret_detection"
+	GuardrailLocalPathRedaction = "local_path_redaction"
+	GuardrailUserScopeBlock    = "user_scope_block"
+	GuardrailCategory          = "category" // value = category name to block at sync
+	GuardrailRegex             = "regex"    // value = RE2 pattern; content match => reject
+	GuardrailKeyword           = "keyword"  // value = literal substring (case-insensitive) => reject
+)
+
+// Guardrail is one configurable sync-time rule for an org. builtin rows are the
+// seeded security rules: they can be disabled (enabled=false) but not deleted.
+type Guardrail struct {
+	ID          string    `json:"id"`
+	OrgID       string    `json:"org_id"`
+	Kind        string    `json:"kind"`
+	Value       string    `json:"value"`
+	Label       string    `json:"label"`
+	Description string    `json:"description"`
+	Enabled     bool      `json:"enabled"`
+	Builtin     bool      `json:"builtin"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}

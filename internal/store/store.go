@@ -102,6 +102,13 @@ type Store interface {
 	GetOrgPolicy(ctx context.Context, orgID string) (*model.OrgPolicy, error)
 	UpsertOrgPolicy(ctx context.Context, p *model.OrgPolicy) error
 
+	// Guardrail manager (per-org list of configurable sync-time rules).
+	ListGuardrails(ctx context.Context, orgID string) ([]*model.Guardrail, error)
+	GetGuardrail(ctx context.Context, orgID, id string) (*model.Guardrail, error)
+	CreateGuardrail(ctx context.Context, g *model.Guardrail) error
+	UpdateGuardrail(ctx context.Context, g *model.Guardrail) error
+	DeleteGuardrail(ctx context.Context, orgID, id string) error
+
 	// Dashboard.
 	GetDashboardStats(ctx context.Context, orgID string) (*model.DashboardStats, error)
 

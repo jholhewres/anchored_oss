@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 12
+const schemaVersion = 13
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -274,6 +274,26 @@ CREATE TABLE IF NOT EXISTS org_policies (
 );
 `
 
+// migration013 adds the per-org guardrail manager: a list of configurable
+// sync-time rules (security toggles, blocked categories, custom regex/keyword
+// rejections). Org creation seeds a useful default set; an org with zero rows
+// falls back to the legacy default filter in the sync engine.
+const migration013 = `
+CREATE TABLE IF NOT EXISTS org_guardrails (
+    id UUID PRIMARY KEY,
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_org_guardrails_org ON org_guardrails(org_id);
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -287,6 +307,7 @@ var migrations = map[int]string{
 	10: migration010,
 	11: migration011,
 	12: migration012,
+	13: migration013,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from
