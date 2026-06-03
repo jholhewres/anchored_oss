@@ -76,7 +76,7 @@ func (s *SQLiteStore) GetTeamDetail(ctx context.Context, teamID string) (*model.
 	d.Members = make([]model.TeamMember, 0)
 	for memberRows.Next() {
 		var m model.TeamMember
-		if err := memberRows.Scan(&m.AccountID, &m.Email, &m.DisplayName, &m.AddedAt); err != nil {
+		if err := memberRows.Scan(&m.AccountID, &m.Email, &m.DisplayName, scanTime(&m.AddedAt)); err != nil {
 			return nil, fmt.Errorf("scan team member: %w", err)
 		}
 		d.Members = append(d.Members, m)

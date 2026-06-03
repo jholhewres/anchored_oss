@@ -18,7 +18,7 @@ func (s *SQLiteStore) GetOrgPolicy(ctx context.Context, orgID string) (*model.Or
 	err := s.db.QueryRowContext(ctx,
 		`SELECT blocked_categories, quality_threshold, near_dup_threshold, updated_at
 		 FROM org_policies WHERE org_id = ?`, orgID,
-	).Scan(&blockedJSON, &p.QualityThreshold, &p.NearDupThreshold, &p.UpdatedAt)
+	).Scan(&blockedJSON, &p.QualityThreshold, &p.NearDupThreshold, scanTime(&p.UpdatedAt))
 	if errors.Is(err, sql.ErrNoRows) {
 		return defaultOrgPolicy(orgID), nil
 	}

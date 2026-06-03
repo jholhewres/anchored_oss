@@ -124,7 +124,7 @@ func (s *SQLiteStore) ListTriplesByProject(ctx context.Context, projectID string
 	triples := make([]*model.Triple, 0, limit)
 	for rows.Next() {
 		var t model.Triple
-		if err := rows.Scan(&t.ID, &t.Subject, &t.Predicate, &t.Object, &t.Confidence, &t.ProjectID, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Subject, &t.Predicate, &t.Object, &t.Confidence, &t.ProjectID, scanTime(&t.CreatedAt)); err != nil {
 			return nil, 0, fmt.Errorf("scan triple: %w", err)
 		}
 		triples = append(triples, &t)

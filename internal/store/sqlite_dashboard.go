@@ -67,7 +67,7 @@ func (s *SQLiteStore) GetDashboardStats(ctx context.Context, orgID string) (*mod
 
 	for rows.Next() {
 		var a model.PushActivity
-		if err := rows.Scan(&a.ProjectID, &a.ProjectName, &a.Count, &a.LastPush); err != nil {
+		if err := rows.Scan(&a.ProjectID, &a.ProjectName, &a.Count, scanTime(&a.LastPush)); err != nil {
 			return nil, fmt.Errorf("scan recent push: %w", err)
 		}
 		stats.RecentPushes = append(stats.RecentPushes, a)
