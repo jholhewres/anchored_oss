@@ -1,10 +1,80 @@
-import React from "react";
+import React, { useState } from "react";
 import { useParams } from "react-router-dom";
 import { Card, Badge, Status, Btn, Input, Tabs } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
 import type { Project, Memory, Triple, ChatAnswer } from "@/lib/types";
 import { GraphView } from "@/components/GraphView";
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function CommandBox({ cmd }: { cmd: string }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "stretch",
+      background: "var(--bg-2)", border: "1px solid var(--border)",
+      borderRadius: "var(--radius)", overflow: "hidden",
+    }}>
+      <code style={{
+        flex: 1, padding: "9px 12px",
+        fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text)",
+        whiteSpace: "nowrap", overflowX: "auto",
+      }}>
+        <span style={{ color: "var(--accent)" }}>$</span> {cmd}
+      </code>
+      <CopyButton text={cmd} />
+    </div>
+  );
+}
+
+function CopyButton({ text, label = "copy", inline }: { text: string; label?: string; inline?: boolean }) {
+  const [state, setState] = useState<"idle" | "ok" | "err">("idle");
+  async function onClick() {
+    const ok = await copyToClipboard(text);
+    setState(ok ? "ok" : "err");
+    setTimeout(() => setState("idle"), 1800);
+  }
+  const color = state === "ok" ? "var(--ok)" : state === "err" ? "var(--err)" : "var(--text-dim)";
+  return (
+    <button type="button" onClick={onClick} style={{
+      background: "transparent",
+      border: inline ? "1px solid var(--border)" : 0,
+      borderLeft: inline ? "1px solid var(--border)" : "1px solid var(--border)",
+      borderRadius: inline ? "var(--radius)" : 0,
+      color, cursor: "pointer",
+      padding: inline ? "4px 10px" : "10px 14px",
+      fontFamily: "var(--font-mono)", fontSize: 11,
+      display: "inline-flex", alignItems: "center", gap: 5,
+      alignSelf: "stretch", transition: "color .15s",
+    }}>
+      {state === "ok" ? <I.check size={12} /> : state === "err" ? <I.x size={12} /> : <I.copy size={12} />}
+      {state === "ok" ? "copied!" : state === "err" ? "failed" : label}
+    </button>
+  );
+}
 
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n) + "..." : s;
@@ -167,6 +237,65 @@ function ChatTab({ projectId }: { projectId: string }) {
   );
 }
 
+function ConnectTab({ project }: { project: Project }) {
+  const origin = window.location.origin;
+  const configureCmd = `anchored remote configure --server ${origin} --key <your-api-key>`;
+  const linkCmd = `anchored remote link ${project.id}`;
+  const syncCmd = "anchored remote sync";
+
+  const fullScript = [
+    `# Connect to ${origin}`,
+    configureCmd,
+    `# Link project: ${project.name}`,
+    linkCmd,
+    "# Sync memories",
+    syncCmd,
+  ].join("\n");
+
+  return (
+    <div style={{ maxWidth: 640 }}>
+      <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 6 }}>Connect your CLI to this project</div>
+      <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55, marginBottom: 22 }}>
+        Run these commands on your dev machine to sync local memories with <strong>{project.name}</strong>.
+        You need an API key — create one in the <a href="/api-keys" style={{ color: "var(--accent)" }}>API Keys</a> page if you don't have one.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 6 }}>1. Connect to this server</div>
+          <CommandBox cmd={configureCmd} />
+        </div>
+
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" }}>2. Link this project</span>
+            <Badge tone="outline">{project.name}</Badge>
+          </div>
+          <CommandBox cmd={linkCmd} />
+          {project.remote_key && (
+            <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
+              Remote key: <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>{project.remote_key}</code>
+              {project.remote_key.includes("github.com") && " — repos with this origin auto-resolve to this project."}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 6 }}>3. Sync memories</div>
+          <CommandBox cmd={syncCmd} />
+          <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
+            Pushes local memories up and pulls team memories down. Run inside a git repo to auto-route by origin.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 12 }}>
+        <CopyButton text={fullScript} label="copy all commands" inline />
+      </div>
+    </div>
+  );
+}
+
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = React.useState<Project | null>(null);
@@ -275,6 +404,7 @@ export function ProjectDetailPage() {
           { key: "memories", label: "Memories", icon: <I.cube />, count: memTotal },
           { key: "graph", label: "Knowledge graph", icon: <I.graph />, count: tripleTotal },
           { key: "chat", label: "Chat", icon: <I.brain /> },
+          { key: "connect", label: "Connect", icon: <I.terminal /> },
           { key: "settings", label: "Settings", icon: <I.settings /> },
         ]}
       />
@@ -409,6 +539,12 @@ export function ProjectDetailPage() {
       {activeTab === "chat" && id && (
         <div style={{ marginTop: 22 }}>
           <ChatTab projectId={id} />
+        </div>
+      )}
+
+      {activeTab === "connect" && (
+        <div style={{ marginTop: 22 }}>
+          <ConnectTab project={project} />
         </div>
       )}
 
