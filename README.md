@@ -203,4 +203,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a map of the codebase before diving i
 
 ## License
 
-License is still being decided between **AGPLv3** (broad OSI compatibility) and a **source-available no-managed-service license** (block hosted resellers). Until decided, Anchored OSS is shared under "all rights reserved" — companies may run it internally; redistribution requires written permission.
+Anchored OSS is **source-available** under the **Functional Source License,
+Version 1.1, with an Apache 2.0 future grant** ([`FSL-1.1-ALv2`](LICENSE)).
+
+In short: you may read, run, self-host (including inside a company), modify, and
+redistribute the Software for any purpose **except a Competing Use** — i.e. you
+may not offer it to others as a commercial product or service that substitutes
+for Anchored. Two years after each version is released, that version
+automatically converts to the **Apache License 2.0**.
+
+See [LICENSE](LICENSE) for the full terms. Learn more about the FSL at
+<https://fsl.software>.
