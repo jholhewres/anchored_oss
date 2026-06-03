@@ -10,11 +10,31 @@ CONFIG_PATH="$INSTALL_ROOT/config.yaml"
 ECOSYSTEM_PATH="$INSTALL_ROOT/ecosystem.config.cjs"
 RAW_BASE="https://raw.githubusercontent.com/$REPO/main"
 
+# Default listen port. Deliberately off the common 80/443/3000/5000/8000/8080
+# lane to avoid colliding with whatever else the host already runs. Override
+# with ANCHORED_OSS_PORT=...
+PORT="${ANCHORED_OSS_PORT:-8771}"
+
+# Minimum Node major version pm2 needs.
+NODE_MIN_MAJOR=18
+
 log() { printf '%s\n' "==> $*"; }
+warn() { printf '%s\n' "WARN: $*" >&2; }
 fail() { printf '%s\n' "ERROR: $*" >&2; exit 1; }
 
-need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+# SUDO is "sudo" when we are not root and sudo exists; empty when already root;
+# unset-capable otherwise (callers check is_privileged).
+SUDO=""
+detect_sudo() {
+  if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+    return 0
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+    return 0
+  fi
+  return 1
 }
 
 download() {
@@ -26,6 +46,92 @@ download() {
     wget -O "$out" "$url"
   else
     fail "Install curl or wget first."
+  fi
+}
+
+node_major() {
+  command -v node >/dev/null 2>&1 || return 1
+  node -v 2>/dev/null | sed 's/^v//; s/\..*//'
+}
+
+# ensure_node guarantees a Node.js >= NODE_MIN_MAJOR (pm2 runs on Node). It is
+# idempotent: a recent enough Node short-circuits. Install strategy, in order:
+# Homebrew (macOS) -> NodeSource via apt/dnf (Linux, needs root/sudo) -> nvm
+# (user-level fallback, no root). Aborts with guidance if all paths fail.
+ensure_node() {
+  major="$(node_major || echo 0)"
+  if [ "${major:-0}" -ge "$NODE_MIN_MAJOR" ] 2>/dev/null; then
+    log "Node $(node -v) detected"
+    return 0
+  fi
+  if [ "${major:-0}" -gt 0 ] 2>/dev/null; then
+    warn "Node $(node -v) is older than v${NODE_MIN_MAJOR}; installing a current LTS"
+  else
+    log "Node.js not found; installing LTS"
+  fi
+
+  if [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+    if brew install node; then return 0; fi
+  fi
+
+  if detect_sudo; then
+    if command -v apt-get >/dev/null 2>&1; then
+      log "Installing Node LTS via NodeSource (apt)"
+      if download "https://deb.nodesource.com/setup_lts.x" "${TMPDIR:-/tmp}/nodesource.$$" \
+        && $SUDO -E sh "${TMPDIR:-/tmp}/nodesource.$$" \
+        && $SUDO apt-get install -y nodejs; then
+        rm -f "${TMPDIR:-/tmp}/nodesource.$$"
+        return 0
+      fi
+      rm -f "${TMPDIR:-/tmp}/nodesource.$$" 2>/dev/null || true
+    elif command -v dnf >/dev/null 2>&1; then
+      log "Installing Node LTS via NodeSource (dnf)"
+      if download "https://rpm.nodesource.com/setup_lts.x" "${TMPDIR:-/tmp}/nodesource.$$" \
+        && $SUDO -E sh "${TMPDIR:-/tmp}/nodesource.$$" \
+        && $SUDO dnf install -y nodejs; then
+        rm -f "${TMPDIR:-/tmp}/nodesource.$$"
+        return 0
+      fi
+      rm -f "${TMPDIR:-/tmp}/nodesource.$$" 2>/dev/null || true
+    fi
+  fi
+
+  # User-level fallback: nvm. Works without root but the resulting node/pm2
+  # live under $HOME, so boot persistence (pm2 startup) may need manual setup.
+  log "Falling back to nvm (user-level Node install)"
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+    download "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh" "${TMPDIR:-/tmp}/nvm-install.$$"
+    PROFILE=/dev/null sh "${TMPDIR:-/tmp}/nvm-install.$$" >/dev/null 2>&1 || true
+    rm -f "${TMPDIR:-/tmp}/nvm-install.$$"
+  fi
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$NVM_DIR/nvm.sh"
+    nvm install --lts >/dev/null 2>&1 || true
+    nvm use --lts >/dev/null 2>&1 || true
+  fi
+
+  major="$(node_major || echo 0)"
+  [ "${major:-0}" -ge "$NODE_MIN_MAJOR" ] 2>/dev/null \
+    || fail "Could not install Node >= v${NODE_MIN_MAJOR}. Install it manually and re-run."
+  log "Node $(node -v) ready"
+}
+
+install_pm2() {
+  if command -v pm2 >/dev/null 2>&1; then
+    log "pm2 $(pm2 -v 2>/dev/null) detected"
+    return 0
+  fi
+  command -v npm >/dev/null 2>&1 || fail "npm not found after Node install."
+  log "Installing pm2 globally"
+  if npm install -g pm2 >/dev/null 2>&1; then
+    return 0
+  fi
+  if detect_sudo; then
+    $SUDO npm install -g pm2 || fail "Could not install pm2. Install it manually: npm install -g pm2"
+  else
+    fail "Could not install pm2 (no permission for global npm). Install it manually: npm install -g pm2"
   fi
 }
 
@@ -72,28 +178,10 @@ resolve_version() {
   [ -n "$VERSION" ] || VERSION="latest"
 }
 
-install_pm2() {
-  if command -v pm2 >/dev/null 2>&1; then
-    return
-  fi
-
-  need_cmd npm
-  log "Installing pm2 globally"
-  if npm install -g pm2; then
-    return
-  fi
-
-  if command -v sudo >/dev/null 2>&1; then
-    sudo npm install -g pm2
-  else
-    fail "Could not install pm2. Install it manually with: npm install -g pm2"
-  fi
-}
-
 write_default_config() {
   cat > "$CONFIG_PATH" <<EOF
 server:
-  address: ":${ANCHORED_OSS_PORT:-8080}"
+  address: ":${PORT}"
 database:
   driver: sqlite
   dsn: "$DATA_DIR/anchored-oss.db"
@@ -102,7 +190,7 @@ database:
   conn_max_lifetime: 5m
 cors:
   allowed_origins:
-    - "http://localhost:${ANCHORED_OSS_PORT:-8080}"
+    - "http://localhost:${PORT}"
 quota:
   max_storage_bytes: 0
 curation:
@@ -119,8 +207,7 @@ EOF
 # stdin is the piped script). The wizard writes config.yaml into $INSTALL_ROOT,
 # provisions the chosen database, and bootstraps the admin + first API key
 # (printed once). Falls back to a non-interactive sqlite default when there is
-# no TTY or when ANCHORED_OSS_NONINTERACTIVE=1 is set. Sets SETUP_RAN=1 when the
-# wizard handled bootstrap so the caller can skip the manual bootstrap hint.
+# no TTY or when ANCHORED_OSS_NONINTERACTIVE=1 is set.
 SETUP_RAN=0
 configure_database() {
   if [ -f "$CONFIG_PATH" ]; then
@@ -131,8 +218,6 @@ configure_database() {
   if [ "${ANCHORED_OSS_NONINTERACTIVE:-0}" != "1" ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
     log "Launching interactive setup (database configuration)"
     printf '\n'
-    # cd into INSTALL_ROOT so the wizard writes config.yaml exactly where pm2
-    # reads it; /dev/tty gives the wizard a real terminal under curl|sh.
     if ( cd "$INSTALL_ROOT" && "$INSTALL_BIN" -setup < /dev/tty ); then
       SETUP_RAN=1
       return
@@ -140,7 +225,7 @@ configure_database() {
     log "Interactive setup did not complete; falling back to default config."
   fi
 
-  log "Writing default config (sqlite). Reconfigure later with: $INSTALL_BIN -setup"
+  log "Writing default config (sqlite, port ${PORT}). Reconfigure later with: $INSTALL_BIN -setup"
   write_default_config
 }
 
@@ -162,6 +247,27 @@ module.exports = {
   ]
 }
 EOF
+}
+
+# enable_boot_persistence wires pm2 to restart the app on reboot. pm2 startup
+# needs root to install the systemd/launchd unit; best-effort, with a clear
+# manual hint when we can't elevate.
+enable_boot_persistence() {
+  if [ "$(uname -s)" != "Linux" ] && [ "$(uname -s)" != "Darwin" ]; then
+    return 0
+  fi
+  if detect_sudo; then
+    startup_cmd="$(pm2 startup -u "$(id -un)" --hp "$HOME" 2>/dev/null | grep -E '^\s*sudo ' | tail -1 || true)"
+    if [ -n "$startup_cmd" ]; then
+      log "Enabling pm2 boot persistence"
+      sh -c "$startup_cmd" >/dev/null 2>&1 || warn "pm2 startup needs manual setup; run: $startup_cmd"
+    else
+      pm2 startup >/dev/null 2>&1 || true
+    fi
+    pm2 save >/dev/null 2>&1 || true
+  else
+    warn "No root/sudo: skipping boot persistence. To enable it later, run 'pm2 startup' and follow the printed command."
+  fi
 }
 
 verify_checksum() {
@@ -187,6 +293,7 @@ verify_checksum() {
 main() {
   detect_platform
   resolve_version
+  ensure_node
   install_pm2
 
   mkdir -p "$BIN_DIR" "$DATA_DIR"
@@ -212,13 +319,18 @@ main() {
   configure_database
   write_ecosystem
 
-  log "Starting $APP_NAME with pm2"
+  log "Starting $APP_NAME with pm2 on port ${PORT}"
   pm2 start "$ECOSYSTEM_PATH" --update-env
   pm2 save
+  enable_boot_persistence
 
-  log "Installed Anchored OSS in $INSTALL_ROOT"
-  log "Open the dashboard to finish setup — create your organization, admin login, and projects:"
-  log "  http://localhost:${ANCHORED_OSS_PORT:-8080}"
+  log "Installed Anchored OSS in $INSTALL_ROOT (port ${PORT})"
+  if [ "$SETUP_RAN" != "1" ]; then
+    log "Finish setup in the dashboard — create your organization, admin login, and projects:"
+  fi
+  log "  http://localhost:${PORT}"
+  log "On a cloud VM, open port ${PORT} in the firewall and use the public IP/hostname."
+  log "Logs: pm2 logs $APP_NAME   |   Restart: pm2 restart $APP_NAME"
 }
 
 main "$@"
