@@ -181,7 +181,7 @@ resolve_version() {
 write_default_config() {
   cat > "$CONFIG_PATH" <<EOF
 server:
-  address: ":${PORT}"
+  address: "0.0.0.0:${PORT}"
 database:
   driver: sqlite
   dsn: "$DATA_DIR/anchored-oss.db"
