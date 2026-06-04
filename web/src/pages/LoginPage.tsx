@@ -124,7 +124,7 @@ export function LoginPage() {
             color: "var(--text-dim)",
           }}
         >
-          <span>anchoredoss.dev</span>
+          <span>github.com/jholhewres/anchored_oss</span>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 14 }}>
             <Status value="ok" label="server · online" />
           </span>

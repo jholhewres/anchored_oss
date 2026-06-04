@@ -557,7 +557,7 @@ interface InstallCmdProps {
 }
 
 export const InstallCmd: React.FC<InstallCmdProps> = ({
-  cmd = "curl -fsSL anchoredoss.dev/install | sh",
+  cmd = "curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored/main/install/install.sh | bash",
   accent = false,
 }) => {
   const [copied, setCopied] = useState(false);

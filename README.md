@@ -16,7 +16,7 @@ It is designed as the open/self-hosted counterpart to the future Anchored Cloud 
 
 ```bash
 # Anchored local MCP memory server / CLI
-curl -fsSL https://anchoredoss.dev/install | sh
+curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored/main/install/install.sh | bash
 
 # Anchored OSS self-hosted team server
 curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored_oss/main/install/install.sh | sh
@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored_oss/main/instal
 This repository (`jholhewres/anchored_oss`) is the canonical, public source for
 the self-hosted server. The running server also serves the same installers from
 its embedded `/install` and `/install-oss` endpoints, so deployments can pull
-them from the product domain without depending on GitHub.
+them from their own server without depending on GitHub.
 
 ### Docker Compose
 

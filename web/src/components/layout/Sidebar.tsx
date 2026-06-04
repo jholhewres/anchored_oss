@@ -124,7 +124,7 @@ export function Sidebar() {
           }}>
             {/* Docs */}
             <a
-              href="https://anchoredoss.dev/docs"
+              href="https://github.com/jholhewres/anchored_oss#readme"
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setDropOpen(false)}

@@ -137,7 +137,7 @@ export function OverviewPage() {
         <Btn variant="outline" size="sm" icon={<I.key />} onClick={() => navigate("/api-keys")}>
           Generate API key
         </Btn>
-        <Btn variant="ghost" size="sm" icon={<I.external />} as="a" href="https://anchoredoss.dev/docs" target="_blank" rel="noopener noreferrer">
+        <Btn variant="ghost" size="sm" icon={<I.external />} as="a" href="https://github.com/jholhewres/anchored_oss#readme" target="_blank" rel="noopener noreferrer">
           Docs
         </Btn>
       </div>

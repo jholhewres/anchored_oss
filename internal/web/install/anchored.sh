@@ -21,7 +21,7 @@ Options:
   --help                 Show this help message
 
 Examples:
-  curl -fsSL https://anchoredoss.dev/install | sh
+  curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored_oss/main/install/anchored.sh | sh
   ./install/anchored.sh --version v0.4.10
 EOF
   exit 0

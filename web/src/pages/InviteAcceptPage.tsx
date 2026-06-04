@@ -100,7 +100,7 @@ export function InviteAcceptPage() {
           position: "relative", display: "flex", justifyContent: "space-between",
           fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)",
         }}>
-          <span>anchoredoss.dev</span>
+          <span>github.com/jholhewres/anchored_oss</span>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 14 }}>
             <Status value="ok" label="server · online" />
           </span>

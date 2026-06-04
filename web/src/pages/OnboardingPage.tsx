@@ -440,7 +440,7 @@ function HeroLeft({ step }: { step: number }) {
         position: "relative", display: "flex", justifyContent: "space-between",
         fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)",
       }}>
-        <span>anchoredoss.dev</span>
+        <span>github.com/jholhewres/anchored_oss</span>
         <span>step {step} of 4</span>
       </div>
     </div>
@@ -482,7 +482,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinish: () => void }) {
   const [revealKey, setRevealKey] = useState(false);
   const origin = window.location.origin;
-  const installCmd = "curl -fsSL https://anchoredoss.dev/install | bash";
+  const installCmd = "curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored/main/install/install.sh | bash";
   const configureCmd = `anchored remote configure --server ${origin} --key ${result.api_key}`;
   const hasProjects = result.projects.length > 0;
 
