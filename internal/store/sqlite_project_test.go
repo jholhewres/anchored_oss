@@ -237,3 +237,53 @@ func TestSoftDelete_FreesSlugForReuse(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestMigration015_FreesLegacyDeletedIdentity reproduces the pre-v0.4.7 state
+// where soft-delete left slug/remote_key intact on the dead row (blocking any
+// recreate with the same identity) and proves migration 015 retroactively
+// parks those values so creation succeeds again.
+func TestMigration015_FreesLegacyDeletedIdentity(t *testing.T) {
+	st := newSQLiteTestStore(t)
+	ctx := context.Background()
+	orgID, acctID := projectTestOrg(t, st)
+
+	url := "git@github.com:example/repo.git"
+	key := projectpkg.DeriveRemoteKey(url)
+	legacy := projectpkg.DeriveLegacyRemoteKey(url)
+	created, err := st.CreateProject(ctx, orgID, "Repo", "repo", key, legacy, url, acctID, "service")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if err := st.SoftDeleteProject(ctx, created.ID); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+
+	// Rewind to the legacy on-disk shape: original slug/key on the deleted row,
+	// and schema_version back to 14 so the runner re-applies 015.
+	if _, err := st.db.Exec(
+		`UPDATE projects SET slug = ?, remote_key = ?, remote_key_v1 = ?, repo_url = ? WHERE id = ?`,
+		"repo", key, legacy, url, created.ID,
+	); err != nil {
+		t.Fatalf("rewind row: %v", err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM schema_version WHERE version >= 15`); err != nil {
+		t.Fatalf("rewind schema_version: %v", err)
+	}
+
+	if err := MigrateSQLite(st.db); err != nil {
+		t.Fatalf("re-run migrations: %v", err)
+	}
+
+	var slug, rk string
+	if err := st.db.QueryRow(`SELECT slug, remote_key FROM projects WHERE id = ?`, created.ID).Scan(&slug, &rk); err != nil {
+		t.Fatalf("read parked row: %v", err)
+	}
+	if slug != mangleDeletedSlug("repo", created.ID) || rk != deletedRemoteKey(created.ID) {
+		t.Fatalf("row not parked: slug=%q remote_key=%q", slug, rk)
+	}
+
+	// The original identity is free again.
+	if _, err := st.CreateProject(ctx, orgID, "Repo", "repo", key, legacy, url, acctID, "service"); err != nil {
+		t.Fatalf("recreate with freed identity: %v", err)
+	}
+}

@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 14
+const schemaVersion = 15
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -306,6 +306,23 @@ UPDATE projects SET remote_key_v1 = remote_key
     WHERE remote_key_v1 IS NULL AND remote_key IS NOT NULL AND remote_key != '';
 `
 
+// migration015 retroactively parks the slug and remote keys of projects that
+// were soft-deleted before v0.4.7. The old soft-delete left slug/remote_key
+// intact on the dead row, so UNIQUE(org_id, slug) and UNIQUE(org_id,
+// remote_key) blocked recreating a project with the same identity ("failed to
+// create project" 500s). Mirrors the Go-side mangle (mangleDeletedSlug /
+// deletedRemoteKey); rows deleted by v0.4.7+ already carry the sentinel and
+// are excluded by the LIKE guard.
+const migration015 = `
+UPDATE projects SET
+    slug = slug || '-deleted-' || substr(id::text, 1, 8),
+    remote_key = 'deleted-' || id::text,
+    remote_key_v1 = NULL,
+    repo_url = NULL
+WHERE deleted_at IS NOT NULL
+  AND remote_key NOT LIKE 'deleted-%';
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -321,6 +338,7 @@ var migrations = map[int]string{
 	12: migration012,
 	13: migration013,
 	14: migration014,
+	15: migration015,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

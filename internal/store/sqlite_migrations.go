@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 14
+const sqliteSchemaVersion = 15
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -257,6 +257,19 @@ CREATE INDEX IF NOT EXISTS idx_org_guardrails_org ON org_guardrails(org_id);
 // SQL block is intentionally empty — see the v == 14 branch below.
 const sqliteMigration014 = ``
 
+// sqliteMigration015 mirrors Postgres 015: retroactively park slug/remote_key
+// of rows soft-deleted before v0.4.7 so their identity is freed for reuse.
+// SQLite ids are already TEXT, so no cast is needed.
+const sqliteMigration015 = `
+UPDATE projects SET
+    slug = slug || '-deleted-' || substr(id, 1, 8),
+    remote_key = 'deleted-' || id,
+    remote_key_v1 = NULL,
+    repo_url = NULL
+WHERE deleted_at IS NOT NULL
+  AND remote_key NOT LIKE 'deleted-%';
+`
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -272,6 +285,7 @@ var sqliteMigrations = map[int]string{
 	12: sqliteMigration012,
 	13: sqliteMigration013,
 	14: sqliteMigration014,
+	15: sqliteMigration015,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {
