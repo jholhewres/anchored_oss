@@ -56,8 +56,9 @@ jobs:
             GOOS=windows GOARCH=arm64 go build -ldflags "$LDFLAGS" -o "dist/anchored-oss-${SUFFIX}-windows-arm64.exe" ./cmd/server
           }
 
+          # Only the self-hosted variant is published. The cloud build is a
+          # private product and is not distributed from this repository.
           build_variant selfhosted selfhosted
-          build_variant cloud cloud
 
       - name: Generate checksums
         run: |
@@ -84,20 +85,14 @@ jobs:
 
           ### Binaries
 
-          | Variant | Platform | Arch | Binary |
-          |---|---|---|---|
-          | Self-hosted | Linux | amd64 | `anchored-oss-selfhosted-linux-amd64` |
-          | Self-hosted | Linux | arm64 | `anchored-oss-selfhosted-linux-arm64` |
-          | Self-hosted | macOS | amd64 | `anchored-oss-selfhosted-darwin-amd64` |
-          | Self-hosted | macOS | arm64 | `anchored-oss-selfhosted-darwin-arm64` |
-          | Self-hosted | Windows | amd64 | `anchored-oss-selfhosted-windows-amd64.exe` |
-          | Self-hosted | Windows | arm64 | `anchored-oss-selfhosted-windows-arm64.exe` |
-          | Cloud | Linux | amd64 | `anchored-oss-cloud-linux-amd64` |
-          | Cloud | Linux | arm64 | `anchored-oss-cloud-linux-arm64` |
-          | Cloud | macOS | amd64 | `anchored-oss-cloud-darwin-amd64` |
-          | Cloud | macOS | arm64 | `anchored-oss-cloud-darwin-arm64` |
-          | Cloud | Windows | amd64 | `anchored-oss-cloud-windows-amd64.exe` |
-          | Cloud | Windows | arm64 | `anchored-oss-cloud-windows-arm64.exe` |
+          | Platform | Arch | Binary |
+          |---|---|---|
+          | Linux | amd64 | `anchored-oss-selfhosted-linux-amd64` |
+          | Linux | arm64 | `anchored-oss-selfhosted-linux-arm64` |
+          | macOS | amd64 | `anchored-oss-selfhosted-darwin-amd64` |
+          | macOS | arm64 | `anchored-oss-selfhosted-darwin-arm64` |
+          | Windows | amd64 | `anchored-oss-selfhosted-windows-amd64.exe` |
+          | Windows | arm64 | `anchored-oss-selfhosted-windows-arm64.exe` |
 
           Built on ${{ steps.vars.outputs.build_date }} with Go 1.25 (CGO_ENABLED=0).
           EOF
