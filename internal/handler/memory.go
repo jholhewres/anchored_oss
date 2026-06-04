@@ -261,7 +261,7 @@ func (h *MemoryHandler) resolveProject(w http.ResponseWriter, r *http.Request, o
 		return "", false
 	}
 
-	proj, err := h.store.CreateProject(r.Context(), orgID, claim.Name, slug, claim.RemoteKey, accountID, "other")
+	proj, err := h.store.CreateProject(r.Context(), orgID, claim.Name, slug, claim.RemoteKey, "", "", accountID, "other")
 	if err != nil {
 		h.logger.Error("project creation from claim failed", "remote_key", claim.RemoteKey, "error", err)
 		jsonError(w, http.StatusInternalServerError, "failed to create project")

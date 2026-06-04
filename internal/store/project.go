@@ -7,17 +7,35 @@ import (
 	"fmt"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
+	projectpkg "github.com/jholhewres/anchored_oss/internal/project"
 )
 
 const defaultTeamSlug = "default"
 
-func (s *PostgresStore) CreateProject(ctx context.Context, orgID, name, slug, remoteKey, createdBy, category string) (*model.Project, error) {
+// pgProjectColumns is the canonical SELECT column list for a project row on
+// Postgres. The scan order in scanPGProjectRow must match it exactly.
+const pgProjectColumns = `id, org_id, name, slug, category, remote_key, remote_key_v1, repo_url, created_by, created_at`
+
+// scanPGProjectRow scans one project row using pgProjectColumns. The nullable
+// remote_key_v1 / repo_url columns are scanned through NullString so a
+// pre-backfill NULL reads as "".
+func scanPGProjectRow(row interface{ Scan(...any) error }, p *model.Project) error {
+	var keyV1, repoURL sql.NullString
+	if err := row.Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &keyV1, &repoURL, &p.CreatedBy, &p.CreatedAt); err != nil {
+		return err
+	}
+	p.RemoteKeyV1 = keyV1.String
+	p.RepoURL = repoURL.String
+	return nil
+}
+
+func (s *PostgresStore) CreateProject(ctx context.Context, orgID, name, slug, remoteKey, remoteKeyV1, repoURL, createdBy, category string) (*model.Project, error) {
 	var p model.Project
-	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO projects (org_id, name, slug, remote_key, created_by, category) VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, org_id, name, slug, category, remote_key, created_by, created_at`,
-		orgID, name, slug, remoteKey, createdBy, category,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
+	err := scanPGProjectRow(s.db.QueryRowContext(ctx,
+		`INSERT INTO projects (org_id, name, slug, remote_key, remote_key_v1, repo_url, created_by, category) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 RETURNING `+pgProjectColumns,
+		orgID, name, slug, remoteKey, nullIfEmpty(remoteKeyV1), nullIfEmpty(repoURL), createdBy, category,
+	), &p)
 	if err != nil {
 		return nil, fmt.Errorf("create project: %w", err)
 	}
@@ -26,10 +44,10 @@ func (s *PostgresStore) CreateProject(ctx context.Context, orgID, name, slug, re
 
 func (s *PostgresStore) GetProjectByID(ctx context.Context, id string) (*model.Project, error) {
 	var p model.Project
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at FROM projects WHERE id = $1`,
+	err := scanPGProjectRow(s.db.QueryRowContext(ctx,
+		`SELECT `+pgProjectColumns+` FROM projects WHERE id = $1`,
 		id,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
+	), &p)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -44,11 +62,11 @@ func (s *PostgresStore) GetProjectByID(ctx context.Context, id string) (*model.P
 // surface while leaving the sync engine's GetProjectByID lookup unchanged.
 func (s *PostgresStore) GetActiveProjectByID(ctx context.Context, id string) (*model.Project, error) {
 	var p model.Project
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at
+	err := scanPGProjectRow(s.db.QueryRowContext(ctx,
+		`SELECT `+pgProjectColumns+`
 		 FROM projects WHERE id = $1 AND deleted_at IS NULL`,
 		id,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
+	), &p)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -56,6 +74,70 @@ func (s *PostgresStore) GetActiveProjectByID(ctx context.Context, id string) (*m
 		return nil, fmt.Errorf("get active project by id: %w", err)
 	}
 	return &p, nil
+}
+
+// UpdateProject applies a partial update within an org. RepoURL recomputes both
+// remote keys: non-empty derives canonical + legacy keys and stores the URL;
+// empty clears repo_url and both keys. Returns ErrNotFound when the project is
+// absent or owned by another org.
+func (s *PostgresStore) UpdateProject(ctx context.Context, orgID, id string, upd model.ProjectUpdate) (*model.Project, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var cur model.Project
+	err = scanPGProjectRow(tx.QueryRowContext(ctx,
+		`SELECT `+pgProjectColumns+` FROM projects WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+		id, orgID,
+	), &cur)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load project for update: %w", err)
+	}
+
+	if upd.Name != nil {
+		cur.Name = *upd.Name
+	}
+	if upd.Slug != nil {
+		cur.Slug = *upd.Slug
+	}
+	if upd.Category != nil {
+		cur.Category = model.NormalizeCategory(*upd.Category)
+	}
+	if upd.RepoURL != nil {
+		if *upd.RepoURL == "" {
+			// Clearing the repo frees the canonical key for reuse. Park it on a
+			// per-row sentinel so concurrent clears in the same org don't collide
+			// on UNIQUE(org_id, remote_key) (the column is NOT NULL).
+			cur.RepoURL = ""
+			cur.RemoteKey = noRepoRemoteKey(id)
+			cur.RemoteKeyV1 = ""
+		} else {
+			cur.RepoURL = *upd.RepoURL
+			cur.RemoteKey = projectpkg.DeriveRemoteKey(*upd.RepoURL)
+			cur.RemoteKeyV1 = projectpkg.DeriveLegacyRemoteKey(*upd.RepoURL)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE projects SET name = $1, slug = $2, category = $3, remote_key = $4, remote_key_v1 = $5, repo_url = $6
+		 WHERE id = $7 AND org_id = $8`,
+		cur.Name, cur.Slug, cur.Category, cur.RemoteKey, nullIfEmpty(cur.RemoteKeyV1), nullIfEmpty(cur.RepoURL), id, orgID,
+	); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
+		return nil, fmt.Errorf("update project: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit update: %w", err)
+	}
+	return &cur, nil
 }
 
 // HasProjectAccess reports whether accountID has team-based access to
@@ -77,42 +159,51 @@ func (s *PostgresStore) HasProjectAccess(ctx context.Context, accountID, project
 	return exists, nil
 }
 
-// SoftDeleteProject marks a project as deleted. Idempotent: returns
-// ErrNotFound only when the project never existed; double-deletes are a
-// no-op so the dashboard never surprises an admin who clicks twice.
+// SoftDeleteProject marks a project as deleted and mangles its identity fields
+// so the slug and both remote keys are freed for reuse (a new project can take
+// the same slug/repo immediately). Mangling values are computed in Go, not SQL,
+// so the statement stays backend-agnostic. Idempotent: returns ErrNotFound only
+// when the project never existed; double-deletes are a no-op.
 func (s *PostgresStore) SoftDeleteProject(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE projects SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`,
-		id,
-	)
-	if err != nil {
-		return fmt.Errorf("soft delete project: %w", err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("soft delete rows affected: %w", err)
-	}
-	if affected == 0 {
-		// Distinguish "never existed" from "already deleted" with a follow-up read.
+	var slug string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT slug FROM projects WHERE id = $1 AND deleted_at IS NULL`, id,
+	).Scan(&slug)
+	if errors.Is(err, sql.ErrNoRows) {
 		var exists bool
-		if err := s.db.QueryRowContext(ctx,
+		if qerr := s.db.QueryRowContext(ctx,
 			`SELECT EXISTS (SELECT 1 FROM projects WHERE id = $1)`, id,
-		).Scan(&exists); err != nil {
-			return fmt.Errorf("verify project existence: %w", err)
+		).Scan(&exists); qerr != nil {
+			return fmt.Errorf("verify project existence: %w", qerr)
 		}
 		if !exists {
 			return ErrNotFound
 		}
+		return nil // already deleted: idempotent no-op
+	}
+	if err != nil {
+		return fmt.Errorf("load project for soft delete: %w", err)
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE projects SET deleted_at = now(), slug = $1, remote_key = $2, remote_key_v1 = NULL, repo_url = NULL
+		 WHERE id = $3 AND deleted_at IS NULL`,
+		mangleDeletedSlug(slug, id), deletedRemoteKey(id), id,
+	); err != nil {
+		return fmt.Errorf("soft delete project: %w", err)
 	}
 	return nil
 }
 
+// GetProjectByRemoteKey resolves an active project by EITHER the canonical
+// remote_key or the legacy remote_key_v1, so a push stamped with either key
+// lands in the same project after the v2 normalization change.
 func (s *PostgresStore) GetProjectByRemoteKey(ctx context.Context, orgID, remoteKey string) (*model.Project, error) {
 	var p model.Project
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, category, remote_key, created_by, created_at FROM projects WHERE org_id = $1 AND remote_key = $2`,
+	err := scanPGProjectRow(s.db.QueryRowContext(ctx,
+		`SELECT `+pgProjectColumns+` FROM projects WHERE org_id = $1 AND (remote_key = $2 OR remote_key_v1 = $2) AND deleted_at IS NULL`,
 		orgID, remoteKey,
-	).Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt)
+	), &p)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -124,7 +215,7 @@ func (s *PostgresStore) GetProjectByRemoteKey(ctx context.Context, orgID, remote
 
 func (s *PostgresStore) ListProjectsByTeamAccess(ctx context.Context, accountID string) ([]*model.Project, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.category, p.remote_key, p.created_by, p.created_at
+		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.category, p.remote_key, p.remote_key_v1, p.repo_url, p.created_by, p.created_at
 		 FROM projects p
 		 JOIN team_project_access tpa ON tpa.project_id = p.id
 		 JOIN team_members tm ON tm.team_id = tpa.team_id
@@ -140,7 +231,7 @@ func (s *PostgresStore) ListProjectsByTeamAccess(ctx context.Context, accountID 
 	var projects []*model.Project
 	for rows.Next() {
 		var p model.Project
-		if err := rows.Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Category, &p.RemoteKey, &p.CreatedBy, &p.CreatedAt); err != nil {
+		if err := scanPGProjectRow(rows, &p); err != nil {
 			return nil, fmt.Errorf("scan project: %w", err)
 		}
 		projects = append(projects, &p)

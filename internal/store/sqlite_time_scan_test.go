@@ -37,7 +37,7 @@ func TestSQLiteDashboardStats_ScansLastPush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	proj, err := st.CreateProject(ctx, org.ID, "repo", "repo", "key-1", acct.ID, "")
+	proj, err := st.CreateProject(ctx, org.ID, "repo", "repo", "key-1", "", "", acct.ID, "")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestSQLiteListTriples_ScansCreatedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	proj, err := st.CreateProject(ctx, org.ID, "repo", "repo", "key-1", acct.ID, "")
+	proj, err := st.CreateProject(ctx, org.ID, "repo", "repo", "key-1", "", "", acct.ID, "")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}

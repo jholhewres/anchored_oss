@@ -103,3 +103,37 @@ func fromNullString(ns *sql.NullString, dest *string) {
 		*dest = ns.String
 	}
 }
+
+// nullIfEmpty maps "" to a SQL NULL so nullable TEXT columns stay NULL instead
+// of storing an empty string. Used for repo_url / remote_key_v1 on projects.
+func nullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// deletedRemoteKey is the per-row sentinel remote_key parked on a soft-deleted
+// project. remote_key is NOT NULL and carries UNIQUE(org_id, remote_key), so a
+// shared placeholder (e.g. "") would collide on the second delete in an org.
+// The full project id (a UUID) guarantees uniqueness, and the "deleted-" prefix
+// can never match a sha256-derived 16-hex repo key, so a freed repo can be
+// re-linked without resolving to this dead row.
+func deletedRemoteKey(id string) string { return "deleted-" + id }
+
+// noRepoRemoteKey is the per-row sentinel remote_key parked on a project whose
+// repo_url was cleared. Same rationale as deletedRemoteKey: keep the NOT NULL,
+// org-unique column collision-free while leaving the project unmatchable by any
+// real repo key.
+func noRepoRemoteKey(id string) string { return "norepo-" + id }
+
+// mangleDeletedSlug derives the parked slug a soft-deleted project is renamed
+// to so its original slug is freed for reuse: slug + "-deleted-" + id[:8].
+// Computed in Go so the soft-delete UPDATE is identical across backends.
+func mangleDeletedSlug(slug, id string) string {
+	suffix := id
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	return slug + "-deleted-" + suffix
+}

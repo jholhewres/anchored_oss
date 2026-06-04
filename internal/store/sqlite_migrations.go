@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 13
+const sqliteSchemaVersion = 14
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -251,6 +251,12 @@ CREATE TABLE IF NOT EXISTS org_guardrails (
 CREATE INDEX IF NOT EXISTS idx_org_guardrails_org ON org_guardrails(org_id);
 `
 
+// sqliteMigration014 mirrors Postgres 014: repo_url + remote_key_v1 on
+// projects. The ADD COLUMNs and the backfill UPDATE run via columnExists guards
+// in MigrateSQLite (modernc SQLite has no "ADD COLUMN IF NOT EXISTS"), so this
+// SQL block is intentionally empty — see the v == 14 branch below.
+const sqliteMigration014 = ``
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -265,6 +271,7 @@ var sqliteMigrations = map[int]string{
 	11: sqliteMigration011,
 	12: sqliteMigration012,
 	13: sqliteMigration013,
+	14: sqliteMigration014,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {
@@ -323,6 +330,28 @@ func MigrateSQLite(db *sql.DB) error {
 			if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_projects_org_category ON projects(org_id, category) WHERE deleted_at IS NULL`); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("migration %d index category: %w", v, err)
+			}
+		}
+
+		// Handle ALTER TABLE ADD COLUMN for migration 14 (repo_url + remote_key_v1).
+		// Columns must exist before the backfill UPDATE references remote_key_v1.
+		if v == 14 {
+			if !columnExists(db, "projects", "repo_url") {
+				if _, err := tx.Exec(`ALTER TABLE projects ADD COLUMN repo_url TEXT`); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("migration %d add repo_url: %w", v, err)
+				}
+			}
+			if !columnExists(db, "projects", "remote_key_v1") {
+				if _, err := tx.Exec(`ALTER TABLE projects ADD COLUMN remote_key_v1 TEXT`); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("migration %d add remote_key_v1: %w", v, err)
+				}
+			}
+			if _, err := tx.Exec(`UPDATE projects SET remote_key_v1 = remote_key
+				WHERE remote_key_v1 IS NULL AND remote_key IS NOT NULL AND remote_key != ''`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d backfill remote_key_v1: %w", v, err)
 			}
 		}
 

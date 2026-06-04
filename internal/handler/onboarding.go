@@ -158,12 +158,19 @@ func (h *OnboardingHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		}
 		// Derive the key from the repo URL (ssh/https) so the repo's sync lands
 		// here; fall back to a unique synthetic key for manual (no-repo) projects.
+		// When a real URL is present, also store it and the legacy (v1) key so
+		// repos keyed before the v2 normalization still resolve.
 		remoteKey := projectpkg.DeriveRemoteKey(pi.RepoURL)
+		remoteKeyV1 := ""
+		repoURL := ""
 		if remoteKey == "" {
 			remoteKey = pSlug + "-" + randomSuffix(8)
+		} else {
+			remoteKeyV1 = projectpkg.DeriveLegacyRemoteKey(pi.RepoURL)
+			repoURL = pi.RepoURL
 		}
 		cat := model.NormalizeCategory(pi.Category)
-		proj, err := h.store.CreateProject(r.Context(), org.ID, pi.Name, pSlug, remoteKey, admin.ID, cat)
+		proj, err := h.store.CreateProject(r.Context(), org.ID, pi.Name, pSlug, remoteKey, remoteKeyV1, repoURL, admin.ID, cat)
 		if err != nil {
 			h.logger.Warn("onboarding: create project failed", "name", pi.Name, "error", err)
 			continue

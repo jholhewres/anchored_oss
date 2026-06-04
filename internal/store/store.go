@@ -40,10 +40,17 @@ type Store interface {
 	RemoveTeamMember(ctx context.Context, teamID, accountID string) error
 
 	// Projects + team access.
-	CreateProject(ctx context.Context, orgID, name, slug, remoteKey, createdBy, category string) (*model.Project, error)
+	CreateProject(ctx context.Context, orgID, name, slug, remoteKey, remoteKeyV1, repoURL, createdBy, category string) (*model.Project, error)
 	GetProjectByID(ctx context.Context, id string) (*model.Project, error)
 	GetActiveProjectByID(ctx context.Context, id string) (*model.Project, error)
+	// GetProjectByRemoteKey matches the key against EITHER the canonical
+	// remote_key or the legacy remote_key_v1, so repos keyed before the v2
+	// normalization still resolve to their project.
 	GetProjectByRemoteKey(ctx context.Context, orgID, remoteKey string) (*model.Project, error)
+	// UpdateProject applies a partial update within an org, recomputing both
+	// remote keys from RepoURL when it is set. Returns ErrNotFound when the
+	// project is absent or belongs to another org.
+	UpdateProject(ctx context.Context, orgID, id string, upd model.ProjectUpdate) (*model.Project, error)
 	ListProjectsByTeamAccess(ctx context.Context, accountID string) ([]*model.Project, error)
 	HasProjectAccess(ctx context.Context, accountID, projectID string) (bool, error)
 	SoftDeleteProject(ctx context.Context, id string) error

@@ -48,7 +48,7 @@ func TestVectorSearch_Postgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	proj, err := st.CreateProject(ctx, org.ID, "VecProj", "vecproj-"+u, "vec-remote-"+u, acc.ID, "service")
+	proj, err := st.CreateProject(ctx, org.ID, "VecProj", "vecproj-"+u, "vec-remote-"+u, "", "", acc.ID, "service")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestReindexBackfill_Postgres(t *testing.T) {
 	u := uniq()
 	org, _ := st.CreateOrganization(ctx, "RixOrg", "rixorg-"+u)
 	acc, _ := st.CreateAccount(ctx, "rix-"+u+"@example.com", "Rix", "x")
-	proj, err := st.CreateProject(ctx, org.ID, "RixProj", "rixproj-"+u, "rix-"+u, acc.ID, "service")
+	proj, err := st.CreateProject(ctx, org.ID, "RixProj", "rixproj-"+u, "rix-"+u, "", "", acc.ID, "service")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestStaleEmbedding_Postgres(t *testing.T) {
 	u := uniq()
 	org, _ := st.CreateOrganization(ctx, "StaleOrg", "staleorg-"+u)
 	acc, _ := st.CreateAccount(ctx, "stale-"+u+"@example.com", "Stale", "x")
-	proj, err := st.CreateProject(ctx, org.ID, "StaleProj", "staleproj-"+u, "stale-"+u, acc.ID, "service")
+	proj, err := st.CreateProject(ctx, org.ID, "StaleProj", "staleproj-"+u, "stale-"+u, "", "", acc.ID, "service")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}

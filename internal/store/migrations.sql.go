@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 13
+const schemaVersion = 14
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -294,6 +294,18 @@ CREATE TABLE IF NOT EXISTS org_guardrails (
 CREATE INDEX IF NOT EXISTS idx_org_guardrails_org ON org_guardrails(org_id);
 `
 
+// migration014 records the repo URL and the legacy (v1) remote key alongside
+// the canonical key. repo_url lets the dashboard show/edit the linked remote;
+// remote_key_v1 lets the sync engine resolve repos that were keyed before the
+// v2 normalization (numeric port + leading "scm/" stripping). Existing rows
+// backfill remote_key_v1 from remote_key so their old key keeps resolving.
+const migration014 = `
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS repo_url TEXT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS remote_key_v1 TEXT;
+UPDATE projects SET remote_key_v1 = remote_key
+    WHERE remote_key_v1 IS NULL AND remote_key IS NOT NULL AND remote_key != '';
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -308,6 +320,7 @@ var migrations = map[int]string{
 	11: migration011,
 	12: migration012,
 	13: migration013,
+	14: migration014,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

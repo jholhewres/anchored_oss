@@ -53,7 +53,7 @@ func TestWorkerEmbedsAndSemanticSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	proj, err := st.CreateProject(ctx, org.ID, "WorkProj", "workproj-"+unique(), "work-"+unique(), acc.ID, "service")
+	proj, err := st.CreateProject(ctx, org.ID, "WorkProj", "workproj-"+unique(), "work-"+unique(), "", "", acc.ID, "service")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}

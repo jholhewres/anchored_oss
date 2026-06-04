@@ -26,15 +26,28 @@ type Team struct {
 }
 
 type Project struct {
-	ID        string     `json:"id"`
-	OrgID     string     `json:"org_id"`
-	Name      string     `json:"name"`
-	Slug      string     `json:"slug"`
-	Category  string     `json:"category"`
-	RemoteKey string     `json:"remote_key"`
-	CreatedBy string     `json:"created_by"`
-	CreatedAt time.Time  `json:"created_at"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	ID          string     `json:"id"`
+	OrgID       string     `json:"org_id"`
+	Name        string     `json:"name"`
+	Slug        string     `json:"slug"`
+	Category    string     `json:"category"`
+	RemoteKey   string     `json:"remote_key"`
+	RemoteKeyV1 string     `json:"remote_key_v1"`
+	RepoURL     string     `json:"repo_url"`
+	CreatedBy   string     `json:"created_by"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+}
+
+// ProjectUpdate holds the partial fields a PATCH /v1/projects/{id} may change.
+// A nil pointer means "leave unchanged"; a non-nil pointer (including an empty
+// string) means "set to this value". RepoURL drives remote-key recomputation:
+// non-empty derives both keys, empty clears repo_url and both keys.
+type ProjectUpdate struct {
+	Name     *string `json:"name"`
+	Slug     *string `json:"slug"`
+	RepoURL  *string `json:"repo_url"`
+	Category *string `json:"category"`
 }
 
 // ProjectCategories enumerates the canonical category values the dashboard
