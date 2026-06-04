@@ -26,6 +26,8 @@ import type {
   Scope,
   Team,
   TeamDetail,
+  UpdateCheckResponse,
+  UpdateApplyResponse,
 } from "@/lib/types";
 
 interface LoginResponse {
@@ -140,6 +142,15 @@ export const api = {
     return request<Memory[]>("GET", `/v1/memories/search?${params.toString()}`);
   },
   deleteProject: (id: string) => request<void>("DELETE", `/v1/projects/${id}`),
+  patchProject: (id: string, body: { name?: string; slug?: string; repo_url?: string; category?: ProjectCategory }) =>
+    request<Project>("PATCH", `/v1/projects/${id}`, body),
+
+  // Admin: update management
+  checkUpdate: () => request<UpdateCheckResponse>("GET", "/v1/admin/update/check"),
+  applyUpdate: () => request<UpdateApplyResponse>("POST", "/v1/admin/update/apply"),
+  // Unauthenticated health probe — used to poll for the server coming back
+  // after a self-update restart (sessions may be gone mid-restart).
+  getHealthz: () => request<Health>("GET", "/v1/health", undefined, { auth: false }),
 
   getAccounts: () => request<AccountWithRole[]>("GET", "/v1/accounts"),
   createAccount: (email: string, displayName: string) =>

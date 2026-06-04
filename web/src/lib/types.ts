@@ -45,10 +45,22 @@ export interface Project {
   name: string;
   slug: string;
   remote_key: string;
+  remote_key_v1?: string;
+  repo_url?: string;
   category: ProjectCategory;
   created_by: string;
   created_at: string;
   deleted_at?: string | null;
+}
+
+export interface UpdateCheckResponse {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+}
+
+export interface UpdateApplyResponse {
+  status: string;
 }
 
 export interface Invite {

@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { Card, Badge, Status, Btn, Input, Tabs } from "@/ds/components";
 import { I } from "@/ds/icons";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Project, Memory, Triple, ChatAnswer } from "@/lib/types";
+import type { Project, Memory, Triple, ChatAnswer, ProjectCategory } from "@/lib/types";
+import { PROJECT_CATEGORIES, PROJECT_CATEGORY_LABELS } from "@/lib/types";
 import { GraphView } from "@/components/GraphView";
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -238,7 +239,7 @@ function ChatTab({ projectId }: { projectId: string }) {
   );
 }
 
-function ConnectTab({ project }: { project: Project }) {
+function ConnectTab({ project, onGoToSettings }: { project: Project; onGoToSettings: () => void }) {
   const { me } = useAuth();
   const origin = window.location.origin;
   // Naming the remote after the org slug keeps multi-server CLI setups
@@ -246,14 +247,14 @@ function ConnectTab({ project }: { project: Project }) {
   const remoteName = me?.org_slug || "team";
   const configureCmd = `anchored remote configure --server ${origin} --key <your-api-key> --name ${remoteName}`;
   const linkCmd = `anchored remote link ${project.id} --remote ${remoteName}`;
-  const syncCmd = "anchored remote sync";
+  const syncCmd = `anchored remote sync --remote ${remoteName}`;
 
   const fullScript = [
-    `# Connect to ${origin}`,
+    `# 1. Connect to ${origin}`,
     configureCmd,
-    `# Link project: ${project.name}`,
+    `# 2. Link project: ${project.name}`,
     linkCmd,
-    "# Sync memories (uses the linked project above)",
+    `# 3. Sync memories`,
     syncCmd,
   ].join("\n");
 
@@ -277,12 +278,12 @@ function ConnectTab({ project }: { project: Project }) {
             <Badge tone="outline">{project.name}</Badge>
           </div>
           <CommandBox cmd={linkCmd} />
-          {project.remote_key && (
-            <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
-              Remote key: <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>{project.remote_key}</code>
-              {project.remote_key.includes("github.com") && " — repos with this origin auto-resolve to this project."}
-            </div>
-          )}
+          <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
+            Client v0.6.9+ also accepts the slug:{" "}
+            <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+              anchored remote link {project.slug} --remote {remoteName}
+            </code>
+          </div>
         </div>
 
         <div>
@@ -294,9 +295,233 @@ function ConnectTab({ project }: { project: Project }) {
         </div>
       </div>
 
+      {project.repo_url ? (
+        <div style={{
+          marginTop: 20, padding: "12px 14px",
+          background: "var(--ok-bg)", border: "1px solid color-mix(in srgb, var(--ok) 25%, transparent)",
+          borderRadius: "var(--radius)", fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.55,
+        }}>
+          <strong style={{ color: "var(--ok)" }}>Auto-routing enabled.</strong>{" "}
+          Any clone with git origin <code style={{ fontFamily: "var(--font-mono)" }}>{project.repo_url}</code> will
+          automatically route syncs to this project — no explicit link needed.
+        </div>
+      ) : (
+        <div style={{
+          marginTop: 20, padding: "12px 14px",
+          background: "var(--warn-bg)", border: "1px solid color-mix(in srgb, var(--warn) 25%, transparent)",
+          borderRadius: "var(--radius)", fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.55,
+        }}>
+          <strong style={{ color: "var(--warn)" }}>No repository URL set.</strong>{" "}
+          Syncs route by git origin — set the Repository URL in the{" "}
+          <button
+            type="button"
+            onClick={onGoToSettings}
+            style={{ background: "none", border: "none", padding: 0, color: "var(--accent)", cursor: "pointer", fontSize: "inherit", fontFamily: "inherit" }}
+          >
+            Settings
+          </button>{" "}
+          tab so your team's clones resolve to this project automatically.
+        </div>
+      )}
+
       <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 12 }}>
         <CopyButton text={fullScript} label="copy all commands" inline />
       </div>
+    </div>
+  );
+}
+
+function SettingsTab({ project, onUpdated }: { project: Project; onUpdated: (p: Project) => void }) {
+  const { me } = useAuth();
+  const navigate = useNavigate();
+  const isAdmin = me?.scope === "admin";
+
+  const [name, setName] = React.useState(project.name);
+  const [slug, setSlug] = React.useState(project.slug);
+  const [repoUrl, setRepoUrl] = React.useState(project.repo_url ?? "");
+  const [category, setCategory] = React.useState<ProjectCategory>(project.category);
+  const [saving, setSaving] = React.useState(false);
+  const [saveState, setSaveState] = React.useState<"idle" | "saved" | "error">("idle");
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+
+  // Danger zone
+  const [confirmSlug, setConfirmSlug] = React.useState("");
+  const [deleting, setDeleting] = React.useState(false);
+  const [deleteError, setDeleteError] = React.useState<string | null>(null);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    const patch: Record<string, string> = {};
+    if (name !== project.name) patch.name = name;
+    if (slug !== project.slug) patch.slug = slug;
+    if (repoUrl !== (project.repo_url ?? "")) patch.repo_url = repoUrl;
+    if (category !== project.category) patch.category = category;
+    if (Object.keys(patch).length === 0) {
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 1800);
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const updated = await api.patchProject(project.id, patch as { name?: string; slug?: string; repo_url?: string; category?: ProjectCategory });
+      onUpdated(updated);
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 2500);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : "Save failed";
+      setSaveError(msg);
+      setSaveState("error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (confirmSlug !== project.slug) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteProject(project.id);
+      navigate("/projects");
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : "Delete failed";
+      setDeleteError(msg);
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 600 }}>
+      {/* Edit form */}
+      <Card style={{ padding: 24, marginBottom: 20 }}>
+        <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 18 }}>Project settings</div>
+        {!isAdmin && (
+          <div style={{
+            padding: "10px 14px", marginBottom: 18,
+            background: "var(--bg-3)", border: "1px solid var(--border)",
+            borderRadius: "var(--radius)", fontSize: 12.5, color: "var(--text-dim)",
+          }}>
+            Only admins can edit project settings.
+          </div>
+        )}
+        <form onSubmit={handleSave}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>Name</div>
+              <Input full size="md" placeholder="my-service" value={name}
+                onChange={e => setName(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>Slug</div>
+              <Input full size="md" placeholder="my-service" value={slug} mono
+                onChange={e => setSlug(e.target.value)} disabled={!isAdmin} />
+              <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 4 }}>
+                Allowed characters: a–z, 0–9, hyphen (a-z0-9-)
+              </div>
+            </div>
+            <div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>Repository URL</div>
+              <Input full size="md" placeholder="git@github.com:org/repo.git" value={repoUrl} mono
+                onChange={e => setRepoUrl(e.target.value)} disabled={!isAdmin} />
+              <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 4, lineHeight: 1.5 }}>
+                Git remote URL (SSH or HTTPS). Used to route <code style={{ fontFamily: "var(--font-mono)" }}>anchored remote sync</code> by git origin.
+              </div>
+            </div>
+            <div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>Category</div>
+              <select
+                value={category}
+                onChange={e => setCategory(e.target.value as ProjectCategory)}
+                disabled={!isAdmin}
+                style={{
+                  width: "100%", height: 34, padding: "0 10px", fontSize: 13.5,
+                  background: "var(--bg-input)", border: "1px solid var(--border)",
+                  borderRadius: "var(--radius)", color: "var(--text)", cursor: isAdmin ? "pointer" : "not-allowed",
+                  opacity: isAdmin ? 1 : 0.6,
+                }}
+              >
+                {PROJECT_CATEGORIES.map(c => (
+                  <option key={c} value={c}>{PROJECT_CATEGORY_LABELS[c]}</option>
+                ))}
+              </select>
+            </div>
+
+            {saveError && (
+              <div style={{ padding: "8px 12px", background: "var(--err-bg)", border: "1px solid color-mix(in srgb, var(--err) 25%, transparent)", borderRadius: "var(--radius)", fontSize: 12.5, color: "var(--err)" }}>
+                {saveError}
+              </div>
+            )}
+
+            {isAdmin && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
+                <Btn variant="primary" size="md" type="submit" disabled={saving}>
+                  {saving ? "Saving…" : "Save"}
+                </Btn>
+                {saveState === "saved" && (
+                  <span style={{ fontSize: 12.5, color: "var(--ok)", fontFamily: "var(--font-mono)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <I.check size={13} /> Saved
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </form>
+      </Card>
+
+      {/* Read-only key info */}
+      <Card style={{ padding: 20, marginBottom: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Routing keys</div>
+        <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 14, lineHeight: 1.5 }}>
+          Keys are derived from the repository URL and used to route{" "}
+          <code style={{ fontFamily: "var(--font-mono)" }}>anchored remote sync</code> by git origin.
+          Canonical key uses the current normalization algorithm; legacy key preserves v1 behaviour for older clients.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", minWidth: 110, paddingTop: 1 }}>remote_key</span>
+            <code style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)", wordBreak: "break-all" }}>{project.remote_key || "—"}</code>
+          </div>
+          {project.remote_key_v1 && (
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", minWidth: 110, paddingTop: 1 }}>remote_key_v1</span>
+              <code style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)", wordBreak: "break-all" }}>{project.remote_key_v1}</code>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Danger zone — admins only */}
+      {isAdmin && (
+        <Card style={{ padding: 20, border: "1px solid color-mix(in srgb, var(--err) 30%, transparent)" }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--err)", marginBottom: 6 }}>Danger zone</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 14, lineHeight: 1.5 }}>
+            Deleting a project is permanent. All memories and settings will be removed.
+            Type the project slug <code style={{ fontFamily: "var(--font-mono)" }}>{project.slug}</code> to confirm.
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <Input
+              size="md"
+              placeholder={project.slug}
+              value={confirmSlug}
+              onChange={e => setConfirmSlug(e.target.value)}
+              mono
+              style={{ width: 200 }}
+            />
+            <Btn
+              variant="danger"
+              size="md"
+              onClick={handleDelete}
+              disabled={confirmSlug !== project.slug || deleting}
+            >
+              {deleting ? "Deleting…" : "Delete project"}
+            </Btn>
+          </div>
+          {deleteError && (
+            <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--err)" }}>{deleteError}</div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
@@ -549,36 +774,13 @@ export function ProjectDetailPage() {
 
       {activeTab === "connect" && (
         <div style={{ marginTop: 22 }}>
-          <ConnectTab project={project} />
+          <ConnectTab project={project} onGoToSettings={() => setActiveTab("settings")} />
         </div>
       )}
 
       {activeTab === "settings" && (
         <div style={{ marginTop: 22 }}>
-          <Card style={{ padding: 22 }}>
-            <div style={{ display: "grid", gap: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ color: "var(--text-dim)" }}>ID</span>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{project.id}</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ color: "var(--text-dim)" }}>Slug</span>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{project.slug}</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ color: "var(--text-dim)" }}>Remote key</span>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{project.remote_key}</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ color: "var(--text-dim)" }}>Created by</span>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{project.created_by}</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0" }}>
-                <span style={{ color: "var(--text-dim)" }}>Created</span>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{new Date(project.created_at).toLocaleString()}</span>
-              </div>
-            </div>
-          </Card>
+          <SettingsTab project={project} onUpdated={setProject} />
         </div>
       )}
     </div>
