@@ -149,6 +149,7 @@ func (s *SQLiteStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Memor
 	query := `INSERT INTO memories (id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, metadata) VALUES ` +
 		strings.Join(placeholders, ",") +
 		` ON CONFLICT (id) DO UPDATE SET
+		   project_id = excluded.project_id,
 		   category = excluded.category,
 		   content = excluded.content,
 		   content_hash = excluded.content_hash,

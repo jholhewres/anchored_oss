@@ -331,3 +331,44 @@ func TestSoftDeleteMemoriesByWindow(t *testing.T) {
 		t.Fatalf("want 1 live memory, got %d", live)
 	}
 }
+
+// TestBatchUpsertRehomesProject locks the recreate-project recovery path: a
+// batched re-push of an existing memory ID under a NEW project must move the
+// row (the single-row upsert always did; the batched variant used to drop
+// project_id from its conflict set, stranding memories in the old project).
+func TestBatchUpsertRehomesProject(t *testing.T) {
+	st := newSQLiteTestStore(t)
+	ctx := context.Background()
+	orgID, acctID := projectTestOrg(t, st)
+	a, err := st.CreateProject(ctx, orgID, "A", "proj-a", "ka", "", "", acctID, "service")
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	b, err := st.CreateProject(ctx, orgID, "B", "proj-b", "kb", "", "", acctID, "service")
+	if err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+
+	mk := func(projectID string, ts time.Time) *model.Memory {
+		return &model.Memory{
+			ID: "rehome-1", ProjectID: projectID, Category: "fact",
+			Content: "same content", ContentHash: "h-rehome",
+			CreatedAt: ts, UpdatedAt: ts,
+		}
+	}
+	t0 := time.Now().UTC().Add(-time.Hour)
+	if err := st.UpsertMemories(ctx, []*model.Memory{mk(a.ID, t0)}); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	if err := st.UpsertMemories(ctx, []*model.Memory{mk(b.ID, time.Now().UTC())}); err != nil {
+		t.Fatalf("re-push upsert: %v", err)
+	}
+
+	var got string
+	if err := st.db.QueryRow(`SELECT project_id FROM memories WHERE id = 'rehome-1'`).Scan(&got); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if got != b.ID {
+		t.Fatalf("memory not rehomed: project_id=%s want %s", got, b.ID)
+	}
+}
