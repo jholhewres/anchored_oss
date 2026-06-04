@@ -85,6 +85,10 @@ type Store interface {
 	GetMemoriesUpdatedSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error)
 	ListMemoriesPaginated(ctx context.Context, projectID string, limit, offset int, category string) (memories []*model.Memory, total int, err error)
 	SoftDeleteMemory(ctx context.Context, id, projectID string) error
+	// SoftDeleteMemoriesByWindow tombstones every live memory of a project
+	// created inside [since, until) — admin moderation for undoing a sync
+	// batch that landed in the wrong project. Nil bounds are open-ended.
+	SoftDeleteMemoriesByWindow(ctx context.Context, projectID string, since, until *time.Time) (int64, error)
 	GetTombstonesSince(ctx context.Context, projectID string, since time.Time) ([]string, error)
 	GetMemoryByID(ctx context.Context, id string) (*model.Memory, error)
 	UpdateMemoryMetadata(ctx context.Context, id string, metadata any) error

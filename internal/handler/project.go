@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/model"
@@ -499,4 +500,66 @@ func (h *ProjectHandler) IngestTriples(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, resp)
+}
+
+// DeleteMemories bulk-tombstones a project's memories created inside a time
+// window — the admin "undo" for a sync batch pushed into the wrong project.
+// At least one bound (since/until, RFC3339) is required so a missing filter
+// can't silently wipe a whole project.
+func (h *ProjectHandler) DeleteMemories(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !uuidRe.MatchString(id) {
+		jsonError(w, http.StatusBadRequest, "id must be a UUID")
+		return
+	}
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "missing org context")
+		return
+	}
+	project, err := h.store.GetActiveProjectByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && project.OrgID != orgID) {
+		jsonError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if err != nil {
+		h.logger.Error("delete memories project lookup failed", "error", err, "project_id", id)
+		jsonError(w, http.StatusInternalServerError, "delete memories failed")
+		return
+	}
+
+	q := r.URL.Query()
+	parseBound := func(name string) (*time.Time, bool) {
+		v := q.Get(name)
+		if v == "" {
+			return nil, true
+		}
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, name+" must be RFC3339 (e.g. 2026-06-04T16:55:00Z)")
+			return nil, false
+		}
+		return &t, true
+	}
+	since, ok := parseBound("since")
+	if !ok {
+		return
+	}
+	until, ok := parseBound("until")
+	if !ok {
+		return
+	}
+	if since == nil && until == nil {
+		jsonError(w, http.StatusBadRequest, "at least one of since/until is required")
+		return
+	}
+
+	deleted, err := h.store.SoftDeleteMemoriesByWindow(r.Context(), id, since, until)
+	if err != nil {
+		h.logger.Error("delete memories failed", "error", err, "project_id", id)
+		jsonError(w, http.StatusInternalServerError, "delete memories failed")
+		return
+	}
+	h.logger.Info("memories bulk-deleted", "project_id", id, "deleted", deleted, "since", q.Get("since"), "until", q.Get("until"))
+	jsonResponse(w, http.StatusOK, map[string]any{"deleted": deleted})
 }

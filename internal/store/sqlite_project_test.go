@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
 	projectpkg "github.com/jholhewres/anchored_oss/internal/project"
@@ -285,5 +287,47 @@ func TestMigration015_FreesLegacyDeletedIdentity(t *testing.T) {
 	// The original identity is free again.
 	if _, err := st.CreateProject(ctx, orgID, "Repo", "repo", key, legacy, url, acctID, "service"); err != nil {
 		t.Fatalf("recreate with freed identity: %v", err)
+	}
+}
+
+// TestSoftDeleteMemoriesByWindow proves the admin bulk-undo only tombstones
+// memories created inside the window and leaves the rest of the project alone.
+func TestSoftDeleteMemoriesByWindow(t *testing.T) {
+	st := newSQLiteTestStore(t)
+	ctx := context.Background()
+	orgID, acctID := projectTestOrg(t, st)
+	proj, err := st.CreateProject(ctx, orgID, "Repo", "repo", "k1", "", "", acctID, "service")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	for i, created := range []string{"2026-06-04 10:00:00", "2026-06-04 16:57:38", "2026-06-04 16:58:02"} {
+		m := &model.Memory{
+			ID: fmt.Sprintf("m%d", i), ProjectID: proj.ID, Category: "fact",
+			Content: fmt.Sprintf("memory %d", i), ContentHash: fmt.Sprintf("h%d", i),
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+		if err := st.UpsertMemory(ctx, m); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+		if _, err := st.db.Exec(`UPDATE memories SET created_at = ? WHERE id = ?`, created, m.ID); err != nil {
+			t.Fatalf("set created_at %d: %v", i, err)
+		}
+	}
+
+	since := time.Date(2026, 6, 4, 16, 55, 0, 0, time.UTC)
+	deleted, err := st.SoftDeleteMemoriesByWindow(ctx, proj.ID, &since, nil)
+	if err != nil {
+		t.Fatalf("window delete: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("want 2 deleted, got %d", deleted)
+	}
+	var live int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM memories WHERE project_id = ? AND deleted_at IS NULL`, proj.ID).Scan(&live); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if live != 1 {
+		t.Fatalf("want 1 live memory, got %d", live)
 	}
 }

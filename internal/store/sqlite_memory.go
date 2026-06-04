@@ -346,3 +346,28 @@ func sqliteScanMemories(rows *sql.Rows) ([]*model.Memory, error) {
 	}
 	return memories, nil
 }
+
+// SoftDeleteMemoriesByWindow soft-deletes every live memory of a project whose
+// created_at falls inside [since, until). Built for admin moderation: undoing
+// a sync batch that landed in the wrong project. Returns the number of
+// memories tombstoned (clients pick the deletions up via GetTombstonesSince).
+// Bounds are bound as "2006-01-02 15:04:05" UTC strings so they compare
+// lexically against the datetime('now') values the writes store.
+func (s *SQLiteStore) SoftDeleteMemoriesByWindow(ctx context.Context, projectID string, since, until *time.Time) (int64, error) {
+	q := `UPDATE memories SET deleted_at = datetime('now'), updated_at = datetime('now')
+	      WHERE project_id = ? AND deleted_at IS NULL`
+	args := []any{projectID}
+	if since != nil {
+		q += ` AND created_at >= ?`
+		args = append(args, since.UTC().Format("2006-01-02 15:04:05"))
+	}
+	if until != nil {
+		q += ` AND created_at < ?`
+		args = append(args, until.UTC().Format("2006-01-02 15:04:05"))
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, fmt.Errorf("soft delete memories by window: %w", err)
+	}
+	return res.RowsAffected()
+}

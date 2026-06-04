@@ -341,3 +341,26 @@ func scanMemories(rows *sql.Rows) ([]*model.Memory, error) {
 	}
 	return memories, nil
 }
+
+// SoftDeleteMemoriesByWindow soft-deletes every live memory of a project whose
+// created_at falls inside [since, until). Built for admin moderation: undoing
+// a sync batch that landed in the wrong project. Returns the number of
+// memories tombstoned (clients pick the deletions up via GetTombstonesSince).
+func (s *PostgresStore) SoftDeleteMemoriesByWindow(ctx context.Context, projectID string, since, until *time.Time) (int64, error) {
+	q := `UPDATE memories SET deleted_at = now(), updated_at = now()
+	      WHERE project_id = $1 AND deleted_at IS NULL`
+	args := []any{projectID}
+	if since != nil {
+		args = append(args, since.UTC())
+		q += fmt.Sprintf(` AND created_at >= $%d`, len(args))
+	}
+	if until != nil {
+		args = append(args, until.UTC())
+		q += fmt.Sprintf(` AND created_at < $%d`, len(args))
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, fmt.Errorf("soft delete memories by window: %w", err)
+	}
+	return res.RowsAffected()
+}
