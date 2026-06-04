@@ -35,7 +35,7 @@ func TestSync_ResponseCarriesResolvedProjectID(t *testing.T) {
 	if err := st.AddOrgMember(ctx, org.ID, acc.ID, "admin"); err != nil {
 		t.Fatalf("add org member: %v", err)
 	}
-	proj, err := st.CreateProject(ctx, org.ID, "Repo", "repo", "github.com/acme/repo=abc123", acc.ID, "code")
+	proj, err := st.CreateProject(ctx, org.ID, "Repo", "repo", "github.com/acme/repo=abc123", "", "", acc.ID, "code")
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/model"
@@ -99,9 +100,14 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Derive the remote_key from a pasted git URL (ssh or https) when no key was
 	// given, so the project matches the key the CLI stamps on sync. Identical
 	// normalization on both sides is enforced by internal/project parity tests.
+	// The legacy key (remote_key_v1) lets repos keyed before the v2 change still
+	// resolve; it is only meaningful when we derived from a repo URL.
 	remoteKey := req.RemoteKey
-	if remoteKey == "" && req.RepoURL != "" {
-		remoteKey = projectpkg.DeriveRemoteKey(req.RepoURL)
+	remoteKeyV1 := ""
+	repoURL := req.RepoURL
+	if remoteKey == "" && repoURL != "" {
+		remoteKey = projectpkg.DeriveRemoteKey(repoURL)
+		remoteKeyV1 = projectpkg.DeriveLegacyRemoteKey(repoURL)
 	}
 
 	// Idempotent on remote_key: if a project for this repo already exists (e.g.
@@ -126,7 +132,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		remoteKey = req.Slug + "-" + randomSuffix(8)
 	}
 
-	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, accountID, model.NormalizeCategory(req.Category))
+	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, remoteKeyV1, repoURL, accountID, model.NormalizeCategory(req.Category))
 	if err != nil {
 		h.logger.Error("create project failed", "error", err, "org_id", orgID)
 		jsonError(w, http.StatusInternalServerError, "failed to create project")
@@ -240,6 +246,93 @@ func (h *ProjectHandler) ListMemories(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, listMemoriesResponse{
 		Memories: memories, Total: total, Limit: limit, Offset: offset,
 	})
+}
+
+type updateProjectRequest struct {
+	Name     *string `json:"name"`
+	Slug     *string `json:"slug"`
+	RepoURL  *string `json:"repo_url"`
+	Category *string `json:"category"`
+}
+
+// Update applies a partial update to a project. Admin only. Body is partial
+// JSON: any omitted field is left unchanged; a present field (including an
+// empty repo_url) is applied. Setting repo_url recomputes both remote keys;
+// clearing it (empty string) unlinks the repo.
+func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !uuidRe.MatchString(id) {
+		jsonError(w, http.StatusBadRequest, "id must be a UUID")
+		return
+	}
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "missing org context")
+		return
+	}
+
+	var req updateProjectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Trim surrounding whitespace before validation/persistence so a pasted
+	// value with stray spaces can't bypass the slug regex or store a padded name.
+	if req.Name != nil {
+		*req.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.Slug != nil {
+		*req.Slug = strings.TrimSpace(*req.Slug)
+	}
+	if req.RepoURL != nil {
+		*req.RepoURL = strings.TrimSpace(*req.RepoURL)
+	}
+
+	if req.Name != nil && *req.Name == "" {
+		jsonError(w, http.StatusBadRequest, "name cannot be empty")
+		return
+	}
+	if req.Slug != nil && !slugRe.MatchString(*req.Slug) {
+		jsonError(w, http.StatusBadRequest, "slug must match ^[a-z0-9][a-z0-9-]{0,63}$")
+		return
+	}
+
+	project, err := h.store.UpdateProject(r.Context(), orgID, id, model.ProjectUpdate{
+		Name:     req.Name,
+		Slug:     req.Slug,
+		RepoURL:  req.RepoURL,
+		Category: req.Category,
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		jsonError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if errors.Is(err, store.ErrConflict) {
+		jsonError(w, http.StatusConflict, "slug already in use")
+		return
+	}
+	if err != nil {
+		h.logger.Error("update project failed", "error", err, "project_id", id)
+		jsonError(w, http.StatusInternalServerError, "failed to update project")
+		return
+	}
+
+	if orgID != "" {
+		actor := middleware.GetAccountID(r.Context())
+		if aerr := h.store.AppendAudit(r.Context(), &model.AuditEntry{
+			OrgID:      orgID,
+			ProjectID:  id,
+			ActorID:    actor,
+			Action:     "project.update",
+			TargetType: "project",
+			TargetID:   id,
+		}); aerr != nil {
+			h.logger.Warn("audit append failed for project update", "project_id", id, "error", aerr)
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, project)
 }
 
 // SoftDelete marks a project as deleted. Admin only.

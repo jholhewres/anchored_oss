@@ -102,6 +102,7 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	mux.HandleFunc("POST /v1/projects", authMW(requireAdmin(http.HandlerFunc(projectHandler.Create))).ServeHTTP)
 	mux.HandleFunc("GET /v1/projects", authMW(http.HandlerFunc(projectHandler.List)).ServeHTTP)
 	mux.HandleFunc("GET /v1/projects/{id}", authMW(http.HandlerFunc(projectHandler.Get)).ServeHTTP)
+	mux.HandleFunc("PATCH /v1/projects/{id}", authMW(requireAdmin(http.HandlerFunc(projectHandler.Update))).ServeHTTP)
 	mux.HandleFunc("GET /v1/projects/{id}/memories", authMW(http.HandlerFunc(projectHandler.ListMemories)).ServeHTTP)
 	mux.HandleFunc("GET /v1/projects/{id}/graph", authMW(http.HandlerFunc(projectHandler.ListGraph)).ServeHTTP)
 	mux.HandleFunc("POST /v1/projects/{id}/triples", authMW(http.HandlerFunc(projectHandler.IngestTriples)).ServeHTTP)
@@ -109,6 +110,10 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 
 	auditHandler := handler.NewAuditHandler(st, logger)
 	mux.HandleFunc("GET /v1/audit", authMW(requireAdmin(http.HandlerFunc(auditHandler.List))).ServeHTTP)
+
+	updateHandler := handler.NewUpdateHandler(logger)
+	mux.HandleFunc("GET /v1/admin/update/check", authMW(requireAdmin(http.HandlerFunc(updateHandler.Check))).ServeHTTP)
+	mux.HandleFunc("POST /v1/admin/update/apply", authMW(requireAdmin(http.HandlerFunc(updateHandler.Apply))).ServeHTTP)
 
 	quotaHandler := handler.NewQuotaHandler(st, cfg, logger)
 	mux.HandleFunc("GET /v1/quota", authMW(requireAdmin(http.HandlerFunc(quotaHandler.Get))).ServeHTTP)
