@@ -69,6 +69,7 @@ func (e *SyncEngine) Sync(ctx context.Context, accountID, orgID string, req *mod
 	}
 
 	return &model.SyncResponse{
+		ProjectID:        projectID,
 		Pulls:            pulls,
 		ServerTombstones: serverTombstones,
 		Results:          results,

@@ -86,6 +86,11 @@ type compatPushResponse struct {
 	Accepted int      `json:"accepted"`
 	Rejected int      `json:"rejected"`
 	Errors   []string `json:"errors,omitempty"`
+	// ProjectID is the resolved remote project for the request's primary
+	// route (explicit project_id, or the group matching the request's
+	// project_claim). Clients use it for follow-up per-project calls such
+	// as knowledge-graph triple ingest, which require a concrete ID.
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 type compatPullRequest struct {
@@ -227,6 +232,19 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp, err := h.engine.Sync(r.Context(), accountID, orgID, sr)
+		if err == nil && resp.ProjectID != "" {
+			// Surface the resolved project for the request's primary route:
+			// an explicit project_id, or the claim-matched group. Secondary
+			// remote_project_key groups never override it.
+			switch {
+			case g.projectID != "":
+				out.ProjectID = resp.ProjectID
+			case req.ProjectClaim != nil && g.claimKey == req.ProjectClaim.RemoteKey:
+				out.ProjectID = resp.ProjectID
+			case out.ProjectID == "" && len(groups) == 1:
+				out.ProjectID = resp.ProjectID
+			}
+		}
 		if err != nil {
 			// Record the failure for this group but keep processing the
 			// remaining groups so a single bad project doesn't abort the

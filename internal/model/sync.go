@@ -36,6 +36,10 @@ type ProjectClaim struct {
 
 // SyncResponse is the server-to-client sync result.
 type SyncResponse struct {
+	// ProjectID is the resolved remote project the batch landed in. Clients
+	// that route by project_claim (git-origin remote_key) need it for
+	// follow-up per-project calls such as knowledge-graph triple ingest.
+	ProjectID        string       `json:"project_id,omitempty"`
 	Pulls            []Memory     `json:"pulls,omitempty"`
 	ServerTombstones []string     `json:"server_tombstones,omitempty"`
 	Results          []SyncResult `json:"results"`
