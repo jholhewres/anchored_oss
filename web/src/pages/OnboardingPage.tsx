@@ -483,7 +483,10 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
   const [revealKey, setRevealKey] = useState(false);
   const origin = window.location.origin;
   const installCmd = "curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored/main/install/install.sh | bash";
-  const configureCmd = `anchored remote configure --server ${origin} --key ${result.api_key}`;
+  // Naming the remote after the org slug keeps multi-server CLI setups
+  // (personal + company) unambiguous from the very first command.
+  const remoteName = result.org.slug || "team";
+  const configureCmd = `anchored remote configure --server ${origin} --key ${result.api_key} --name ${remoteName}`;
   const hasProjects = result.projects.length > 0;
 
   // "Copy all" script: link lines carry an inline comment naming the project
@@ -497,7 +500,7 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
   if (hasProjects) {
     scriptParts.push("# 3. Link the projects whose memories should sync");
     result.projects.forEach((p, i) => {
-      scriptParts.push(`anchored remote link ${p.id}   # ${p.name}${i === 0 ? " (sync default)" : ""}`);
+      scriptParts.push(`anchored remote link ${p.id} --remote ${remoteName}   # ${p.name}${i === 0 ? " (sync default)" : ""}`);
     });
     scriptParts.push("# 4. Sync your memories");
   } else {
@@ -588,7 +591,7 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
             >
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {result.projects.map((p, i) => (
-                  <ProjectLinkRow key={p.id} project={p} isDefault={i === 0} />
+                  <ProjectLinkRow key={p.id} project={p} isDefault={i === 0} remoteName={remoteName} />
                 ))}
               </div>
             </Step>
@@ -640,8 +643,8 @@ function Step({ n, title, hint, children }: { n: number; title: string; hint?: s
 
 // ProjectLinkRow shows one project's identity (name, category, slug) above its
 // link command, with a "sync default" badge on the first project.
-function ProjectLinkRow({ project, isDefault }: { project: OnboardingComplete["projects"][number]; isDefault: boolean }) {
-  const linkCmd = `anchored remote link ${project.id}`;
+function ProjectLinkRow({ project, isDefault, remoteName }: { project: OnboardingComplete["projects"][number]; isDefault: boolean; remoteName: string }) {
+  const linkCmd = `anchored remote link ${project.id} --remote ${remoteName}`;
   return (
     <div style={{
       padding: 10, background: "var(--bg-1)",

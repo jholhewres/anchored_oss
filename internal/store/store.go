@@ -28,6 +28,7 @@ type Store interface {
 	ListAccountProjects(ctx context.Context, accountID string) ([]*model.Project, error)
 	SetAccountProjects(ctx context.Context, orgID, accountID string, projectIDs []string) error
 	CreateOrganization(ctx context.Context, name, slug string) (*model.Organization, error)
+	GetOrganizationByID(ctx context.Context, id string) (*model.Organization, error)
 	AddOrgMember(ctx context.Context, orgID, accountID, role string) error
 	CountOrganizations(ctx context.Context) (int, error)
 

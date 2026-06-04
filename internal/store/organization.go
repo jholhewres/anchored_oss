@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
@@ -28,6 +29,21 @@ func (s *PostgresStore) CreateOrganization(ctx context.Context, name, slug strin
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("create organization: %w", err)
+	}
+	return &o, nil
+}
+
+func (s *PostgresStore) GetOrganizationByID(ctx context.Context, id string) (*model.Organization, error) {
+	var o model.Organization
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, name, slug, created_at FROM organizations WHERE id = $1`,
+		id,
+	).Scan(&o.ID, &o.Name, &o.Slug, &o.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get organization: %w", err)
 	}
 	return &o, nil
 }

@@ -44,7 +44,7 @@ Each developer installs the Anchored client and points it at the server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored/main/install/install.sh | bash
-anchored remote configure --server http://your-server:8771 --key <api-key>
+anchored remote configure --server http://your-server:8771 --key <api-key> --name your-org
 anchored remote sync   # run inside a repo — routed by its git origin
 ```
 

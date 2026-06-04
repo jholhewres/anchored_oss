@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { Card, Badge, Status, Btn, Input, Tabs } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import type { Project, Memory, Triple, ChatAnswer } from "@/lib/types";
 import { GraphView } from "@/components/GraphView";
 
@@ -238,9 +239,13 @@ function ChatTab({ projectId }: { projectId: string }) {
 }
 
 function ConnectTab({ project }: { project: Project }) {
+  const { me } = useAuth();
   const origin = window.location.origin;
-  const configureCmd = `anchored remote configure --server ${origin} --key <your-api-key>`;
-  const linkCmd = `anchored remote link ${project.id}`;
+  // Naming the remote after the org slug keeps multi-server CLI setups
+  // (personal + company) unambiguous from the very first command.
+  const remoteName = me?.org_slug || "team";
+  const configureCmd = `anchored remote configure --server ${origin} --key <your-api-key> --name ${remoteName}`;
+  const linkCmd = `anchored remote link ${project.id} --remote ${remoteName}`;
   const syncCmd = "anchored remote sync";
 
   const fullScript = [

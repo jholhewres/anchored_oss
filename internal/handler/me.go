@@ -22,6 +22,7 @@ func NewMeHandler(st store.Store, logger *slog.Logger) *MeHandler {
 type meResponse struct {
 	AccountID   string `json:"account_id"`
 	OrgID       string `json:"org_id"`
+	OrgSlug     string `json:"org_slug,omitempty"`
 	Scope       string `json:"scope"`
 	Email       string `json:"email,omitempty"`
 	DisplayName string `json:"display_name,omitempty"`
@@ -42,6 +43,13 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		resp.DisplayName = acc.DisplayName
 	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
 		h.logger.Warn("me: account lookup failed", "error", err)
+	}
+	// Org slug feeds the CLI connect instructions (`remote configure --name
+	// <slug>`) so multi-server setups get a meaningful remote name upfront.
+	if org, err := h.store.GetOrganizationByID(r.Context(), orgID); err == nil && org != nil {
+		resp.OrgSlug = org.Slug
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		h.logger.Warn("me: org lookup failed", "error", err)
 	}
 
 	jsonResponse(w, http.StatusOK, resp)

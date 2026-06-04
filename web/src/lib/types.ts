@@ -3,6 +3,7 @@ export type Scope = "admin" | "sync" | "readonly";
 export interface Me {
   account_id: string;
   org_id: string;
+  org_slug?: string;
   scope: Scope;
   email: string;
   display_name: string;
