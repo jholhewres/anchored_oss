@@ -248,7 +248,7 @@ function ConnectTab({ project }: { project: Project }) {
     configureCmd,
     `# Link project: ${project.name}`,
     linkCmd,
-    "# Sync memories",
+    "# Sync memories (uses the linked project above)",
     syncCmd,
   ].join("\n");
 
@@ -284,7 +284,7 @@ function ConnectTab({ project }: { project: Project }) {
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 6 }}>3. Sync memories</div>
           <CommandBox cmd={syncCmd} />
           <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
-            Pushes local memories up and pulls team memories down. Run inside a git repo to auto-route by origin.
+            Pushes local memories up and pulls team memories down. Uses the linked project from step 2.
           </div>
         </div>
       </div>

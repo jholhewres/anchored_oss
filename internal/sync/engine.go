@@ -113,26 +113,11 @@ func (e *SyncEngine) resolveProject(ctx context.Context, orgID, accountID string
 		return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "project lookup failed"}
 	}
 
-	slug := toSlug(claim.Name)
-	if slug == "" {
-		return "", &SyncError{Code: "INVALID_REQUEST", Status: 400, Msg: "project_claim.name does not produce a valid slug"}
+	return "", &SyncError{
+		Code:   "PROJECT_NOT_FOUND",
+		Status: 404,
+		Msg:    fmt.Sprintf("no project with remote_key %q — create one in the dashboard first, or use project_id to target an existing project", claim.RemoteKey),
 	}
-
-	proj, err := e.store.CreateProject(ctx, orgID, claim.Name, slug, claim.RemoteKey, accountID, "other")
-	if err != nil {
-		e.logger.Error("project creation from claim failed", "remote_key", claim.RemoteKey, "error", err)
-		return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "failed to create project"}
-	}
-
-	// Grant the creator access via the org's default team so the very
-	// same sync request can proceed past authorize().
-	if err := e.store.EnsureCreatorProjectAccess(ctx, orgID, accountID, proj.ID); err != nil {
-		e.logger.Error("grant creator access failed", "project_id", proj.ID, "error", err)
-		return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "failed to grant project access"}
-	}
-
-	e.appendAudit(ctx, orgID, proj.ID, accountID, "sync.project.created", "project", proj.ID, claim.RemoteKey)
-	return proj.ID, nil
 }
 
 func (e *SyncEngine) authorize(ctx context.Context, accountID, projectID string) error {
