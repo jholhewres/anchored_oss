@@ -372,3 +372,51 @@ func TestBatchUpsertRehomesProject(t *testing.T) {
 		t.Fatalf("memory not rehomed: project_id=%s want %s", got, b.ID)
 	}
 }
+
+// TestSearchMemories_MultiWordQuery locks the term-wise search contract:
+// natural multi-word queries (the kind LLM clients send) must match memories
+// containing the terms anywhere, with exact-phrase hits ranked first.
+func TestSearchMemories_MultiWordQuery(t *testing.T) {
+	st := newSQLiteTestStore(t)
+	ctx := context.Background()
+	orgID, acctID := projectTestOrg(t, st)
+	proj, err := st.CreateProject(ctx, orgID, "Repo", "repo", "ksearch", "", "", acctID, "service")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	seed := []struct{ id, content string }{
+		{"s1", "ASC-API is a condo management system built on Laravel"},
+		{"s2", "the management module handles billing for the condo"},
+		{"s3", "unrelated note about deployment pipelines"},
+	}
+	for _, m := range seed {
+		mem := &model.Memory{ID: m.id, ProjectID: proj.ID, Category: "fact", Content: m.content,
+			ContentHash: "h-" + m.id, AuthorID: acctID, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		if err := st.UpsertMemory(ctx, mem); err != nil {
+			t.Fatalf("seed %s: %v", m.id, err)
+		}
+	}
+
+	// Multi-word query that never occurs verbatim: old behavior returned 0.
+	got, err := st.SearchMemories(ctx, proj.ID, "condo management Laravel system", 10)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 matches, got %d", len(got))
+	}
+	// s1 matches all four terms, s2 only two — ranking puts s1 first.
+	if got[0].ID != "s1" {
+		t.Fatalf("want s1 ranked first, got %s", got[0].ID)
+	}
+
+	// Exact phrase still wins over scattered-term matches.
+	got, err = st.SearchMemories(ctx, proj.ID, "billing for the condo", 10)
+	if err != nil {
+		t.Fatalf("phrase search: %v", err)
+	}
+	if len(got) == 0 || got[0].ID != "s2" {
+		t.Fatalf("want s2 (phrase hit) first, got %+v", got)
+	}
+}

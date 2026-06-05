@@ -51,15 +51,43 @@ func (s *PostgresStore) SearchMemories(ctx context.Context, projectID string, qu
 		limit = 100
 	}
 
-	pattern := "%" + query + "%"
+	// Term-wise matching with relevance ranking — see the SQLite twin for the
+	// rationale (whole-query substrings return nothing for natural queries).
+	terms := searchTerms(query)
+	escaped := strings.ReplaceAll(query, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, "%", `\%`)
+	escaped = strings.ReplaceAll(escaped, "_", `\_`)
+	if len(terms) == 0 {
+		terms = []string{escaped}
+	}
+
+	args := []any{projectID}
+	ph := func(v string) string {
+		args = append(args, "%"+v+"%")
+		return fmt.Sprintf("$%d", len(args))
+	}
+	var where, rank []string
+	for _, t := range terms {
+		p := ph(t)
+		where = append(where, fmt.Sprintf("(content ILIKE %s OR keywords::text ILIKE %s)", p, p))
+	}
+	phrasePH := ph(escaped)
+	rank = append(rank, fmt.Sprintf("(CASE WHEN content ILIKE %s OR keywords::text ILIKE %s THEN 100 ELSE 0 END)", phrasePH, phrasePH))
+	for _, t := range terms {
+		p := ph(t)
+		rank = append(rank, fmt.Sprintf("(CASE WHEN content ILIKE %s OR keywords::text ILIKE %s THEN 1 ELSE 0 END)", p, p))
+	}
+	args = append(args, limit)
+	limitPH := fmt.Sprintf("$%d", len(args))
+
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
-		 WHERE project_id = $1 AND deleted_at IS NULL` + qualityFilterSQL + `
-		   AND (content ILIKE $2 OR keywords::text ILIKE $2)
-		 ORDER BY updated_at DESC
-		 LIMIT $3`,
-		projectID, pattern, limit,
+		 WHERE project_id = $1 AND deleted_at IS NULL`+qualityFilterSQL+`
+		   AND (`+strings.Join(where, " OR ")+`)
+		 ORDER BY `+strings.Join(rank, " + ")+` DESC, updated_at DESC
+		 LIMIT `+limitPH,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("search memories: %w", err)

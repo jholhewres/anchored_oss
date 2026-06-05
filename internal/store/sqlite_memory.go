@@ -47,17 +47,52 @@ func (s *SQLiteStore) SearchMemories(ctx context.Context, projectID string, quer
 		limit = 100
 	}
 
-	escaped := strings.ReplaceAll(query, "%", "\\%")
-	escaped = strings.ReplaceAll(escaped, "_", "\\_")
-	pattern := "%" + escaped + "%"
+	// Term-wise matching: natural multi-word queries (what LLM clients send)
+	// almost never appear verbatim in a memory, so the whole-query substring
+	// returned nothing. Each token matches independently; rows matching more
+	// tokens rank first, with an exact-phrase hit ranked above everything.
+	terms := searchTerms(query)
+	escaped := strings.ReplaceAll(query, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, "%", `\%`)
+	escaped = strings.ReplaceAll(escaped, "_", `\_`)
+	phrase := "%" + escaped + "%"
+	if len(terms) == 0 {
+		terms = []string{escaped}
+	}
+
+	matchExpr := `(content LIKE ? ESCAPE '\' OR keywords LIKE ? ESCAPE '\')`
+	var (
+		where []string
+		rank  []string
+		args  = []any{projectID}
+	)
+	for range terms {
+		where = append(where, matchExpr)
+		rank = append(rank, "(CASE WHEN "+matchExpr+" THEN 1 ELSE 0 END)")
+	}
+	rankSQL := "(CASE WHEN " + matchExpr + " THEN 100 ELSE 0 END) + " + strings.Join(rank, " + ")
+
+	// Placeholder order: WHERE term pairs, then ORDER BY phrase pair + term
+	// pairs, then LIMIT.
+	for _, t := range terms {
+		pat := "%" + t + "%"
+		args = append(args, pat, pat)
+	}
+	args = append(args, phrase, phrase)
+	for _, t := range terms {
+		pat := "%" + t + "%"
+		args = append(args, pat, pat)
+	}
+	args = append(args, limit)
+
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
 		 WHERE project_id = ? AND deleted_at IS NULL`+sqliteQualityFilterSQL+`
-		   AND (content LIKE ? ESCAPE '\' OR keywords LIKE ? ESCAPE '\')
-		 ORDER BY updated_at DESC
+		   AND (`+strings.Join(where, " OR ")+`)
+		 ORDER BY `+rankSQL+` DESC, updated_at DESC
 		 LIMIT ?`,
-		projectID, pattern, pattern, limit,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("search memories: %w", err)
