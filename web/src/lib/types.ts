@@ -288,3 +288,41 @@ export interface Health {
   db_status: string;
   timestamp: string;
 }
+
+export interface MemoryHealthCounts {
+  live: number;
+  low_signal: number;
+  near_duplicate: number;
+  stale: number;
+  contradictions: number;
+  missing_embeddings: number;
+}
+
+export interface NameCount {
+  name: string;
+  count: number;
+}
+
+export interface RuleCount {
+  rule: string;
+  count: number;
+}
+
+export interface HealthAnomaly {
+  type: string;
+  source: string;
+  window: string;
+  count: number;
+  baseline: number;
+}
+
+export interface MemoryHealth {
+  score: number;
+  counts: MemoryHealthCounts;
+  by_source: NameCount[] | null;
+  by_category: NameCount[] | null;
+  age_histogram: NameCount[] | null;
+  sync_rejections: RuleCount[] | null;
+  anomalies: HealthAnomaly[];
+  recommendations: string[];
+}

@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth";
 import type { Project, Memory, Triple, ChatAnswer, ProjectCategory } from "@/lib/types";
 import { PROJECT_CATEGORIES, PROJECT_CATEGORY_LABELS } from "@/lib/types";
 import { GraphView } from "@/components/GraphView";
+import { HealthPanel } from "@/components/HealthPanel";
 
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
@@ -634,10 +635,13 @@ export function ProjectDetailPage() {
           { key: "memories", label: "Memories", icon: <I.cube />, count: memTotal },
           { key: "graph", label: "Knowledge graph", icon: <I.graph />, count: tripleTotal },
           { key: "chat", label: "Chat", icon: <I.brain /> },
+          { key: "health", label: "Health", icon: <I.pulse /> },
           { key: "connect", label: "Connect", icon: <I.terminal /> },
           { key: "settings", label: "Settings", icon: <I.settings /> },
         ]}
       />
+
+      {activeTab === "health" && id && <HealthPanel projectId={id} />}
 
       {activeTab === "memories" && (
         <div style={{ marginTop: 22 }}>

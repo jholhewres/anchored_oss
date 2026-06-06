@@ -15,6 +15,7 @@ import type {
   ListTriplesResponse,
   Me,
   Memory,
+  MemoryHealth,
   OrgPolicy,
   Guardrail,
   ChatStatus,
@@ -134,6 +135,8 @@ export const api = {
       "GET",
       `/v1/projects/${id}/graph?limit=${limit}&offset=${offset}`,
     ),
+  getProjectMemoryHealth: (id: string) =>
+    request<MemoryHealth>("GET", `/v1/projects/${id}/memory-health`),
   // searchMemories runs server-side search. mode "semantic" uses vector KNN
   // (falls back to text on the server if embeddings are disabled); "text" runs
   // substring/keyword search. Returns a flat ranked array.
