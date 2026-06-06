@@ -8,6 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jholhewres/anchored_oss/internal/middleware"
+	"github.com/jholhewres/anchored_oss/internal/model"
+	"github.com/jholhewres/anchored_oss/internal/store"
 	"github.com/jholhewres/anchored_oss/internal/updater"
 )
 
@@ -25,14 +28,15 @@ type updaterIface interface {
 
 type UpdateHandler struct {
 	updater updaterIface
+	store   store.Store // nil-safe: only used for best-effort audit entries
 	logger  *slog.Logger
 	// applying guards against a concurrent apply racing the binary swap: a
 	// second POST while one is in flight is rejected with 409.
 	applying atomic.Bool
 }
 
-func NewUpdateHandler(logger *slog.Logger) *UpdateHandler {
-	return &UpdateHandler{updater: updater.New(logger), logger: logger}
+func NewUpdateHandler(st store.Store, logger *slog.Logger) *UpdateHandler {
+	return &UpdateHandler{updater: updater.New(logger), store: st, logger: logger}
 }
 
 type updateCheckResponse struct {
@@ -71,7 +75,7 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, _, available, err := h.updater.CheckLatest(r.Context())
+	current, latest, available, err := h.updater.CheckLatest(r.Context())
 	if err != nil {
 		h.applying.Store(false)
 		h.logger.Error("update check failed", "error", err)
@@ -82,6 +86,19 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		h.applying.Store(false)
 		jsonError(w, http.StatusConflict, "no update available")
 		return
+	}
+
+	// Audit before the swap: a successful apply restarts this process, so a
+	// post-success append would race the pm2 restart. Best-effort.
+	if h.store != nil {
+		if err := h.store.AppendAudit(r.Context(), &model.AuditEntry{
+			OrgID:   middleware.GetOrgID(r.Context()),
+			ActorID: middleware.GetAccountID(r.Context()),
+			Action:  "server.updated", TargetType: "server",
+			Metadata: map[string]string{"from_version": current, "to_version": latest},
+		}); err != nil {
+			h.logger.Error("audit server.updated failed", "error", err)
+		}
 	}
 
 	go func() {

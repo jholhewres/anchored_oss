@@ -146,6 +146,14 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.store.AppendAudit(r.Context(), &model.AuditEntry{
+		OrgID: orgID, ProjectID: project.ID, ActorID: accountID,
+		Action: "project.created", TargetType: "project", TargetID: project.ID,
+		Metadata: map[string]string{"name": project.Name, "slug": project.Slug},
+	}); err != nil {
+		h.logger.Error("audit project.created failed", "error", err, "project_id", project.ID)
+	}
+
 	jsonResponse(w, http.StatusCreated, project)
 }
 
@@ -352,6 +360,15 @@ func (h *ProjectHandler) SoftDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "soft delete project failed")
 		return
 	}
+
+	if err := h.store.AppendAudit(r.Context(), &model.AuditEntry{
+		OrgID: middleware.GetOrgID(r.Context()), ProjectID: id,
+		ActorID: middleware.GetAccountID(r.Context()),
+		Action:  "project.deleted", TargetType: "project", TargetID: id,
+	}); err != nil {
+		h.logger.Error("audit project.deleted failed", "error", err, "project_id", id)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
