@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -135,11 +136,12 @@ func TestDoctorOffline(t *testing.T) {
 	// Point the configured remote at a dead port by replacing the config URL.
 	// (Simplest reliable "offline": nothing listens on port 1.)
 	cfgPath := e.home + "/.anchored/config.yaml"
-	data, err := readFile(cfgPath)
+	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if err := writeFile(cfgPath, strings.ReplaceAll(data, e.baseURL, "http://127.0.0.1:1")); err != nil {
+	rewritten := strings.ReplaceAll(string(data), e.baseURL, "http://127.0.0.1:1")
+	if err := os.WriteFile(cfgPath, []byte(rewritten), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 

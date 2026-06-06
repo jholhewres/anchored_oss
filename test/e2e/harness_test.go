@@ -259,15 +259,6 @@ func allMemoryCount(t *testing.T, e *env) int {
 	return total
 }
 
-func readFile(path string) (string, error) {
-	b, err := os.ReadFile(path)
-	return string(b), err
-}
-
-func writeFile(path, content string) error {
-	return os.WriteFile(path, []byte(content), 0o644)
-}
-
 func mustContain(t *testing.T, out string, wants ...string) {
 	t.Helper()
 	for _, w := range wants {
