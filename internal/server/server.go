@@ -109,10 +109,14 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	mux.HandleFunc("POST /v1/projects/{id}/triples", authMW(http.HandlerFunc(projectHandler.IngestTriples)).ServeHTTP)
 	mux.HandleFunc("DELETE /v1/projects/{id}", authMW(requireAdmin(http.HandlerFunc(projectHandler.SoftDelete))).ServeHTTP)
 
+	healthMemHandler := handler.NewMemoryHealthHandler(st, logger)
+	mux.HandleFunc("GET /v1/projects/{id}/memory-health", authMW(http.HandlerFunc(healthMemHandler.Project)).ServeHTTP)
+	mux.HandleFunc("GET /v1/orgs/memory-health", authMW(requireAdmin(http.HandlerFunc(healthMemHandler.Org))).ServeHTTP)
+
 	auditHandler := handler.NewAuditHandler(st, logger)
 	mux.HandleFunc("GET /v1/audit", authMW(requireAdmin(http.HandlerFunc(auditHandler.List))).ServeHTTP)
 
-	updateHandler := handler.NewUpdateHandler(logger)
+	updateHandler := handler.NewUpdateHandler(st, logger)
 	mux.HandleFunc("GET /v1/admin/update/check", authMW(requireAdmin(http.HandlerFunc(updateHandler.Check))).ServeHTTP)
 	mux.HandleFunc("POST /v1/admin/update/apply", authMW(requireAdmin(http.HandlerFunc(updateHandler.Apply))).ServeHTTP)
 
