@@ -218,3 +218,13 @@ type Guardrail struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+// RejectionStat is one per-day counter of sync pushes rejected by a guardrail
+// rule. Aggregated rows feed the memory health view (which rules fire most,
+// and whether reject volume is spiking).
+type RejectionStat struct {
+	ProjectID string `json:"project_id"`
+	Rule      string `json:"rule"`
+	Day       string `json:"day"` // UTC, YYYY-MM-DD
+	Count     int64  `json:"count"`
+}

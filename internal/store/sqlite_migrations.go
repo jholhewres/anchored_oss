@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 15
+const sqliteSchemaVersion = 16
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -270,6 +270,20 @@ WHERE deleted_at IS NOT NULL
   AND remote_key NOT LIKE 'deleted-%';
 `
 
+// sqliteMigration016 mirrors Postgres 016: per-day sync rejection counters for
+// the memory health dashboard. SQLite ids are TEXT; same shape otherwise.
+const sqliteMigration016 = `
+CREATE TABLE IF NOT EXISTS sync_rejection_stats (
+    org_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    day TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (org_id, project_id, rule, day)
+);
+CREATE INDEX IF NOT EXISTS idx_sync_rejection_org_day ON sync_rejection_stats(org_id, day);
+`
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -286,6 +300,7 @@ var sqliteMigrations = map[int]string{
 	13: sqliteMigration013,
 	14: sqliteMigration014,
 	15: sqliteMigration015,
+	16: sqliteMigration016,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {

@@ -163,6 +163,13 @@ func runAuditPurge(ctx context.Context, st store.Store, cfg *config.Config, logg
 		if n > 0 {
 			logger.Info("audit purge", "removed", n, "older_than", cutoff)
 		}
+		// Rejection counters back the memory-health view; 90 days is plenty.
+		statsCutoff := time.Now().UTC().AddDate(0, 0, -90).Format("2006-01-02")
+		if n, err := st.PurgeRejectionStatsOlderThan(ctx, statsCutoff); err != nil {
+			logger.Error("rejection stats purge failed", "error", err)
+		} else if n > 0 {
+			logger.Info("rejection stats purge", "removed", n, "older_than_day", statsCutoff)
+		}
 	}
 	purge()
 	ticker := time.NewTicker(interval)

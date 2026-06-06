@@ -110,6 +110,21 @@ type Store interface {
 	// returning the number removed. Used by the retention sweep.
 	PurgeAuditOlderThan(ctx context.Context, before time.Time) (int64, error)
 
+	// Sync rejection stats (memory health). IncrementRejectionStat upserts the
+	// per-day counter for (org, project, rule); callers treat failures as
+	// best-effort (log only). ListRejectionStats returns counters since the
+	// given UTC day (inclusive, "YYYY-MM-DD"); empty projectID means org-wide.
+	IncrementRejectionStat(ctx context.Context, orgID, projectID, rule string, delta int64) error
+	ListRejectionStats(ctx context.Context, orgID, projectID, sinceDay string) ([]*model.RejectionStat, error)
+	// PurgeRejectionStatsOlderThan deletes counters for days before the cutoff
+	// day ("YYYY-MM-DD"), returning the number removed.
+	PurgeRejectionStatsOlderThan(ctx context.Context, beforeDay string) (int64, error)
+
+	// Memory health (anti context-poisoning view): lifecycle counts, noisy
+	// sources, age spread, rejection pressure and volume anomalies.
+	GetProjectMemoryHealth(ctx context.Context, projectID string) (*model.MemoryHealth, error)
+	GetOrgMemoryHealth(ctx context.Context, orgID string) (*model.MemoryHealth, error)
+
 	// Guardrail policy (per-org overrides).
 	GetOrgPolicy(ctx context.Context, orgID string) (*model.OrgPolicy, error)
 	UpsertOrgPolicy(ctx context.Context, p *model.OrgPolicy) error

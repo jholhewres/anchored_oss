@@ -226,6 +226,7 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 	results := make([]model.SyncResult, len(pushes))
 	accepted := make([]*model.Memory, 0, len(pushes))
 	auditEntries := make([]*model.AuditEntry, 0, len(pushes))
+	rejectedByRule := make(map[string]int64)
 
 	for i, push := range pushes {
 		fr := filterResults[i]
@@ -236,6 +237,7 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 				Rule:   fr.Rule,
 				Detail: fr.Detail,
 			}
+			rejectedByRule[fr.Rule]++
 			auditEntries = append(auditEntries, buildAudit(orgID, projectID, accountID, "sync.push.rejected", "memory", push.ID, fr.Rule))
 			continue
 		}
@@ -296,6 +298,14 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 
 	if err := e.store.AppendAudits(ctx, auditEntries); err != nil {
 		e.logger.Error("audit batch append failed", "count", len(auditEntries), "error", err)
+	}
+
+	// Feed the memory-health rejection counters. Best-effort: a failed
+	// increment never changes the sync outcome.
+	for rule, n := range rejectedByRule {
+		if err := e.store.IncrementRejectionStat(ctx, orgID, projectID, rule, n); err != nil {
+			e.logger.Error("rejection stat increment failed", "rule", rule, "error", err)
+		}
 	}
 
 	return results, nil

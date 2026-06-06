@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 15
+const schemaVersion = 16
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -323,6 +323,22 @@ WHERE deleted_at IS NOT NULL
   AND remote_key NOT LIKE 'deleted-%';
 `
 
+// migration016 adds per-day sync rejection counters that feed the memory
+// health dashboard. One row per (org, project, rule, UTC day); the sync engine
+// upserts best-effort on every rejected push so health can show which rules
+// fire most and detect anomalous reject volume without scanning audit_log.
+const migration016 = `
+CREATE TABLE IF NOT EXISTS sync_rejection_stats (
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    rule TEXT NOT NULL,
+    day TEXT NOT NULL,
+    count BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (org_id, project_id, rule, day)
+);
+CREATE INDEX IF NOT EXISTS idx_sync_rejection_org_day ON sync_rejection_stats(org_id, day);
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -339,6 +355,7 @@ var migrations = map[int]string{
 	13: migration013,
 	14: migration014,
 	15: migration015,
+	16: migration016,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from
