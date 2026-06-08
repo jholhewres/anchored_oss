@@ -45,13 +45,40 @@ func (e *SyncEngine) Sync(ctx context.Context, accountID, orgID string, req *mod
 	// concurrently with this request are picked up by the next sync.
 	watermark := time.Now().UTC()
 
+	// Effective policy backs both the batch cap and the optional hints.
+	pol, perr := e.store.GetOrgPolicy(ctx, orgID)
+	if perr != nil {
+		e.logger.Warn("sync: org policy load failed; using server defaults", "org_id", orgID, "error", perr)
+		pol = &model.OrgPolicy{MaxMemoriesPerSync: store.DefaultMaxMemoriesPerSync}
+	}
+	maxPerSync := pol.MaxMemoriesPerSync
+	if maxPerSync <= 0 {
+		maxPerSync = store.DefaultMaxMemoriesPerSync
+	}
+
 	var results []model.SyncResult
 
-	pushResults, err := e.handlePushes(ctx, accountID, orgID, projectID, req.Pushes)
-	if err != nil {
-		return nil, fmt.Errorf("push: %w", err)
+	// Batch cap: an over-sized push is rejected wholesale, before any write.
+	// This is a hard defense against a mis-scoped client dumping its entire
+	// store into the wrong project — partition and retry is the only path.
+	if len(req.Pushes) > maxPerSync {
+		detail := fmt.Sprintf("push of %d exceeds the per-sync cap of %d; split into smaller batches and retry", len(req.Pushes), maxPerSync)
+		for _, p := range req.Pushes {
+			results = append(results, model.SyncResult{ID: p.ID, Status: "rejected", Rule: "max_memories_per_sync", Detail: detail})
+		}
+		// Feed the memory-health rejection counters so an over-cap dump is
+		// visible on the dashboard — this is the exact scenario the cap defends
+		// against. Best-effort: a failed increment never changes the outcome.
+		if err := e.store.IncrementRejectionStat(ctx, orgID, projectID, "max_memories_per_sync", int64(len(req.Pushes))); err != nil {
+			e.logger.Error("rejection stat increment failed", "rule", "max_memories_per_sync", "error", err)
+		}
+	} else {
+		pushResults, err := e.handlePushes(ctx, accountID, orgID, projectID, req.Pushes)
+		if err != nil {
+			return nil, fmt.Errorf("push: %w", err)
+		}
+		results = append(results, pushResults...)
 	}
-	results = append(results, pushResults...)
 
 	tombResults, err := e.handleTombstones(ctx, orgID, projectID, req.Tombstones)
 	if err != nil {
@@ -68,13 +95,43 @@ func (e *SyncEngine) Sync(ctx context.Context, accountID, orgID string, req *mod
 		results = []model.SyncResult{}
 	}
 
-	return &model.SyncResponse{
+	resp := &model.SyncResponse{
 		ProjectID:        projectID,
 		Pulls:            pulls,
 		ServerTombstones: serverTombstones,
 		Results:          results,
 		Watermark:        watermark,
-	}, nil
+	}
+
+	// Policy hints are emitted only to capability-aware clients, so a
+	// capability-less client's response stays byte-identical to the
+	// pre-negotiation protocol.
+	if req.ClientCapabilities != nil {
+		resp.Policy = &model.PolicyHints{
+			QualityThreshold:   pol.QualityThreshold,
+			BlockedCategories:  e.effectiveBlockedCategories(ctx, orgID),
+			MaxMemoriesPerSync: maxPerSync,
+		}
+	}
+
+	return resp, nil
+}
+
+// effectiveBlockedCategories returns the category names the org's guardrails
+// reject at sync time, mirroring filterForOrg's category logic. An org with no
+// guardrail rows falls back to the code default blocked set.
+func (e *SyncEngine) effectiveBlockedCategories(ctx context.Context, orgID string) []string {
+	guards, err := e.store.ListGuardrails(ctx, orgID)
+	if err != nil || len(guards) == 0 {
+		return append([]string(nil), policy.DefaultBlockedCategories...)
+	}
+	cats := make([]string, 0)
+	for _, g := range guards {
+		if g.Enabled && g.Kind == model.GuardrailCategory && g.Value != "" {
+			cats = append(cats, g.Value)
+		}
+	}
+	return cats
 }
 
 func (e *SyncEngine) resolveProject(ctx context.Context, orgID, accountID string, req *model.SyncRequest) (string, error) {

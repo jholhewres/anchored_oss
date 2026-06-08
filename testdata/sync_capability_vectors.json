@@ -1,0 +1,46 @@
+{
+  "_comment": "Shared capability-negotiation vectors. IDENTICAL file in the anchored (client) and anchored_oss (server) repos. The server test asserts it produces these responses; the client test asserts it sends these requests and parses these responses. Hosts are generic.",
+  "vectors": [
+    {
+      "name": "capability_less_no_policy",
+      "description": "A request without client_capabilities gets a response with no policy field (byte-identical to the pre-negotiation protocol).",
+      "request": {
+        "project_id": "00000000-0000-0000-0000-000000000001",
+        "client_id": "old-client",
+        "pushes": []
+      },
+      "response_has_policy": false
+    },
+    {
+      "name": "capability_aware_policy_present",
+      "description": "A request advertising client_capabilities gets policy hints reflecting the org's effective policy (defaults shown).",
+      "request": {
+        "project_id": "00000000-0000-0000-0000-000000000001",
+        "client_id": "new-client",
+        "pushes": [],
+        "client_capabilities": {
+          "promotion_queue": false,
+          "team_cache": false,
+          "artifact_summaries": false
+        }
+      },
+      "response_has_policy": true,
+      "expected_policy": {
+        "quality_threshold": 0.55,
+        "blocked_categories": ["event", "preference"],
+        "max_memories_per_sync": 500
+      }
+    },
+    {
+      "name": "over_cap_wholesale_reject",
+      "description": "When pushes exceed max_memories_per_sync, every result is rejected with rule max_memories_per_sync and nothing is persisted. (count is illustrative; tests use the org's configured cap + 1.)",
+      "request_shape": {
+        "project_id": "00000000-0000-0000-0000-000000000001",
+        "client_id": "new-client",
+        "pushes": "<cap+1 SyncMemory items>"
+      },
+      "expected_result_rule": "max_memories_per_sync",
+      "expected_persisted": 0
+    }
+  ]
+}
