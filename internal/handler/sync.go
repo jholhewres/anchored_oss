@@ -66,10 +66,11 @@ func (h *SyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // instead of the "auto-<hash>" fallback. Older clients omit it and keep the
 // previous behaviour.
 type compatPushRequest struct {
-	ClientID     string              `json:"client_id"`
-	ProjectID    string              `json:"project_id"`
-	ProjectClaim *model.ProjectClaim `json:"project_claim,omitempty"`
-	Memories     []compatPushMemory  `json:"memories"`
+	ClientID           string                    `json:"client_id"`
+	ProjectID          string                    `json:"project_id"`
+	ProjectClaim       *model.ProjectClaim       `json:"project_claim,omitempty"`
+	Memories           []compatPushMemory        `json:"memories"`
+	ClientCapabilities *model.ClientCapabilities `json:"client_capabilities,omitempty"`
 }
 
 type compatPushMemory struct {
@@ -91,6 +92,9 @@ type compatPushResponse struct {
 	// project_claim). Clients use it for follow-up per-project calls such
 	// as knowledge-graph triple ingest, which require a concrete ID.
 	ProjectID string `json:"project_id,omitempty"`
+	// Policy mirrors the negotiated sync policy; only set when the request
+	// advertised client_capabilities, keeping older clients byte-identical.
+	Policy *model.PolicyHints `json:"policy,omitempty"`
 }
 
 type compatPullRequest struct {
@@ -215,7 +219,7 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		sr := &model.SyncRequest{ClientID: req.ClientID, Pushes: pushes}
+		sr := &model.SyncRequest{ClientID: req.ClientID, Pushes: pushes, ClientCapabilities: req.ClientCapabilities}
 		if g.projectID != "" {
 			sr.ProjectID = g.projectID
 		} else {
@@ -232,6 +236,9 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp, err := h.engine.Sync(r.Context(), accountID, orgID, sr)
+		if err == nil && resp.Policy != nil && out.Policy == nil {
+			out.Policy = resp.Policy // same for every group (per-org); take the first
+		}
 		if err == nil && resp.ProjectID != "" {
 			// Surface the resolved project for the request's primary route:
 			// an explicit project_id, or the claim-matched group. Secondary
