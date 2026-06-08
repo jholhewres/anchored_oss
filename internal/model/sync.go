@@ -63,6 +63,19 @@ type SyncResponse struct {
 	// cap). Only set when the request advertised ClientCapabilities — nil for
 	// older clients to keep their response byte-identical.
 	Policy *PolicyHints `json:"policy,omitempty"`
+	// ArtifactSummaries lists the artifact IDs whose linked memories were
+	// accepted in this push. Only populated when the request advertised
+	// ClientCapabilities.ArtifactSummaries — omitted for older clients to keep
+	// their response byte-identical.
+	ArtifactSummaries []ArtifactSummary `json:"artifact_summaries,omitempty"`
+}
+
+// ArtifactSummary carries the server's acknowledgement for a single artifact
+// whose content was successfully pushed in the same sync batch.
+type ArtifactSummary struct {
+	// ArtifactID is the client-assigned artifact identifier, taken from the
+	// "artifact_id" key in the pushed memory's Metadata.
+	ArtifactID string `json:"artifact_id"`
 }
 
 // PolicyHints is the advisory view of the server's effective sync policy.

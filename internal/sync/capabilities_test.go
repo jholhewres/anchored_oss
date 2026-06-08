@@ -160,6 +160,125 @@ func TestSync_OverCap_WholeBatchRejected(t *testing.T) {
 	}
 }
 
+// TestSync_ArtifactSummaries_PopulatedWhenCapable verifies that artifact IDs
+// from accepted memory metadata are returned in ArtifactSummaries when the
+// client advertises ArtifactSummaries capability, and are absent otherwise.
+func TestSync_ArtifactSummaries_PopulatedWhenCapable(t *testing.T) {
+	eng, _, ctx, orgID, accID, projID := capTestEngine(t)
+
+	now := time.Now().UTC()
+	pushes := []model.SyncMemory{
+		{
+			ID: "m1", Category: "decision",
+			Content:   "use postgres for the primary data store in production",
+			CreatedAt: now, UpdatedAt: now,
+			Metadata: map[string]any{"artifact_id": "art-abc"},
+		},
+		{
+			ID: "m2", Category: "decision",
+			Content:   "use redis for the session cache layer in production",
+			CreatedAt: now, UpdatedAt: now,
+			Metadata: map[string]any{"artifact_id": "art-abc"}, // same artifact, deduped
+		},
+		{
+			ID: "m3", Category: "decision",
+			Content:   "use s3 for object storage in production environments",
+			CreatedAt: now, UpdatedAt: now,
+			Metadata: map[string]any{"artifact_id": "art-xyz"},
+		},
+		{
+			ID: "m4", Category: "decision",
+			Content:   "memory without artifact id for coverage of the no-artifact path",
+			CreatedAt: now, UpdatedAt: now,
+			// no artifact_id in metadata
+		},
+	}
+
+	// Without ArtifactSummaries capability: field must be absent.
+	respNoArt, err := eng.Sync(ctx, accID, orgID, &model.SyncRequest{
+		ProjectID:          projID,
+		ClientID:           "new",
+		Pushes:             pushes,
+		ClientCapabilities: &model.ClientCapabilities{PromotionQueue: true},
+	})
+	if err != nil {
+		t.Fatalf("sync (no artifact cap): %v", err)
+	}
+	if len(respNoArt.ArtifactSummaries) != 0 {
+		t.Fatalf("ArtifactSummaries must be empty when capability not set, got %v", respNoArt.ArtifactSummaries)
+	}
+
+	// With ArtifactSummaries capability: two unique IDs returned (art-abc, art-xyz).
+	respWithArt, err := eng.Sync(ctx, accID, orgID, &model.SyncRequest{
+		ProjectID:          projID,
+		ClientID:           "new",
+		Pushes:             pushes,
+		ClientCapabilities: &model.ClientCapabilities{ArtifactSummaries: true},
+	})
+	if err != nil {
+		t.Fatalf("sync (artifact cap): %v", err)
+	}
+	if len(respWithArt.ArtifactSummaries) != 2 {
+		t.Fatalf("expected 2 ArtifactSummaries (deduped), got %d: %v", len(respWithArt.ArtifactSummaries), respWithArt.ArtifactSummaries)
+	}
+	ids := make(map[string]bool)
+	for _, s := range respWithArt.ArtifactSummaries {
+		ids[s.ArtifactID] = true
+	}
+	if !ids["art-abc"] {
+		t.Errorf("expected art-abc in ArtifactSummaries, got %v", respWithArt.ArtifactSummaries)
+	}
+	if !ids["art-xyz"] {
+		t.Errorf("expected art-xyz in ArtifactSummaries, got %v", respWithArt.ArtifactSummaries)
+	}
+}
+
+// TestSync_ArtifactSummaries_RejectedMemoriesExcluded verifies that artifact IDs
+// from rejected memories are not included in ArtifactSummaries.
+func TestSync_ArtifactSummaries_RejectedMemoriesExcluded(t *testing.T) {
+	eng, _, ctx, orgID, accID, projID := capTestEngine(t)
+
+	now := time.Now().UTC()
+	pushes := []model.SyncMemory{
+		{
+			ID: "r1", Category: "event", // blocked by default guardrails
+			Content:   "ci pipeline run event that should be rejected by the default blocked categories",
+			CreatedAt: now, UpdatedAt: now,
+			Metadata: map[string]any{"artifact_id": "art-rejected"},
+		},
+		{
+			ID: "r2", Category: "decision",
+			Content:   "accepted memory with its own artifact id for the test",
+			CreatedAt: now, UpdatedAt: now,
+			Metadata: map[string]any{"artifact_id": "art-accepted"},
+		},
+	}
+
+	resp, err := eng.Sync(ctx, accID, orgID, &model.SyncRequest{
+		ProjectID:          projID,
+		ClientID:           "new",
+		Pushes:             pushes,
+		ClientCapabilities: &model.ClientCapabilities{ArtifactSummaries: true},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	for _, s := range resp.ArtifactSummaries {
+		if s.ArtifactID == "art-rejected" {
+			t.Errorf("rejected memory's artifact_id must not appear in ArtifactSummaries")
+		}
+	}
+	found := false
+	for _, s := range resp.ArtifactSummaries {
+		if s.ArtifactID == "art-accepted" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("accepted memory's artifact_id must appear in ArtifactSummaries, got %v", resp.ArtifactSummaries)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

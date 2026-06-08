@@ -95,6 +95,9 @@ type compatPushResponse struct {
 	// Policy mirrors the negotiated sync policy; only set when the request
 	// advertised client_capabilities, keeping older clients byte-identical.
 	Policy *model.PolicyHints `json:"policy,omitempty"`
+	// ArtifactSummaries mirrors the artifact IDs acknowledged by the server;
+	// only set when the request advertised client_capabilities.ArtifactSummaries.
+	ArtifactSummaries []model.ArtifactSummary `json:"artifact_summaries,omitempty"`
 }
 
 type compatPullRequest struct {
@@ -238,6 +241,9 @@ func (h *SyncHandler) CompatPush(w http.ResponseWriter, r *http.Request) {
 		resp, err := h.engine.Sync(r.Context(), accountID, orgID, sr)
 		if err == nil && resp.Policy != nil && out.Policy == nil {
 			out.Policy = resp.Policy // same for every group (per-org); take the first
+		}
+		if err == nil && len(resp.ArtifactSummaries) > 0 {
+			out.ArtifactSummaries = append(out.ArtifactSummaries, resp.ArtifactSummaries...)
 		}
 		if err == nil && resp.ProjectID != "" {
 			// Surface the resolved project for the request's primary route:
