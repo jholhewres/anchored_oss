@@ -21,8 +21,11 @@ import (
 
 	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/config"
+	"github.com/jholhewres/anchored_oss/internal/middleware"
+	"github.com/jholhewres/anchored_oss/internal/model"
 	"github.com/jholhewres/anchored_oss/internal/server"
 	"github.com/jholhewres/anchored_oss/internal/store"
+	syncpkg "github.com/jholhewres/anchored_oss/internal/sync"
 )
 
 const testOrigin = "git@github.example.com:org/api-service.git"
@@ -205,6 +208,40 @@ func (e *env) run(t *testing.T, dir string, args ...string) (string, int) {
 		t.Fatalf("run %v: %v\n%s", args, err, out)
 	}
 	return string(out), code
+}
+
+// runStdin runs the client binary feeding `stdin` on its standard input —
+// used to drive hook subcommands that read a JSON event from stdin.
+func (e *env) runStdin(t *testing.T, dir, stdin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(e.bin, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(), "HOME="+e.home)
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.CombinedOutput()
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		// Hooks must never exit non-zero on internal error; surface it.
+		t.Fatalf("hook %v exited %d (hooks must be fail-safe):\n%s", args, exitErr.ExitCode(), out)
+	} else if err != nil {
+		t.Fatalf("runStdin %v: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+// engineSync runs the server's sync engine directly against the harness store,
+// as the admin scope, returning the response. Lets capability/cap scenarios
+// assert engine guarantees without the compat-endpoint batching in the way.
+func (e *env) engineSync(t *testing.T, projectID string, req *model.SyncRequest) *model.SyncResponse {
+	t.Helper()
+	eng := syncpkg.NewSyncEngine(e.store, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	ctx := context.WithValue(context.Background(), middleware.ScopeKey, "admin")
+	resp, err := eng.Sync(ctx, e.acctID, e.orgID, req)
+	if err != nil {
+		t.Fatalf("engine sync: %v", err)
+	}
+	return resp
 }
 
 // configureRemote runs the real onboarding command against the test server.
