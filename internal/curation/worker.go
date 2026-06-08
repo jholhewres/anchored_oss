@@ -12,6 +12,7 @@ import (
 
 	"github.com/jholhewres/anchored_oss/internal/ai/embeddings"
 	"github.com/jholhewres/anchored_oss/internal/config"
+	"github.com/jholhewres/anchored_oss/internal/model"
 	"github.com/jholhewres/anchored_oss/internal/policy"
 	"github.com/jholhewres/anchored_oss/internal/store"
 )
@@ -85,8 +86,31 @@ func (w *Worker) processBatch(ctx context.Context) error {
 		return nil
 	}
 
+	// The near-duplicate / contradiction window is the same for every item in
+	// the batch, so load each project's peer set once and reuse it across the
+	// batch instead of re-querying per memory (the old O(batch) load became
+	// O(distinct projects)). The set is capped to the newest maxCurationPeers to
+	// bound the O(peers) similarity scan on very large projects.
+	since := time.Now().UTC().Add(-w.cfg.NearDupWindow)
+	peerCache := make(map[string][]*model.Memory)
+	getPeers := func(projectID string) []*model.Memory {
+		if p, ok := peerCache[projectID]; ok {
+			return p
+		}
+		p, err := w.store.ListProjectMemoriesSince(ctx, projectID, since)
+		if err != nil {
+			w.logger.Warn("curation: list peers failed", "project_id", projectID, "error", err)
+			p = nil
+		}
+		if len(p) > maxCurationPeers {
+			p = p[len(p)-maxCurationPeers:] // ListProjectMemoriesSince is created_at asc; keep newest
+		}
+		peerCache[projectID] = p
+		return p
+	}
+
 	for _, memID := range ids {
-		if err := w.processOne(ctx, memID); err != nil {
+		if err := w.processOne(ctx, memID, getPeers); err != nil {
 			w.logger.Error("curation: process memory failed",
 				"memory_id", memID, "error", err)
 			if failErr := w.store.SetCurationFailed(ctx, memID, err.Error()); failErr != nil {
@@ -103,7 +127,12 @@ func (w *Worker) processBatch(ctx context.Context) error {
 	return nil
 }
 
-func (w *Worker) processOne(ctx context.Context, memID string) error {
+// maxCurationPeers bounds the per-project peer set the worker scans for
+// near-duplicate and contradiction detection, capping the per-item O(peers)
+// cost on very large projects. The newest peers are kept.
+const maxCurationPeers = 2000
+
+func (w *Worker) processOne(ctx context.Context, memID string, getPeers func(projectID string) []*model.Memory) error {
 	mem, err := w.store.GetMemoryByID(ctx, memID)
 	if err != nil {
 		return err
@@ -129,12 +158,9 @@ func (w *Worker) processOne(ctx context.Context, memID string) error {
 		patch["curation_status"] = "ok"
 	}
 
-	// Near-duplicate detection within the project over the configured window.
-	since := time.Now().UTC().Add(-w.cfg.NearDupWindow)
-	peers, err := w.store.ListProjectMemoriesSince(ctx, mem.ProjectID, since)
-	if err != nil {
-		w.logger.Warn("curation: list peers failed", "memory_id", memID, "error", err)
-	}
+	// Near-duplicate detection within the project over the configured window,
+	// using the batch-shared (loaded-once, capped) peer set.
+	peers := getPeers(mem.ProjectID)
 
 	normSelf := normalizeForNgram(mem.Content)
 	for _, peer := range peers {
