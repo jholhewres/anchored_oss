@@ -112,43 +112,9 @@ func (e *SyncEngine) Sync(ctx context.Context, accountID, orgID string, req *mod
 			BlockedCategories:  e.effectiveBlockedCategories(ctx, orgID),
 			MaxMemoriesPerSync: maxPerSync,
 		}
-		if req.ClientCapabilities.ArtifactSummaries {
-			resp.ArtifactSummaries = artifactSummariesFromResults(req.Pushes, results)
-		}
 	}
 
 	return resp, nil
-}
-
-// artifactSummariesFromResults collects the unique artifact IDs from accepted
-// push memories. The artifact_id is carried in the memory's Metadata map under
-// the key "artifact_id". Memories without an artifact_id, or whose push was
-// rejected, are silently skipped.
-func artifactSummariesFromResults(pushes []model.SyncMemory, results []model.SyncResult) []model.ArtifactSummary {
-	seen := make(map[string]struct{})
-	var out []model.ArtifactSummary
-	for i, r := range results {
-		if r.Status != "accepted" {
-			continue
-		}
-		if i >= len(pushes) {
-			continue
-		}
-		meta, ok := pushes[i].Metadata.(map[string]any)
-		if !ok {
-			continue
-		}
-		id, ok := meta["artifact_id"].(string)
-		if !ok || id == "" {
-			continue
-		}
-		if _, dup := seen[id]; dup {
-			continue
-		}
-		seen[id] = struct{}{}
-		out = append(out, model.ArtifactSummary{ArtifactID: id})
-	}
-	return out
 }
 
 // effectiveBlockedCategories returns the category names the org's guardrails
