@@ -63,12 +63,25 @@ func (w *Worker) Start(ctx context.Context) {
 	}
 }
 
+// RunOnce processes a single curation batch synchronously. The Start loop
+// calls the same path on each tick; RunOnce exposes it for one-shot triggering
+// and for tests that need a deterministic pass without spinning the ticker.
+func (w *Worker) RunOnce(ctx context.Context) error { return w.processBatch(ctx) }
+
 func (w *Worker) processBatch(ctx context.Context) error {
 	ids, err := w.store.ClaimCurationBatch(ctx, w.cfg.BatchSize)
 	if err != nil {
 		return err
 	}
 	if len(ids) == 0 {
+		// Queue drained: pull a bounded batch of memories that predate curation
+		// v2 (or were never curated) so staleness/contradiction marking rolls out
+		// incrementally without a migration. They are processed on the next tick.
+		if n, err := w.store.EnqueueRecuration(ctx, w.cfg.BatchSize); err != nil {
+			w.logger.Warn("curation: enqueue re-curation failed", "error", err)
+		} else if n > 0 {
+			w.logger.Debug("curation: enqueued memories for v2 re-curation", "count", n)
+		}
 		return nil
 	}
 
@@ -138,6 +151,30 @@ func (w *Worker) processOne(ctx context.Context, memID string) error {
 		}
 	}
 
+	// qualityOK captures whether the memory passed quality + dedup, before the
+	// curation-v2 advisory marks (stale/contradiction) reclassify the status.
+	// Embedding eligibility keys off this so a contradiction candidate (still a
+	// genuine, high-signal memory) is not silently dropped from the vector index.
+	qualityOK := patch["curation_status"] == "ok"
+
+	// Curation v2 (advisory only; never deletes). Staleness and contradiction
+	// only apply to otherwise-clean memories — low-signal and near-duplicate are
+	// higher-priority signals that already explain the memory's state.
+	if qualityOK {
+		if isStale(mem.UpdatedAt, metaMap, time.Duration(w.cfg.StaleAfterDays)*24*time.Hour, time.Now().UTC()) {
+			patch["curation_status"] = "stale"
+			patch["curation_rule"] = "stale"
+		} else if w.cfg.ContradictionDetection {
+			if peerID, ok := findContradiction(mem, peers); ok {
+				patch["curation_status"] = "contradiction_candidate"
+				patch["curation_rule"] = "contradiction"
+				patch["contradicts"] = peerID
+			}
+		}
+	}
+	patch["curation_version"] = 2
+	patch["last_curated_at"] = time.Now().UTC().Format(time.RFC3339)
+
 	if err := w.store.UpdateMemoryMetadata(ctx, memID, patch); err != nil {
 		return err
 	}
@@ -146,7 +183,7 @@ func (w *Worker) processOne(ctx context.Context, memID string) error {
 	// Best-effort: an embedding failure must not fail curation (the memory is
 	// still searchable by text). Skip low-signal/duplicate rows to avoid
 	// indexing noise.
-	if w.embedder != nil && patch["curation_status"] == "ok" {
+	if w.embedder != nil && qualityOK {
 		vec, err := embeddings.EmbedOne(ctx, w.embedder, mem.Content)
 		if err != nil {
 			w.logger.Warn("curation: embed failed", "memory_id", memID, "error", err)

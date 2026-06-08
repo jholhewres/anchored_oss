@@ -93,6 +93,9 @@ type Store interface {
 	GetMemoryByID(ctx context.Context, id string) (*model.Memory, error)
 	UpdateMemoryMetadata(ctx context.Context, id string, metadata any) error
 	ListProjectMemoriesSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error)
+	// ListMemoriesByCurationStatus pages live memories whose metadata
+	// curation_status matches status (e.g. "stale", "contradiction_candidate").
+	ListMemoriesByCurationStatus(ctx context.Context, projectID, status string, limit int) ([]*model.Memory, error)
 
 	// API keys.
 	CreateAPIKey(ctx context.Context, orgID, accountID, name, keyPrefix, keyHash, scope string, expiresAt *time.Time) (*model.APIKey, error)
@@ -161,4 +164,11 @@ type Store interface {
 	ClaimCurationBatch(ctx context.Context, batchSize int) ([]string, error)
 	SetCurationDone(ctx context.Context, memoryID string) error
 	SetCurationFailed(ctx context.Context, memoryID, errMsg string) error
+	// EnqueueRecuration (re)queues up to limit live memories whose
+	// curation_version is below the current version (or unset), so curation v2
+	// marks roll out to memories curated by an older worker. Returns the number
+	// of memories enqueued. Resets matching rows back to 'pending'; the worker
+	// only calls it when the live queue is drained (nothing 'processing'), so a
+	// single worker never races a reset against an in-flight claim.
+	EnqueueRecuration(ctx context.Context, limit int) (int, error)
 }

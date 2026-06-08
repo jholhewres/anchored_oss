@@ -69,3 +69,24 @@ func (s *PostgresStore) ListProjectMemoriesSince(ctx context.Context, projectID 
 	defer rows.Close()
 	return scanMemories(rows)
 }
+
+// ListMemoriesByCurationStatus pages live memories whose metadata
+// curation_status equals status, newest first.
+func (s *PostgresStore) ListMemoriesByCurationStatus(ctx context.Context, projectID, status string, limit int) ([]*model.Memory, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
+		 FROM memories
+		 WHERE project_id = $1 AND deleted_at IS NULL AND metadata ->> 'curation_status' = $2
+		 ORDER BY updated_at DESC
+		 LIMIT $3`,
+		projectID, status, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list memories by curation status: %w", err)
+	}
+	defer rows.Close()
+	return scanMemories(rows)
+}

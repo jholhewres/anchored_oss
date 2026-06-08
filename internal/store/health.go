@@ -54,6 +54,10 @@ func (s *PostgresStore) memoryHealth(ctx context.Context, orgID, projectID, scop
 		` AND m.metadata ->> 'curation_status' = 'near_duplicate'`); err != nil {
 		return nil, fmt.Errorf("health near_duplicate count: %w", err)
 	}
+	// Stale is age-based (not curation_status='stale') on purpose: it must report
+	// from day one, before the curation worker has run, so a fresh deployment's
+	// dashboard isn't blank. The worker's curation_status='stale' mark is the
+	// finer-grained, per-memory signal surfaced via ListMemoriesByCurationStatus.
 	if err := count(&agg.Counts.Stale,
 		` AND m.updated_at < `+ph(next)+` AND COALESCE(m.metadata ->> 'pinned', 'false') != 'true'`,
 		now.AddDate(0, 0, -180)); err != nil {
@@ -62,8 +66,10 @@ func (s *PostgresStore) memoryHealth(ctx context.Context, orgID, projectID, scop
 	if err := count(&agg.Counts.MissingEmbeddings, ` AND m.embedding IS NULL`); err != nil {
 		return nil, fmt.Errorf("health missing embeddings count: %w", err)
 	}
-	// Contradiction detection lands with curation v2; field kept in contract.
-	agg.Counts.Contradictions = 0
+	if err := count(&agg.Counts.Contradictions,
+		` AND m.metadata ->> 'curation_status' = 'contradiction_candidate'`); err != nil {
+		return nil, fmt.Errorf("health contradictions count: %w", err)
+	}
 
 	group := func(expr, extra string, extraArgs ...any) ([]model.NameCount, error) {
 		args := append(append([]any{}, scopeArgs...), extraArgs...)

@@ -61,6 +61,11 @@ func (s *SQLiteStore) UpdateMemoryMetadata(ctx context.Context, id string, metad
 		if err := json.Unmarshal(existing, &merged); err != nil {
 			return fmt.Errorf("unmarshal existing metadata: %w", err)
 		}
+		// A column holding the JSON literal `null` unmarshals to a nil map;
+		// re-initialize so the merge below doesn't panic.
+		if merged == nil {
+			merged = make(map[string]any)
+		}
 	}
 	var patch map[string]any
 	if err := json.Unmarshal(b, &patch); err != nil {
@@ -92,6 +97,28 @@ func (s *SQLiteStore) ListProjectMemoriesSince(ctx context.Context, projectID st
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list project memories since: %w", err)
+	}
+	defer rows.Close()
+	return sqliteScanMemories(rows)
+}
+
+// ListMemoriesByCurationStatus pages live memories whose metadata
+// curation_status equals status, newest first.
+func (s *SQLiteStore) ListMemoriesByCurationStatus(ctx context.Context, projectID, status string, limit int) ([]*model.Memory, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
+		 FROM memories
+		 WHERE project_id = ? AND deleted_at IS NULL
+		   AND json_extract(metadata, '$.curation_status') = ?
+		 ORDER BY updated_at DESC
+		 LIMIT ?`,
+		projectID, status, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list memories by curation status: %w", err)
 	}
 	defer rows.Close()
 	return sqliteScanMemories(rows)

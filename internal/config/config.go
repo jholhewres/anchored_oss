@@ -54,6 +54,11 @@ type CurationConfig struct {
 	Interval         time.Duration `yaml:"interval"`
 	NearDupWindow    time.Duration `yaml:"near_dup_window"`
 	NearDupThreshold float64       `yaml:"near_dup_threshold"`
+
+	// Curation v2 (staleness + contradiction candidates). Both are advisory:
+	// the worker only marks metadata, it never deletes.
+	StaleAfterDays         int  `yaml:"stale_after_days"`        // age past which an unpinned, non-superseded memory is marked stale; <=0 disables
+	ContradictionDetection bool `yaml:"contradiction_detection"` // enable contradiction-candidate marking
 }
 
 type ServerConfig struct {
@@ -102,11 +107,13 @@ func DefaultConfig() *Config {
 			MaxStorageBytes: 0,
 		},
 		Curation: CurationConfig{
-			WorkerEnabled:    true,
-			BatchSize:        100,
-			Interval:         5 * time.Second,
-			NearDupWindow:    720 * time.Hour,
-			NearDupThreshold: 0.85,
+			WorkerEnabled:          true,
+			BatchSize:              100,
+			Interval:               5 * time.Second,
+			NearDupWindow:          720 * time.Hour,
+			NearDupThreshold:       0.85,
+			StaleAfterDays:         180,
+			ContradictionDetection: true,
 		},
 		RateLimit: RateLimitConfig{
 			Enabled:               true,
