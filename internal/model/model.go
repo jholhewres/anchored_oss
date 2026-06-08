@@ -186,22 +186,27 @@ type DashboardStats struct {
 // back to server defaults. Secret and local-path guardrails are NOT represented
 // here — they are always-on and live in code.
 type OrgPolicy struct {
-	OrgID             string    `json:"org_id"`
-	BlockedCategories []string  `json:"blocked_categories"`
-	QualityThreshold  float64   `json:"quality_threshold"`
-	NearDupThreshold  float64   `json:"near_dup_threshold"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	OrgID             string   `json:"org_id"`
+	BlockedCategories []string `json:"blocked_categories"`
+	QualityThreshold  float64  `json:"quality_threshold"`
+	NearDupThreshold  float64  `json:"near_dup_threshold"`
+	// MaxMemoriesPerSync caps a single push batch; a larger batch is rejected
+	// wholesale (a defense against runaway/mis-scoped clients dumping a whole
+	// store into the wrong project). 0 in storage means "use the server
+	// default" — callers normalize via DefaultMaxMemoriesPerSync.
+	MaxMemoriesPerSync int       `json:"max_memories_per_sync"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Guardrail kinds. The three security kinds are seeded as builtins (toggleable
 // but not deletable); category/regex/keyword are admin-managed (full CRUD).
 const (
-	GuardrailSecretDetection   = "secret_detection"
+	GuardrailSecretDetection    = "secret_detection"
 	GuardrailLocalPathRedaction = "local_path_redaction"
-	GuardrailUserScopeBlock    = "user_scope_block"
-	GuardrailCategory          = "category" // value = category name to block at sync
-	GuardrailRegex             = "regex"    // value = RE2 pattern; content match => reject
-	GuardrailKeyword           = "keyword"  // value = literal substring (case-insensitive) => reject
+	GuardrailUserScopeBlock     = "user_scope_block"
+	GuardrailCategory           = "category" // value = category name to block at sync
+	GuardrailRegex              = "regex"    // value = RE2 pattern; content match => reject
+	GuardrailKeyword            = "keyword"  // value = literal substring (case-insensitive) => reject
 )
 
 // Guardrail is one configurable sync-time rule for an org. builtin rows are the

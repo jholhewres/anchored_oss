@@ -10,6 +10,20 @@ type SyncRequest struct {
 	Pushes       []SyncMemory  `json:"pushes,omitempty"`
 	Tombstones   []string      `json:"tombstones,omitempty"`
 	ProjectClaim *ProjectClaim `json:"project_claim,omitempty"`
+	// ClientCapabilities is sent by capability-aware clients to negotiate
+	// optional protocol features. Its presence (non-nil) is the signal that
+	// the client understands the Policy hints in the response, so the server
+	// only emits Policy when this is set — capability-less clients see a
+	// byte-identical response to the pre-negotiation protocol.
+	ClientCapabilities *ClientCapabilities `json:"client_capabilities,omitempty"`
+}
+
+// ClientCapabilities advertises optional protocol features the client supports.
+// All fields default false; unknown future fields are ignored by older servers.
+type ClientCapabilities struct {
+	PromotionQueue    bool `json:"promotion_queue,omitempty"`
+	TeamCache         bool `json:"team_cache,omitempty"`
+	ArtifactSummaries bool `json:"artifact_summaries,omitempty"`
 }
 
 // SyncMemory represents a single memory item pushed by the client.
@@ -44,6 +58,18 @@ type SyncResponse struct {
 	ServerTombstones []string     `json:"server_tombstones,omitempty"`
 	Results          []SyncResult `json:"results"`
 	Watermark        time.Time    `json:"watermark"`
+	// Policy carries the server's effective sync policy so a capability-aware
+	// client can warn before it pushes (blocked categories, quality bar, batch
+	// cap). Only set when the request advertised ClientCapabilities — nil for
+	// older clients to keep their response byte-identical.
+	Policy *PolicyHints `json:"policy,omitempty"`
+}
+
+// PolicyHints is the advisory view of the server's effective sync policy.
+type PolicyHints struct {
+	QualityThreshold   float64  `json:"quality_threshold"`
+	BlockedCategories  []string `json:"blocked_categories"`
+	MaxMemoriesPerSync int      `json:"max_memories_per_sync"`
 }
 
 // SyncResult describes the outcome for a single pushed or tombstoned item.

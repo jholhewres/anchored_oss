@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 16
+const schemaVersion = 17
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -339,6 +339,12 @@ CREATE TABLE IF NOT EXISTS sync_rejection_stats (
 CREATE INDEX IF NOT EXISTS idx_sync_rejection_org_day ON sync_rejection_stats(org_id, day);
 `
 
+// migration017 adds the per-org push batch cap. 0 is never stored (DEFAULT
+// 500); callers treat 0 as "use the server default" for forward safety.
+const migration017 = `
+ALTER TABLE org_policies ADD COLUMN IF NOT EXISTS max_memories_per_sync INTEGER NOT NULL DEFAULT 500;
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -356,6 +362,7 @@ var migrations = map[int]string{
 	14: migration014,
 	15: migration015,
 	16: migration016,
+	17: migration017,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

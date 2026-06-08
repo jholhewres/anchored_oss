@@ -16,9 +16,9 @@ func (s *SQLiteStore) GetOrgPolicy(ctx context.Context, orgID string) (*model.Or
 	p := &model.OrgPolicy{OrgID: orgID}
 	var blockedJSON string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT blocked_categories, quality_threshold, near_dup_threshold, updated_at
+		`SELECT blocked_categories, quality_threshold, near_dup_threshold, max_memories_per_sync, updated_at
 		 FROM org_policies WHERE org_id = ?`, orgID,
-	).Scan(&blockedJSON, &p.QualityThreshold, &p.NearDupThreshold, scanTime(&p.UpdatedAt))
+	).Scan(&blockedJSON, &p.QualityThreshold, &p.NearDupThreshold, &p.MaxMemoriesPerSync, scanTime(&p.UpdatedAt))
 	if errors.Is(err, sql.ErrNoRows) {
 		return defaultOrgPolicy(orgID), nil
 	}
@@ -28,6 +28,7 @@ func (s *SQLiteStore) GetOrgPolicy(ctx context.Context, orgID string) (*model.Or
 	if blockedJSON != "" {
 		_ = json.Unmarshal([]byte(blockedJSON), &p.BlockedCategories)
 	}
+	p.MaxMemoriesPerSync = effectiveMaxPerSync(p.MaxMemoriesPerSync)
 	return p, nil
 }
 
@@ -42,14 +43,15 @@ func (s *SQLiteStore) UpsertOrgPolicy(ctx context.Context, p *model.OrgPolicy) e
 		return fmt.Errorf("marshal blocked categories: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO org_policies (org_id, blocked_categories, quality_threshold, near_dup_threshold, updated_at)
-		 VALUES (?, ?, ?, ?, datetime('now'))
+		`INSERT INTO org_policies (org_id, blocked_categories, quality_threshold, near_dup_threshold, max_memories_per_sync, updated_at)
+		 VALUES (?, ?, ?, ?, ?, datetime('now'))
 		 ON CONFLICT (org_id) DO UPDATE SET
 		   blocked_categories = excluded.blocked_categories,
 		   quality_threshold = excluded.quality_threshold,
 		   near_dup_threshold = excluded.near_dup_threshold,
+		   max_memories_per_sync = excluded.max_memories_per_sync,
 		   updated_at = datetime('now')`,
-		p.OrgID, string(blob), p.QualityThreshold, p.NearDupThreshold,
+		p.OrgID, string(blob), p.QualityThreshold, p.NearDupThreshold, effectiveMaxPerSync(p.MaxMemoriesPerSync),
 	); err != nil {
 		return fmt.Errorf("upsert org policy: %w", err)
 	}

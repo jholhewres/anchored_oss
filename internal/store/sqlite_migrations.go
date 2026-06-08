@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 16
+const sqliteSchemaVersion = 17
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -284,6 +284,11 @@ CREATE TABLE IF NOT EXISTS sync_rejection_stats (
 CREATE INDEX IF NOT EXISTS idx_sync_rejection_org_day ON sync_rejection_stats(org_id, day);
 `
 
+// sqliteMigration017 mirrors Postgres 017: per-org push batch cap. modernc
+// SQLite has no ADD COLUMN IF NOT EXISTS, so the ALTER runs via a columnExists
+// guard in the v == 17 branch below; this SQL block is intentionally empty.
+const sqliteMigration017 = ``
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -301,6 +306,7 @@ var sqliteMigrations = map[int]string{
 	14: sqliteMigration014,
 	15: sqliteMigration015,
 	16: sqliteMigration016,
+	17: sqliteMigration017,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {
@@ -381,6 +387,14 @@ func MigrateSQLite(db *sql.DB) error {
 				WHERE remote_key_v1 IS NULL AND remote_key IS NOT NULL AND remote_key != ''`); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("migration %d backfill remote_key_v1: %w", v, err)
+			}
+		}
+
+		// Handle ALTER TABLE ADD COLUMN for migration 17 (org push batch cap).
+		if v == 17 && !columnExists(db, "org_policies", "max_memories_per_sync") {
+			if _, err := tx.Exec(`ALTER TABLE org_policies ADD COLUMN max_memories_per_sync INTEGER NOT NULL DEFAULT 500`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d add max_memories_per_sync: %w", v, err)
 			}
 		}
 
