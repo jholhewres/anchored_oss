@@ -24,9 +24,10 @@ func NewPolicyHandler(st store.Store, logger *slog.Logger) *PolicyHandler {
 }
 
 type policyResponse struct {
-	BlockedCategories []string `json:"blocked_categories"`
-	QualityThreshold  float64  `json:"quality_threshold"`
-	NearDupThreshold  float64  `json:"near_dup_threshold"`
+	BlockedCategories  []string `json:"blocked_categories"`
+	QualityThreshold   float64  `json:"quality_threshold"`
+	NearDupThreshold   float64  `json:"near_dup_threshold"`
+	MaxMemoriesPerSync int      `json:"max_memories_per_sync"`
 	// Always-on guardrails, surfaced read-only for the UI.
 	AlwaysOn []string `json:"always_on"`
 }
@@ -36,11 +37,16 @@ func (h *PolicyHandler) toResponse(p *model.OrgPolicy) policyResponse {
 	if len(blocked) == 0 {
 		blocked = policy.DefaultBlockedCategories
 	}
+	maxPerSync := p.MaxMemoriesPerSync
+	if maxPerSync <= 0 {
+		maxPerSync = store.DefaultMaxMemoriesPerSync
+	}
 	return policyResponse{
-		BlockedCategories: blocked,
-		QualityThreshold:  p.QualityThreshold,
-		NearDupThreshold:  p.NearDupThreshold,
-		AlwaysOn:          []string{"secret_detection", "local_path_redaction", "user_scope_block"},
+		BlockedCategories:  blocked,
+		QualityThreshold:   p.QualityThreshold,
+		NearDupThreshold:   p.NearDupThreshold,
+		MaxMemoriesPerSync: maxPerSync,
+		AlwaysOn:           []string{"secret_detection", "local_path_redaction", "user_scope_block"},
 	}
 }
 
@@ -60,9 +66,10 @@ func (h *PolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 type updatePolicyRequest struct {
-	BlockedCategories []string `json:"blocked_categories"`
-	QualityThreshold  float64  `json:"quality_threshold"`
-	NearDupThreshold  float64  `json:"near_dup_threshold"`
+	BlockedCategories  []string `json:"blocked_categories"`
+	QualityThreshold   float64  `json:"quality_threshold"`
+	NearDupThreshold   float64  `json:"near_dup_threshold"`
+	MaxMemoriesPerSync int      `json:"max_memories_per_sync"`
 }
 
 func (h *PolicyHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -94,11 +101,19 @@ func (h *PolicyHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.NearDupThreshold == 0 {
 		req.NearDupThreshold = store.DefaultNearDupThreshold
 	}
+	if req.MaxMemoriesPerSync < 0 {
+		jsonError(w, http.StatusBadRequest, "max_memories_per_sync must be >= 0")
+		return
+	}
+	if req.MaxMemoriesPerSync == 0 {
+		req.MaxMemoriesPerSync = store.DefaultMaxMemoriesPerSync
+	}
 	p := &model.OrgPolicy{
-		OrgID:             orgID,
-		BlockedCategories: req.BlockedCategories,
-		QualityThreshold:  req.QualityThreshold,
-		NearDupThreshold:  req.NearDupThreshold,
+		OrgID:              orgID,
+		BlockedCategories:  req.BlockedCategories,
+		QualityThreshold:   req.QualityThreshold,
+		NearDupThreshold:   req.NearDupThreshold,
+		MaxMemoriesPerSync: req.MaxMemoriesPerSync,
 	}
 	if err := h.store.UpsertOrgPolicy(r.Context(), p); err != nil {
 		h.logger.Error("upsert org policy failed", "error", err)

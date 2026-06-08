@@ -59,6 +59,7 @@ There is one endpoint. All sync state flows through it.
 | `pushes` | `array[SyncMemory]` | no | Local memories to push to the server. Empty or omitted when the client only wants to pull. |
 | `tombstones` | `array[string]` | no | IDs of locally deleted memories that should be tombstoned on the server. |
 | `project_claim` | `ProjectClaim` | conditional | Used to resolve or auto-create a project by repository identity. Required unless `project_id` is provided. |
+| `client_capabilities` | `ClientCapabilities` | no | Capability negotiation (see below). Sending it — even empty — signals the client understands the `policy` hints in the response. Omitting it keeps the response byte-identical to the pre-negotiation protocol. |
 
 Either `project_id` or `project_claim` must be present. If neither is provided, the server returns `400 INVALID_REQUEST`.
 
@@ -271,6 +272,72 @@ Errors are returned as JSON:
 ```
 
 The HTTP status code and error code together identify the failure. See [error-codes.md](./error-codes.md) for the full catalog.
+
+---
+
+## Capability Negotiation & Policy Hints
+
+The protocol evolves by **capability negotiation**, not a path version. New
+optional fields are added with `omitempty`; a peer that does not know them
+ignores them. This lets new and old clients and servers mix freely.
+
+### `ClientCapabilities`
+
+```json
+{
+  "client_capabilities": {
+    "promotion_queue": false,
+    "team_cache": false,
+    "artifact_summaries": false
+  }
+}
+```
+
+A capability-aware client sends this object (even empty). Its **presence** is
+the signal that the client understands the `policy` field in the response, so
+the server only emits `policy` when `client_capabilities` is present. A
+capability-less client omits it and receives a response byte-identical to the
+pre-negotiation protocol.
+
+### `policy` (response, optional)
+
+```json
+{
+  "policy": {
+    "quality_threshold": 0.55,
+    "blocked_categories": ["event", "preference"],
+    "max_memories_per_sync": 500
+  }
+}
+```
+
+Advisory hints so a client can warn before it pushes (e.g. "the server will
+reject `event`/`preference"). Present only for capability-aware requests.
+
+`blocked_categories` reflects exactly what the org's guardrails reject — an
+empty array means **nothing is category-blocked**, not "fall back to client
+defaults". (An org with guardrail rows but no enabled category block legitimately
+blocks no categories.) An org with no guardrail rows at all reports the server
+default set (`["event","preference"]`).
+
+### Push batch cap
+
+`max_memories_per_sync` (per-org, default 500) caps a single push. A batch over
+the cap is **rejected wholesale** — every `SyncResult` is
+`{"status":"rejected","rule":"max_memories_per_sync"}` and nothing is persisted.
+This is a deliberate hard stop against a mis-scoped client dumping its entire
+local store into the wrong project; the client must partition and retry. There
+is no server-side force override.
+
+### Compatibility guarantees
+
+- New fields are always `omitempty`; the server does not use
+  `DisallowUnknownFields` on sync payloads.
+- `policy` is emitted only when `client_capabilities` is present.
+- The legacy endpoints `POST /api/v1/sync/push` and `POST /api/v1/sync/pull`
+  remain and are unaffected.
+- Request/response vectors live in `testdata/sync_capability_vectors.json`
+  (identical file in the client and server repos), exercised by both test suites.
 
 ---
 

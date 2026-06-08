@@ -180,6 +180,7 @@ function Thresholds() {
   const [pol, setPol] = React.useState<OrgPolicy | null>(null);
   const [quality, setQuality] = React.useState("");
   const [nearDup, setNearDup] = React.useState("");
+  const [maxPerSync, setMaxPerSync] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
   const load = React.useCallback(() => {
@@ -187,6 +188,7 @@ function Thresholds() {
       setPol(p);
       setQuality(String(p.quality_threshold));
       setNearDup(String(p.near_dup_threshold));
+      setMaxPerSync(String(p.max_memories_per_sync));
     }).catch(() => {});
   }, []);
   React.useEffect(load, [load]);
@@ -202,6 +204,7 @@ function Thresholds() {
         blocked_categories: pol!.blocked_categories,
         quality_threshold: parseFloat(quality) || 0,
         near_dup_threshold: parseFloat(nearDup) || 0,
+        max_memories_per_sync: parseInt(maxPerSync, 10) || 0,
       });
       toast.push({ title: "Thresholds saved", variant: "success" });
     } catch (e) {
@@ -222,6 +225,7 @@ function Thresholds() {
       <div style={{ padding: "16px 22px", display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
         <div style={{ width: 160 }}>{lbl("Quality threshold (0–1)")}<Input full size="sm" type="number" value={quality} onChange={e => setQuality(e.target.value)} /></div>
         <div style={{ width: 160 }}>{lbl("Near-duplicate (0–1)")}<Input full size="sm" type="number" value={nearDup} onChange={e => setNearDup(e.target.value)} /></div>
+        <div style={{ width: 160 }}>{lbl("Max memories / sync")}<Input full size="sm" type="number" value={maxPerSync} onChange={e => setMaxPerSync(e.target.value)} /></div>
         <Btn variant="primary" size="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save thresholds"}</Btn>
       </div>
     </Card>

@@ -236,7 +236,7 @@ export const api = {
 
   // Guardrail policy (org-level, admin only)
   getPolicy: () => request<OrgPolicy>("GET", "/v1/policies"),
-  updatePolicy: (body: { blocked_categories: string[]; quality_threshold: number; near_dup_threshold: number }) =>
+  updatePolicy: (body: { blocked_categories: string[]; quality_threshold: number; near_dup_threshold: number; max_memories_per_sync: number }) =>
     request<OrgPolicy>("PUT", "/v1/policies", body),
 
   // Guardrail manager (org-level, admin only)

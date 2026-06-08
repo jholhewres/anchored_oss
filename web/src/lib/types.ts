@@ -197,6 +197,7 @@ export interface OrgPolicy {
   blocked_categories: string[];
   quality_threshold: number;
   near_dup_threshold: number;
+  max_memories_per_sync: number;
   always_on: string[];
 }
 
