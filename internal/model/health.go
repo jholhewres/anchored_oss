@@ -21,6 +21,9 @@ type HealthCounts struct {
 	NearDuplicate     int64 `json:"near_duplicate"`
 	Stale             int64 `json:"stale"`
 	Contradictions    int64 `json:"contradictions"`
+	// ConsolidationCandidates counts near-duplicate cluster canonicals the
+	// curation worker flagged for synthesis (advisory; additive field).
+	ConsolidationCandidates int64 `json:"consolidation_candidates,omitempty"`
 	MissingEmbeddings int64 `json:"missing_embeddings"`
 }
 

@@ -72,6 +72,10 @@ func (s *SQLiteStore) memoryHealth(ctx context.Context, orgID, projectID, scope 
 		` AND json_extract(m.metadata, '$.curation_status') = 'contradiction_candidate'`); err != nil {
 		return nil, fmt.Errorf("health contradictions count: %w", err)
 	}
+	if err := count(&agg.Counts.ConsolidationCandidates,
+		` AND COALESCE(json_extract(m.metadata, '$.consolidation_candidate'), 0) = 1`); err != nil {
+		return nil, fmt.Errorf("health consolidation candidates count: %w", err)
+	}
 
 	group := func(expr, extra string, extraArgs ...any) ([]model.NameCount, error) {
 		args := append(append([]any{}, scopeArgs...), extraArgs...)

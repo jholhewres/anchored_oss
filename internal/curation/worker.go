@@ -198,11 +198,40 @@ func (w *Worker) processOne(ctx context.Context, memID string, getPeers func(pro
 			}
 		}
 	}
+	// v3 advisory hygiene: a canonical whose near-dup cluster shrank below 2
+	// members (memories deleted or rewritten) loses the candidate flag on its
+	// own re-curation pass — the suggestion never outlives the cluster.
+	if truthy(metaMap["consolidation_candidate"]) {
+		if n, err := w.store.CountCanonicalMembers(ctx, mem.ProjectID, mem.ID); err == nil && n < 2 {
+			patch["consolidation_candidate"] = false
+			patch["consolidation_members"] = n
+		}
+	}
+
 	patch["curation_version"] = 2
 	patch["last_curated_at"] = time.Now().UTC().Format(time.RFC3339)
 
 	if err := w.store.UpdateMemoryMetadata(ctx, memID, patch); err != nil {
 		return err
+	}
+
+	// Curation v3 (advisory): when this memory joined a near-duplicate
+	// cluster, check the cluster size and mark the canonical as a
+	// consolidation candidate once it has >=2 members (3 memories total).
+	// Marking only — the server never synthesizes or deletes; the dashboard
+	// and the client surface the suggestion.
+	if patch["curation_status"] == "near_duplicate" {
+		if canonicalID, ok := patch["canonical_of"].(string); ok && canonicalID != "" {
+			if n, err := w.store.CountCanonicalMembers(ctx, mem.ProjectID, canonicalID); err == nil && n >= 2 {
+				if err := w.store.UpdateMemoryMetadata(ctx, canonicalID, map[string]any{
+					"consolidation_candidate": true,
+					"consolidation_members":   n + 1,
+				}); err != nil {
+					w.logger.Warn("curation: mark consolidation candidate failed",
+						"canonical_id", canonicalID, "error", err)
+				}
+			}
+		}
 	}
 
 	// Generate the semantic embedding for accepted, non-duplicate memories.

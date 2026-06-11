@@ -92,6 +92,11 @@ type Store interface {
 	GetTombstonesSince(ctx context.Context, projectID string, since time.Time) ([]string, error)
 	GetMemoryByID(ctx context.Context, id string) (*model.Memory, error)
 	UpdateMemoryMetadata(ctx context.Context, id string, metadata any) error
+
+	// CountCanonicalMembers counts live memories whose metadata canonical_of
+	// equals canonicalID — the size of a near-duplicate cluster minus its
+	// canonical. Used for advisory consolidation-candidate marking.
+	CountCanonicalMembers(ctx context.Context, projectID, canonicalID string) (int, error)
 	ListProjectMemoriesSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error)
 	// ListMemoriesByCurationStatus pages live memories whose metadata
 	// curation_status matches status (e.g. "stale", "contradiction_candidate").

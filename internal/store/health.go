@@ -70,6 +70,13 @@ func (s *PostgresStore) memoryHealth(ctx context.Context, orgID, projectID, scop
 		` AND m.metadata ->> 'curation_status' = 'contradiction_candidate'`); err != nil {
 		return nil, fmt.Errorf("health contradictions count: %w", err)
 	}
+	// consolidation_candidate is stored as a JSON boolean; ->> extracts it as
+	// the text 'true' on Postgres, while SQLite's json_extract yields 1 — the
+	// two backends intentionally use different comparison idioms.
+	if err := count(&agg.Counts.ConsolidationCandidates,
+		` AND COALESCE(m.metadata ->> 'consolidation_candidate', 'false') = 'true'`); err != nil {
+		return nil, fmt.Errorf("health consolidation candidates count: %w", err)
+	}
 
 	group := func(expr, extra string, extraArgs ...any) ([]model.NameCount, error) {
 		args := append(append([]any{}, scopeArgs...), extraArgs...)

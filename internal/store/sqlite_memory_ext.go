@@ -123,3 +123,18 @@ func (s *SQLiteStore) ListMemoriesByCurationStatus(ctx context.Context, projectI
 	defer rows.Close()
 	return sqliteScanMemories(rows)
 }
+
+// CountCanonicalMembers mirrors the Postgres implementation for SQLite.
+func (s *SQLiteStore) CountCanonicalMembers(ctx context.Context, projectID, canonicalID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories
+		 WHERE project_id = ? AND deleted_at IS NULL
+		   AND json_extract(metadata, '$.canonical_of') = ?`,
+		projectID, canonicalID,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count canonical members: %w", err)
+	}
+	return n, nil
+}

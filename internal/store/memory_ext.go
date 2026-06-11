@@ -90,3 +90,19 @@ func (s *PostgresStore) ListMemoriesByCurationStatus(ctx context.Context, projec
 	defer rows.Close()
 	return scanMemories(rows)
 }
+
+// CountCanonicalMembers counts live memories marked as near-duplicates of
+// canonicalID (metadata canonical_of). Drives the advisory consolidation
+// marking: a canonical with several members is a synthesis candidate.
+func (s *PostgresStore) CountCanonicalMembers(ctx context.Context, projectID, canonicalID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories
+		 WHERE project_id = $1 AND deleted_at IS NULL AND metadata ->> 'canonical_of' = $2`,
+		projectID, canonicalID,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count canonical members: %w", err)
+	}
+	return n, nil
+}
