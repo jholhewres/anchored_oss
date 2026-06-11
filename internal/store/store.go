@@ -97,6 +97,12 @@ type Store interface {
 	// equals canonicalID — the size of a near-duplicate cluster minus its
 	// canonical. Used for advisory consolidation-candidate marking.
 	CountCanonicalMembers(ctx context.Context, projectID, canonicalID string) (int, error)
+
+	// Account task threads (Feature C, personal kanban). PRIVATE to the
+	// owning account: every query is account-scoped by design and no org or
+	// admin listing exists.
+	UpsertAccountTaskThread(ctx context.Context, t *model.AccountTaskThread) error
+	ListAccountTaskThreads(ctx context.Context, accountID string) ([]*model.AccountTaskThread, error)
 	ListProjectMemoriesSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error)
 	// ListMemoriesByCurationStatus pages live memories whose metadata
 	// curation_status matches status (e.g. "stale", "contradiction_candidate").

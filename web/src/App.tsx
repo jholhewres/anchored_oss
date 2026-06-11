@@ -17,6 +17,7 @@ import { APIKeysPage } from "@/pages/APIKeysPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { GuardrailsPage } from "@/pages/GuardrailsPage";
 import { HealthPage } from "@/pages/HealthPage";
+import { MyTasksPage } from "@/pages/MyTasksPage";
 
 function RootRouter() {
   const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
@@ -60,6 +61,7 @@ export function App() {
       >
         <Route path="/dashboard" element={<OverviewPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/my-tasks" element={<MyTasksPage />} />
         <Route path="/projects/:id" element={<ProjectDetailPage />} />
         <Route path="/developers" element={<DevelopersPage />} />
         <Route path="/accounts" element={<Navigate to="/developers" replace />} />

@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 17
+const schemaVersion = 18
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -345,6 +345,26 @@ const migration017 = `
 ALTER TABLE org_policies ADD COLUMN IF NOT EXISTS max_memories_per_sync INTEGER NOT NULL DEFAULT 500;
 `
 
+
+// migration018 adds per-account task threads (Feature C): the personal
+// kanban's storage. Threads are PRIVATE to the owning account — every query
+// is account-scoped and there is deliberately no admin/org-wide listing.
+const migration018 = `
+CREATE TABLE IF NOT EXISTS account_task_threads (
+    account_id UUID NOT NULL,
+    task_key TEXT NOT NULL,
+    external_ref TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    projects JSONB NOT NULL DEFAULT '[]',
+    journal JSONB NOT NULL DEFAULT '[]',
+    details JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (account_id, task_key)
+);
+CREATE INDEX IF NOT EXISTS idx_account_task_threads_status ON account_task_threads(account_id, status);
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -363,6 +383,7 @@ var migrations = map[int]string{
 	15: migration015,
 	16: migration016,
 	17: migration017,
+	18: migration018,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

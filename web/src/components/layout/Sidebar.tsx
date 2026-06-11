@@ -25,6 +25,7 @@ const groups: NavGroup[] = [
     items: [
       { to: "/dashboard", icon: <I.home />, label: "Overview" },
       { to: "/projects", icon: <I.folder />, label: "Projects" },
+      { to: "/my-tasks", icon: <I.check />, label: "My tasks" },
       { to: "/developers", icon: <I.users />, label: "Developers", adminOnly: true },
     ],
   },

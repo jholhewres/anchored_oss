@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 17
+const sqliteSchemaVersion = 18
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -289,6 +289,24 @@ CREATE INDEX IF NOT EXISTS idx_sync_rejection_org_day ON sync_rejection_stats(or
 // guard in the v == 17 branch below; this SQL block is intentionally empty.
 const sqliteMigration017 = ``
 
+
+// sqliteMigration018 mirrors Postgres 018 (per-account task threads).
+const sqliteMigration018 = `
+CREATE TABLE IF NOT EXISTS account_task_threads (
+    account_id TEXT NOT NULL,
+    task_key TEXT NOT NULL,
+    external_ref TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    projects TEXT NOT NULL DEFAULT '[]',
+    journal TEXT NOT NULL DEFAULT '[]',
+    details TEXT NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (account_id, task_key)
+);
+CREATE INDEX IF NOT EXISTS idx_account_task_threads_status ON account_task_threads(account_id, status);
+`
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -307,6 +325,7 @@ var sqliteMigrations = map[int]string{
 	15: sqliteMigration015,
 	16: sqliteMigration016,
 	17: sqliteMigration017,
+	18: sqliteMigration018,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {

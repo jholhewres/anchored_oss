@@ -113,6 +113,10 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	mux.HandleFunc("GET /v1/projects/{id}/memory-health", authMW(http.HandlerFunc(healthMemHandler.Project)).ServeHTTP)
 	mux.HandleFunc("GET /v1/orgs/memory-health", authMW(requireAdmin(http.HandlerFunc(healthMemHandler.Org))).ServeHTTP)
 
+	taskThreadsHandler := handler.NewTaskThreadsHandler(st, logger)
+	mux.HandleFunc("GET /v1/me/task-threads", authMW(http.HandlerFunc(taskThreadsHandler.List)).ServeHTTP)
+	mux.HandleFunc("PUT /v1/me/task-threads", authMW(http.HandlerFunc(taskThreadsHandler.Put)).ServeHTTP)
+
 	auditHandler := handler.NewAuditHandler(st, logger)
 	mux.HandleFunc("GET /v1/audit", authMW(requireAdmin(http.HandlerFunc(auditHandler.List))).ServeHTTP)
 

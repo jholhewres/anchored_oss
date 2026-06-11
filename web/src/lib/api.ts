@@ -40,6 +40,18 @@ interface LoginResponse {
 
 const TOKEN_KEY = "anchored_token";
 
+
+export interface TaskThread {
+  task_key: string;
+  external_ref?: string;
+  status: string;
+  projects?: string[];
+  journal?: string[];
+  details?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -144,6 +156,7 @@ export const api = {
     const params = new URLSearchParams({ project_id: projectId, q, mode, limit: String(limit) });
     return request<Memory[]>("GET", `/v1/memories/search?${params.toString()}`);
   },
+  listMyTaskThreads: () => request<{ threads: TaskThread[] }>("GET", "/v1/me/task-threads"),
   deleteProject: (id: string) => request<void>("DELETE", `/v1/projects/${id}`),
   patchProject: (id: string, body: { name?: string; slug?: string; repo_url?: string; category?: ProjectCategory }) =>
     request<Project>("PATCH", `/v1/projects/${id}`, body),
