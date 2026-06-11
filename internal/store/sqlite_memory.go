@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -136,7 +137,9 @@ func (s *SQLiteStore) UpsertMemory(ctx context.Context, m *model.Memory) error {
 	if err != nil {
 		return fmt.Errorf("upsert memory: %w", err)
 	}
-	_ = s.EnqueueCuration(ctx, []string{m.ID})
+	if err := s.EnqueueCuration(ctx, []string{m.ID}); err != nil {
+		slog.Default().Warn("enqueue curation failed", "memory_id", m.ID, "error", err)
+	}
 	return nil
 }
 
@@ -204,7 +207,9 @@ func (s *SQLiteStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Memor
 	for i, m := range ms {
 		ids[i] = m.ID
 	}
-	_ = s.EnqueueCuration(ctx, ids)
+	if err := s.EnqueueCuration(ctx, ids); err != nil {
+		slog.Default().Warn("enqueue curation failed", "memory_count", len(ids), "error", err)
+	}
 	return nil
 }
 

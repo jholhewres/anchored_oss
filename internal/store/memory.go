@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -108,9 +109,10 @@ func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error
 	}
 
 	// Last-write-wins by (id): editing a memory keeps the same id but may
-	// change content/hash. The partial unique index on
-	// (content_hash, project_id) still blocks accidental content-level dupes
-	// from a different id, surfacing as a unique-violation error.
+	// change content/hash. migration003 dropped the UNIQUE constraint on
+	// (content_hash, project_id) and replaced it with a plain index kept for
+	// lookups only — content-level dupes under different ids are legal; dedup
+	// and quality filtering are handled asynchronously by the curation worker.
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO memories (id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, metadata)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -134,7 +136,9 @@ func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error
 	if err != nil {
 		return fmt.Errorf("upsert memory: %w", err)
 	}
-	_ = s.EnqueueCuration(ctx, []string{m.ID})
+	if err := s.EnqueueCuration(ctx, []string{m.ID}); err != nil {
+		slog.Default().Warn("enqueue curation failed", "memory_id", m.ID, "error", err)
+	}
 	return nil
 }
 
@@ -205,7 +209,9 @@ func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Mem
 	for i, m := range ms {
 		ids[i] = m.ID
 	}
-	_ = s.EnqueueCuration(ctx, ids)
+	if err := s.EnqueueCuration(ctx, ids); err != nil {
+		slog.Default().Warn("enqueue curation failed", "memory_count", len(ids), "error", err)
+	}
 	return nil
 }
 
