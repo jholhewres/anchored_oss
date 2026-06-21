@@ -22,6 +22,6 @@ func Logging(next http.Handler) http.Handler {
 		start := time.Now()
 		next.ServeHTTP(sw, r)
 		duration := time.Since(start)
-		slog.Info(r.Method+" "+r.URL.Path, "status", sw.status, "duration", duration)
+		slog.Info(r.Method+" "+r.URL.Path, "status", sw.status, "duration_ms", duration.Milliseconds())
 	})
 }

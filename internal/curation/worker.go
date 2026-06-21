@@ -5,7 +5,9 @@ package curation
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode"
@@ -57,10 +59,25 @@ func (w *Worker) Start(ctx context.Context) {
 			w.logger.Info("curation worker stopped")
 			return
 		case <-ticker.C:
-			if err := w.processBatch(ctx); err != nil {
-				w.logger.Error("curation batch failed", "error", err)
-			}
+			w.runBatchSafely(ctx)
 		}
+	}
+}
+
+// runBatchSafely runs a single curation batch with panic isolation. A panic
+// anywhere in the batch path is logged and the worker continues on the next
+// tick; it never propagates to crash the HTTP server. Per-memory panics are
+// already contained inside processBatch via processOneSafe; this outer guard
+// covers anything outside that path (e.g. ClaimCurationBatch).
+func (w *Worker) runBatchSafely(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.logger.Error("curation batch panicked; skipping batch",
+				"panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	if err := w.processBatch(ctx); err != nil {
+		w.logger.Error("curation batch failed", "error", err)
 	}
 }
 
@@ -110,18 +127,24 @@ func (w *Worker) processBatch(ctx context.Context) error {
 	}
 
 	for _, memID := range ids {
-		if err := w.processOne(ctx, memID, getPeers); err != nil {
+		// processOneSafe isolates panics per memory: a single bad row is logged,
+		// marked failed, and skipped so the rest of the batch still runs and a
+		// panic never crashes the HTTP server.
+		err, panicked := w.processOneSafe(ctx, memID, getPeers)
+		switch {
+		case panicked:
+			w.logger.Error("curation: process memory panicked",
+				"memory_id", memID, "panic", err, "stack", string(debug.Stack()))
+			w.markCurationFailed(ctx, memID, "panic recovered")
+		case err != nil:
 			w.logger.Error("curation: process memory failed",
 				"memory_id", memID, "error", err)
-			if failErr := w.store.SetCurationFailed(ctx, memID, err.Error()); failErr != nil {
-				w.logger.Warn("curation: set failed status error",
-					"memory_id", memID, "error", failErr)
+			w.markCurationFailed(ctx, memID, err.Error())
+		default:
+			if err := w.store.SetCurationDone(ctx, memID); err != nil {
+				w.logger.Warn("curation: set done status error",
+					"memory_id", memID, "error", err)
 			}
-			continue
-		}
-		if err := w.store.SetCurationDone(ctx, memID); err != nil {
-			w.logger.Warn("curation: set done status error",
-				"memory_id", memID, "error", err)
 		}
 	}
 	return nil
@@ -131,6 +154,29 @@ func (w *Worker) processBatch(ctx context.Context) error {
 // near-duplicate and contradiction detection, capping the per-item O(peers)
 // cost on very large projects. The newest peers are kept.
 const maxCurationPeers = 2000
+
+// markCurationFailed records a curation failure for a memory, logging (not
+// returning) any store error so the batch loop stays linear.
+func (w *Worker) markCurationFailed(ctx context.Context, memID, reason string) {
+	if err := w.store.SetCurationFailed(ctx, memID, reason); err != nil {
+		w.logger.Warn("curation: set failed status error",
+			"memory_id", memID, "error", err)
+	}
+}
+
+// processOneSafe runs processOne with panic isolation so a single bad memory
+// never aborts the batch or crashes the server. On panic the recovered value
+// is returned as the error and panicked=true; the caller logs it, marks the
+// memory failed, and continues with the rest of the batch.
+func (w *Worker) processOneSafe(ctx context.Context, memID string, getPeers func(projectID string) []*model.Memory) (err error, panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+			panicked = true
+		}
+	}()
+	return w.processOne(ctx, memID, getPeers), false
+}
 
 func (w *Worker) processOne(ctx context.Context, memID string, getPeers func(projectID string) []*model.Memory) error {
 	mem, err := w.store.GetMemoryByID(ctx, memID)
