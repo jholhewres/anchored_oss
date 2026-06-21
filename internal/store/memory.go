@@ -26,7 +26,6 @@ const memoryBatchSize = 1000
 // sync. The `pinned=true` escape hatch lets clients keep a memory visible
 // even if its score is low.
 var qualityFilterSQL = fmt.Sprintf(`
-		   AND (metadata IS NULL OR metadata->>'curation_status' IS DISTINCT FROM 'low_signal')
 		   AND (
 		     metadata IS NULL
 		     OR jsonb_typeof(metadata->'quality_score') IS DISTINCT FROM 'number'
@@ -219,7 +218,7 @@ func (s *PostgresStore) GetMemoriesUpdatedSince(ctx context.Context, projectID s
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, deleted_at, metadata
 		 FROM memories
-		 WHERE project_id = $1 AND updated_at > $2 AND deleted_at IS NULL` + qualityFilterSQL + `
+		 WHERE project_id = $1 AND updated_at > $2 AND deleted_at IS NULL`+qualityFilterSQL+`
 		 ORDER BY updated_at`,
 		projectID, since,
 	)
@@ -272,7 +271,7 @@ func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID str
 		        author_id, author_name, created_at, updated_at, deleted_at, metadata,
 		        COUNT(*) OVER() AS total
 		 FROM memories
-		 WHERE project_id = $1 AND deleted_at IS NULL%s` + qualityFilterSQL + `
+		 WHERE project_id = $1 AND deleted_at IS NULL%s`+qualityFilterSQL+`
 		 ORDER BY updated_at DESC
 		 LIMIT $%d OFFSET $%d`,
 		catFilter, limitIdx, offsetIdx,

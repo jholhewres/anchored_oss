@@ -21,7 +21,6 @@ import (
 // paths. Mirrors qualityFilterSQL in memory.go (Postgres) using SQLite's
 // json_extract for metadata access.
 var sqliteQualityFilterSQL = fmt.Sprintf(`
-		   AND (metadata IS NULL OR json_extract(metadata, '$.curation_status') IS NOT 'low_signal')
 		   AND (
 		     metadata IS NULL
 		     OR json_extract(metadata, '$.quality_score') IS NULL
