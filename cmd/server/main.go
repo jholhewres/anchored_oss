@@ -27,7 +27,13 @@ func main() {
 	bootstrap := flag.Bool("bootstrap", false, "create default org, admin account, and API key, then exit")
 	setupFlag := flag.Bool("setup", false, "run interactive setup wizard")
 	reindex := flag.Bool("reindex", false, "backfill embeddings for all memories lacking a vector, then exit")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version.Version)
+		return
+	}
 
 	if *setupFlag {
 		if err := setup.RunInteractive(); err != nil {
@@ -112,9 +118,36 @@ func main() {
 		if closer, ok := embedder.(interface{ Close() error }); ok {
 			defer closer.Close()
 		}
+	} else if cfg.Curation.WorkerEnabled {
+		// The curation worker runs text-only (BM25) without an embedder; vector
+		// search and semantic recall stay dormant until EMBEDDINGS_PROVIDER is
+		// set. Surface it once at startup so a misconfigured box is not silent.
+		slog.Warn("vector search dormant: embeddings disabled; curation runs " +
+			"text-only (BM25). Set EMBEDDINGS_PROVIDER (and EMBEDDINGS_MODEL_DIR " +
+			"for onnx) to enable semantic recall.")
 	}
 
 	srv := server.New(ctx, cfg, st, embedder, logger)
+
+	// Auto-correct embeddings when the configured model differs from what's
+	// stored on disk (e.g. a provider swap local->onnx leaves the corpus in an
+	// incompatible vector space). Non-blocking: runs in the background so a
+	// large corpus re-embeds without delaying startup. No-op when nothing is
+	// stale. Bounded by the app ctx so it stops cleanly on shutdown.
+	if embedder != nil {
+		if stale, staleErr := st.MemoriesStaleEmbedding(ctx, embedder.Model(), "", 1); staleErr != nil {
+			logger.Warn("auto-reindex: stale check failed", "error", staleErr)
+		} else if len(stale) > 0 {
+			sharedEmbedder := embedder
+			go func() {
+				logger.Info("auto-reindex: embedding model changed; re-embedding corpus in background",
+					"model", sharedEmbedder.Model())
+				if err := runReindexWith(ctx, st, sharedEmbedder, logger); err != nil {
+					logger.Error("auto-reindex: failed", "error", err)
+				}
+			}()
+		}
+	}
 
 	if cfg.Curation.WorkerEnabled {
 		w := curation.NewWorker(cfg, st, embedder, logger)
@@ -197,6 +230,13 @@ func runReindex(ctx context.Context, st store.Store, cfg *config.Config, logger 
 	if closer, ok := embedder.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}
+	return runReindexWith(ctx, st, embedder, logger)
+}
+
+// runReindexWith runs the backfill using an already-built embedder (shared with
+// the server and the curation worker) so the onnx model is not loaded twice.
+// A nil embedder is a clean no-op.
+func runReindexWith(ctx context.Context, st store.Store, embedder embeddings.Embedder, logger *slog.Logger) error {
 	if embedder == nil {
 		logger.Info("reindex: embeddings disabled in config; nothing to do")
 		return nil

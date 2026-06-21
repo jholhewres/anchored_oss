@@ -187,6 +187,14 @@ func (u *Updater) Apply(ctx context.Context) error {
 		return fmt.Errorf("verify checksum: %w", err)
 	}
 
+	// Probe the downloaded binary before swapping it in. A cgo/dynamic binary
+	// built against glibc fails to start on musl/Alpine (dynamic-link error);
+	// aborting here keeps the current binary in place instead of bricking the
+	// deployment on the next pm2 restart.
+	if err := probeBinary(binPath, u.Logger); err != nil {
+		return fmt.Errorf("new binary failed to start on this host; update aborted (keeping current version): %w", err)
+	}
+
 	if err := swapBinary(binPath, u.Logger); err != nil {
 		return err
 	}
@@ -282,6 +290,26 @@ func verifySHA256(path, wantHex string) error {
 	got := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(got, wantHex) {
 		return fmt.Errorf("checksum mismatch: got %s want %s", got, wantHex)
+	}
+	return nil
+}
+
+// probeBinary runs the candidate binary with -version to confirm it starts on
+// the current host. A glibc/musl mismatch (or any dynamic-link failure) makes
+// the exec fail before any Go code runs; a short timeout bounds hangs. Used
+// before swapBinary so an incompatible release is rejected instead of bricking
+// the deployment.
+func probeBinary(path string, logger *slog.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "-version")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if logger != nil {
+			logger.Error("new binary probe failed; aborting update to avoid brick",
+				"binary", path, "error", err, "output", string(out))
+		}
+		return fmt.Errorf("probe -version: %w (output: %s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
