@@ -43,15 +43,21 @@ func composeHealth(agg healthAggregates) *model.MemoryHealth {
 	return h
 }
 
-// healthScore folds the lifecycle counters into a 0..1 quality score. Noise
-// (low-signal, duplicates) costs full weight, stale costs half, contradictions
-// double — they actively mislead agents rather than just wasting context.
+// healthScore measures how much of the live corpus the curation worker flagged
+// as an actionable defect: low-signal, near-duplicate, and contradiction
+// candidates, each costing its share of Live. Age-based staleness is
+// deliberately NOT in the score — an old but clean memory is not a defect, and
+// including raw age pinned the score in the warning band for any mature corpus
+// even when nothing was wrong. Staleness is still surfaced as a count and the
+// age histogram; it just no longer drags the score. Contradictions come from a
+// lexical heuristic, so they weigh the same as the other marks rather than
+// double.
 func healthScore(c model.HealthCounts) float64 {
 	if c.Live <= 0 {
 		return 1.0
 	}
 	penalty := (float64(c.LowSignal) + float64(c.NearDuplicate) +
-		0.5*float64(c.Stale) + 2.0*float64(c.Contradictions)) / float64(c.Live)
+		float64(c.Contradictions)) / float64(c.Live)
 	score := 1.0 - penalty
 	if score < 0 {
 		score = 0
@@ -100,8 +106,14 @@ func buildRecommendations(h *model.MemoryHealth) []string {
 	if h.Counts.NearDuplicate > 0 {
 		recs = append(recs, fmt.Sprintf("Review %d near-duplicate memories", h.Counts.NearDuplicate))
 	}
-	if h.Counts.MissingEmbeddings > 0 {
-		recs = append(recs, fmt.Sprintf("Run reindex: %d memories missing embeddings", h.Counts.MissingEmbeddings))
+	// Only recommend a reindex for memories that are eligible for embeddings but
+	// lack one. Low-signal and near-duplicate rows are intentionally never
+	// embedded, so counting them made this recommendation permanent noise; a
+	// gap among otherwise-clean memories is the real reindex signal (e.g. the
+	// embedding model changed, or the worker fell behind).
+	eligibleMissing := h.Counts.MissingEmbeddings - h.Counts.LowSignal - h.Counts.NearDuplicate
+	if eligibleMissing > 0 {
+		recs = append(recs, fmt.Sprintf("Run reindex: %d memories missing embeddings", eligibleMissing))
 	}
 	var topRule *model.RuleCount
 	for i := range h.SyncRejections {

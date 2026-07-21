@@ -76,9 +76,10 @@ func TestGetProjectMemoryHealth_GoldenCounts(t *testing.T) {
 		t.Fatalf("counts mismatch:\n got %+v\nwant %+v", h.Counts, want)
 	}
 
-	// score = 1 - (1 + 1 + 0.5*1 + 0)/6 = 1 - 0.4166 = 0.58
-	if h.Score != 0.58 {
-		t.Fatalf("score: got %v want 0.58", h.Score)
+	// score = 1 - (low_signal + near_duplicate + contradictions)/live
+	//       = 1 - (1 + 1 + 0)/6 = 0.67. Age-based stale is not in the score.
+	if h.Score != 0.67 {
+		t.Fatalf("score: got %v want 0.67", h.Score)
 	}
 	if len(h.BySource) == 0 || h.BySource[0].Name != "mcp" || h.BySource[0].Count != 3 {
 		t.Fatalf("by_source top: %+v", h.BySource)
@@ -86,9 +87,11 @@ func TestGetProjectMemoryHealth_GoldenCounts(t *testing.T) {
 	if len(h.Anomalies) != 0 {
 		t.Fatalf("no anomaly expected on small seed, got %+v", h.Anomalies)
 	}
+	// Reindex recommendation counts only embeddable memories missing an
+	// embedding: 6 missing - 1 low_signal - 1 near_duplicate = 4 eligible.
 	foundReindex := false
 	for _, r := range h.Recommendations {
-		if r == "Run reindex: 6 memories missing embeddings" {
+		if r == "Run reindex: 4 memories missing embeddings" {
 			foundReindex = true
 		}
 	}
