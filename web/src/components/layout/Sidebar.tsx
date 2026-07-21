@@ -35,7 +35,7 @@ const groups: NavGroup[] = [
       { to: "/guardrails", icon: <I.shield />, label: "Guardrails", adminOnly: true },
       { to: "/api-keys", icon: <I.key />, label: "API keys", adminOnly: true },
       { to: "/audit", icon: <I.activity />, label: "Audit log", adminOnly: true },
-      { to: "/health", icon: <I.pulse />, label: "Health", status: "ok" },
+      { to: "/health", icon: <I.pulse />, label: "Health" },
     ],
   },
 ];
@@ -47,11 +47,14 @@ export function Sidebar() {
 
   const [dropOpen, setDropOpen] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
+  const [healthLoaded, setHealthLoaded] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
 
   // Fetch version once
   useEffect(() => {
-    api.getHealth().then(setHealth).catch(() => {});
+    api.getHealth()
+      .then((h) => { setHealth(h); setHealthLoaded(true); })
+      .catch(() => { setHealthLoaded(true); });
   }, []);
 
   // Click-outside to close dropdown
@@ -225,13 +228,21 @@ export function Sidebar() {
                     >
                       {React.cloneElement(it.icon, { size: 15 })}
                       <span style={{ flex: 1 }}>{it.label}</span>
-                      {it.status && (
+                      {it.to === "/health" && (
                         <span
                           style={{
                             width: 6,
                             height: 6,
                             borderRadius: 3,
-                            background: "var(--ok)",
+                            background:
+                              !healthLoaded
+                                ? "var(--text-dim)"
+                                : health?.status === "ok" && health?.db_status === "ok"
+                                ? "var(--ok)"
+                                : health !== null
+                                ? "var(--err)"
+                                : "var(--text-dim)",
+                            opacity: !healthLoaded ? 0.4 : 1,
                           }}
                         />
                       )}

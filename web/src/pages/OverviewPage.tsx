@@ -50,6 +50,7 @@ export function OverviewPage() {
   const [stats, setStats] = React.useState<DashboardStats | null>(null);
   const [audit, setAudit] = React.useState<AuditEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const [firstLogin] = React.useState(() => {
     const v = localStorage.getItem("anchored_first_login");
     if (v === "1") { localStorage.removeItem("anchored_first_login"); return true; }
@@ -60,7 +61,7 @@ export function OverviewPage() {
     if (me?.scope !== "admin") { setLoading(false); return; }
     Promise.all([api.getStats(), api.getAudit({ limit: 7 })])
       .then(([s, a]) => { setStats(s); setAudit(a.entries); })
-      .catch(() => {})
+      .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load dashboard data"); })
       .finally(() => setLoading(false));
   }, [me]);
 
@@ -84,6 +85,16 @@ export function OverviewPage() {
 
   return (
     <div>
+      {/* Fetch error banner */}
+      {error && (
+        <Card style={{ padding: 16, marginBottom: 20, background: "var(--err-bg)", border: "1px solid color-mix(in srgb, var(--err) 25%, transparent)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--err)" }}>
+            <I.alert size={14} />
+            <span style={{ fontSize: 13 }}>Couldn't load overview data — {error}</span>
+          </div>
+        </Card>
+      )}
+
       {/* First-login welcome banner */}
       {firstLogin && (
         <Card style={{ padding: 18, marginBottom: 20, border: "1px solid var(--accent-border)" }}>

@@ -5,16 +5,6 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { Health, UpdateCheckResponse } from "@/lib/types";
 
-function UptimeBar() {
-  return (
-    <div style={{ display: "flex", gap: 2, height: 22 }}>
-      {Array.from({ length: 60 }).map((_, i) => (
-        <div key={i} style={{ flex: 1, background: "var(--ok)", borderRadius: 1, opacity: 0.9 }} />
-      ))}
-    </div>
-  );
-}
-
 function KV({ k, v }: { k: string; v: string | React.ReactNode }) {
   return (
     <div>
@@ -204,16 +194,29 @@ export function HealthPage() {
   const { me } = useAuth();
   const [health, setHealth] = React.useState<Health | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const isAdmin = me?.scope === "admin";
 
   React.useEffect(() => {
     api.getHealth()
       .then(setHealth)
-      .catch(() => {})
+      .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load health data"); })
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Loading...</div>;
+
+  if (error) return (
+    <Card style={{ padding: 22, background: "var(--err-bg)", border: "1px solid color-mix(in srgb, var(--err) 25%, transparent)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--err)" }}>
+        <I.alert size={16} />
+        <div>
+          <div style={{ fontWeight: 500, fontSize: 14 }}>Couldn't load health</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>{error}</div>
+        </div>
+      </div>
+    </Card>
+  );
 
   const isOk = health?.status === "ok" && health?.db_status === "ok";
 
@@ -267,7 +270,6 @@ export function HealthPage() {
             </div>
             <Status value={health?.status === "ok" ? "online" : "offline"} label={health?.status || "unknown"} />
           </div>
-          <UptimeBar />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
             <KV k="status" v={health?.status || "—"} />
             <KV k="version" v={health?.version || "—"} />
@@ -283,7 +285,6 @@ export function HealthPage() {
             </div>
             <Status value={health?.db_status === "ok" ? "online" : "offline"} label={health?.db_status || "unknown"} />
           </div>
-          <UptimeBar />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
             <KV k="db status" v={health?.db_status || "—"} />
             <KV k="service" v={health?.service || "—"} />
