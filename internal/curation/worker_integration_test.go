@@ -92,7 +92,7 @@ func TestWorkerEmbedsAndSemanticSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("embed query: %v", err)
 	}
-	results, err := st.SearchMemoriesByVector(ctx, proj.ID, qvec, 5)
+	results, err := st.SearchMemoriesByVectorSpace(ctx, proj.ID, qvec, emb.Model(), emb.Dimensions(), 5)
 	if err != nil {
 		t.Fatalf("vector search: %v", err)
 	}

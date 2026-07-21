@@ -257,8 +257,20 @@ func (w *Worker) processOne(ctx context.Context, memID string, getPeers func(pro
 	patch["curation_version"] = 2
 	patch["last_curated_at"] = time.Now().UTC().Format(time.RFC3339)
 
-	if err := w.store.UpdateMemoryMetadata(ctx, memID, patch); err != nil {
+	metadataUpdated, err := store.UpdateMemoryMetadataForContent(
+		ctx,
+		w.store,
+		memID,
+		mem.ContentHash,
+		patch,
+	)
+	if err != nil {
 		return err
+	}
+	if !metadataUpdated {
+		w.logger.Debug("curation: content changed while evaluating metadata; leaving memory queued",
+			"memory_id", memID)
+		return nil
 	}
 
 	// Curation v3 (advisory): when this memory joined a near-duplicate
@@ -287,11 +299,21 @@ func (w *Worker) processOne(ctx context.Context, memID string, getPeers func(pro
 	if w.embedder != nil && qualityOK {
 		vec, err := embeddings.EmbedOne(ctx, w.embedder, mem.Content)
 		if err != nil {
-			w.logger.Warn("curation: embed failed", "memory_id", memID, "error", err)
-			return nil
+			return fmt.Errorf("curation: embed memory %s: %w", memID, err)
 		}
-		if err := w.store.UpdateMemoryEmbedding(ctx, memID, vec, w.embedder.Model()); err != nil {
-			w.logger.Warn("curation: store embedding failed", "memory_id", memID, "error", err)
+		updated, err := store.UpdateMemoryEmbeddingForContentSpace(
+			ctx,
+			w.store,
+			memID,
+			mem.ContentHash,
+			vec,
+			embeddings.SemanticSpace(w.embedder),
+		)
+		if err != nil {
+			return fmt.Errorf("curation: store embedding for memory %s: %w", memID, err)
+		} else if !updated {
+			w.logger.Debug("curation: content changed while embedding; leaving memory queued",
+				"memory_id", memID)
 		}
 	}
 	return nil

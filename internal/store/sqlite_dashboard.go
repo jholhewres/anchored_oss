@@ -81,11 +81,22 @@ func (s *SQLiteStore) GetDashboardStats(ctx context.Context, orgID string) (*mod
 func (s *SQLiteStore) GetOrgStorageBytes(ctx context.Context, orgID string) (int64, error) {
 	var bytes int64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(LENGTH(m.content)), 0)
-		FROM memories m
-		JOIN projects p ON p.id = m.project_id
-		WHERE p.org_id = ? AND m.deleted_at IS NULL AND p.deleted_at IS NULL
-	`, orgID).Scan(&bytes)
+		SELECT
+		  COALESCE((
+		    SELECT SUM(LENGTH(CAST(m.content AS BLOB)))
+		    FROM memories m
+		    JOIN projects p ON p.id = m.project_id
+		    WHERE p.org_id = ?
+		      AND m.deleted_at IS NULL
+		      AND p.deleted_at IS NULL
+		  ), 0)
+		  +
+		  COALESCE((
+		    SELECT SUM(LENGTH(CAST(i.response_json AS BLOB)))
+		    FROM memory_write_idempotency i
+		    WHERE i.org_scope = ?
+		  ), 0)
+	`, orgID, orgID).Scan(&bytes)
 	if err != nil {
 		return 0, fmt.Errorf("get org storage bytes: %w", err)
 	}

@@ -18,7 +18,16 @@ func (s *SQLiteStore) EnqueueCuration(ctx context.Context, memoryIDs []string) e
 	}
 	query := `INSERT INTO curation_queue (memory_id) VALUES ` +
 		strings.Join(placeholders, ",") +
-		` ON CONFLICT (memory_id) DO NOTHING`
+		` ON CONFLICT (memory_id) DO UPDATE SET
+		    status = CASE
+		      WHEN curation_queue.status IN ('processing', 'processing_dirty')
+		      THEN 'processing_dirty'
+		      ELSE 'pending'
+		    END,
+		    attempts = 0,
+		    last_error = NULL,
+		    scheduled_at = datetime('now'),
+		    updated_at = datetime('now')`
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("enqueue curation: %w", err)
 	}
@@ -68,7 +77,15 @@ func (s *SQLiteStore) EnqueueRecuration(ctx context.Context, limit int) (int, er
 	}
 	query := `INSERT INTO curation_queue (memory_id) VALUES ` +
 		strings.Join(placeholders, ",") +
-		` ON CONFLICT(memory_id) DO UPDATE SET status = 'pending', attempts = 0, updated_at = datetime('now')`
+		` ON CONFLICT(memory_id) DO UPDATE SET
+		    status = CASE
+		      WHEN curation_queue.status IN ('processing', 'processing_dirty')
+		      THEN 'processing_dirty'
+		      ELSE 'pending'
+		    END,
+		    attempts = 0,
+		    last_error = NULL,
+		    updated_at = datetime('now')`
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return 0, fmt.Errorf("enqueue re-curation: %w", err)
 	}
@@ -122,7 +139,13 @@ func (s *SQLiteStore) ClaimCurationBatch(ctx context.Context, batchSize int) ([]
 
 func (s *SQLiteStore) SetCurationDone(ctx context.Context, memoryID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE curation_queue SET status = 'done', updated_at = datetime('now') WHERE memory_id = ?`,
+		`UPDATE curation_queue
+		 SET status = CASE
+		       WHEN status = 'processing_dirty' THEN 'pending'
+		       ELSE 'done'
+		     END,
+		     updated_at = datetime('now')
+		 WHERE memory_id = ? AND status IN ('processing', 'processing_dirty')`,
 		memoryID,
 	)
 	if err != nil {
@@ -134,11 +157,21 @@ func (s *SQLiteStore) SetCurationDone(ctx context.Context, memoryID string) erro
 func (s *SQLiteStore) SetCurationFailed(ctx context.Context, memoryID, errMsg string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE curation_queue
-		 SET attempts = attempts + 1,
-		     last_error = ?,
-		     status = CASE WHEN attempts + 1 >= 5 THEN 'failed' ELSE 'pending' END,
+		 SET attempts = CASE
+		       WHEN status = 'processing_dirty' THEN attempts
+		       ELSE attempts + 1
+		     END,
+		     last_error = CASE
+		       WHEN status = 'processing_dirty' THEN NULL
+		       ELSE ?
+		     END,
+		     status = CASE
+		       WHEN status = 'processing_dirty' THEN 'pending'
+		       WHEN attempts + 1 >= 5 THEN 'failed'
+		       ELSE 'pending'
+		     END,
 		     updated_at = datetime('now')
-		 WHERE memory_id = ?`,
+		 WHERE memory_id = ? AND status IN ('processing', 'processing_dirty')`,
 		errMsg, memoryID,
 	)
 	if err != nil {
