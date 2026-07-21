@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -300,11 +301,14 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 		}
 
 		mem := &model.Memory{
-			ID:          push.ID,
-			ProjectID:   projectID,
-			Category:    push.Category,
-			Content:     push.Content,
-			ContentHash: push.ContentHash,
+			ID:        push.ID,
+			ProjectID: projectID,
+			Category:  push.Category,
+			Content:   push.Content,
+			// Content identity is server-owned. Trusting the caller here lets
+			// stale curation/embedding workers pass a hash-based CAS after the
+			// content itself changed.
+			ContentHash: canonicalContentHash(push.Content),
 			Keywords:    push.Keywords,
 			Source:      push.Source,
 			AuthorID:    accountID,
@@ -333,11 +337,17 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 			}
 			for i := range results {
 				if results[i].Status == "accepted" && rejectedIDs[results[i].ID] {
+					rule := "internal_error"
+					detail := "failed to store memory batch"
+					if errors.Is(err, store.ErrConflict) {
+						rule = "memory_id_conflict"
+						detail = "memory ID already belongs to another project"
+					}
 					results[i] = model.SyncResult{
 						ID:     results[i].ID,
 						Status: "rejected",
-						Rule:   "internal_error",
-						Detail: "failed to store memory batch",
+						Rule:   rule,
+						Detail: detail,
 					}
 				}
 			}
@@ -366,6 +376,11 @@ func (e *SyncEngine) handlePushes(ctx context.Context, accountID, orgID, project
 	}
 
 	return results, nil
+}
+
+func canonicalContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func buildAudit(orgID, projectID, actorID, action, targetType, targetID, detail string) *model.AuditEntry {
