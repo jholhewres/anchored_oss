@@ -101,12 +101,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # A semver prerelease tag (contains a hyphen, e.g. v0.6.0-beta.1) is
+          # published as a prerelease and never marked "Latest", so production
+          # installers that follow releases/latest keep pinning the stable line.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
           files: |
             dist/anchored-oss-*
             dist/checksums-sha256.txt
           body_path: dist/release-notes.md
 
+      # Skip the pinned-version bump for prereleases: the installer reads
+      # VERSION.md to pin a stable version and must not be moved onto a beta.
       - name: Update VERSION.md on main
+        if: ${{ !contains(github.ref_name, '-') }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.vars.outputs.version }}
