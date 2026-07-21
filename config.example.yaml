@@ -50,6 +50,22 @@ audit:
   retention_days: 90
   purge_interval: 6h
 
+curation:
+  # Background worker that quality-scores, de-duplicates, and embeds each newly
+  # written memory. All fields are optional; the defaults below are applied when
+  # the section is omitted.
+  worker_enabled: true
+  batch_size: 100
+  interval: 5s
+  # A claimed batch is honored for lease_ttl; if the worker crashes mid-batch,
+  # the rows are reclaimed and re-processed once the lease expires (a fresh
+  # process also clears any pre-existing backlog on first upgrade). Keep this
+  # comfortably above the time to process one batch (scoring + embedding).
+  lease_ttl: 5m
+  # Advisory curation-v2 marks (metadata only, never deletes).
+  stale_after_days: 180
+  contradiction_detection: true
+
 embeddings:
   # Semantic search embeddings. The curation worker embeds each accepted memory
   # and the dashboard/API can search with ?mode=semantic.

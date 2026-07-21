@@ -5,8 +5,11 @@ package curation
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -23,6 +26,8 @@ import (
 type Worker struct {
 	cfg      config.CurationConfig
 	store    store.Store
+	leased   store.LeasedCurationStore // non-nil when the backend supports lease/owner claiming
+	owner    string                    // this process's claim identity; empty when leasing is unavailable
 	filter   *policy.ContentFilter
 	embedder embeddings.Embedder // nil when embeddings are disabled
 	logger   *slog.Logger
@@ -33,12 +38,70 @@ type Worker struct {
 // folded into the curation pass (the worker already loads each memory's
 // content), so it covers both the /v1/memories and sync push write paths.
 func NewWorker(cfg *config.Config, st store.Store, embedder embeddings.Embedder, logger *slog.Logger) *Worker {
-	return &Worker{
+	w := &Worker{
 		cfg:      cfg.Curation,
 		store:    st,
 		filter:   policy.NewContentFilter(),
 		embedder: embedder,
 		logger:   logger,
+	}
+	// Prefer the leased claim path when the backend supports it so a crashed
+	// worker's in-flight batch is reclaimed instead of stranding in processing.
+	if leased, ok := st.(store.LeasedCurationStore); ok {
+		w.leased = leased
+		w.owner = newOwnerID()
+	}
+	return w
+}
+
+// newOwnerID returns a stable-per-process claim identity (host/pid/random) so
+// completions can be scoped to the owner that still holds the lease.
+func newOwnerID() string {
+	host, _ := os.Hostname()
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s/%d/%s", host, os.Getpid(), hex.EncodeToString(b[:]))
+}
+
+// leaseTTL is the configured claim lease, falling back to a safe default when
+// unset so an in-flight batch always has time to finish before reclaim.
+func (w *Worker) leaseTTL() time.Duration {
+	if w.cfg.LeaseTTL > 0 {
+		return w.cfg.LeaseTTL
+	}
+	return 5 * time.Minute
+}
+
+// claimBatch claims a batch via the leased path when available, else the
+// unleased base path (older backends / mocks).
+func (w *Worker) claimBatch(ctx context.Context) ([]string, error) {
+	if w.leased != nil {
+		return w.leased.ClaimCurationBatchLeased(ctx, w.cfg.BatchSize, w.owner, w.leaseTTL())
+	}
+	return w.store.ClaimCurationBatch(ctx, w.cfg.BatchSize)
+}
+
+// markDone completes a memory, owner-scoped when leasing is active.
+func (w *Worker) markDone(ctx context.Context, memID string) error {
+	if w.leased != nil {
+		return w.leased.SetCurationDoneLeased(ctx, memID, w.owner)
+	}
+	return w.store.SetCurationDone(ctx, memID)
+}
+
+// reclaimExpired returns any lease-expired rows to pending. No-op when the
+// backend does not support leasing.
+func (w *Worker) reclaimExpired(ctx context.Context) {
+	if w.leased == nil {
+		return
+	}
+	n, err := w.leased.ReclaimExpiredCuration(ctx)
+	if err != nil {
+		w.logger.Warn("curation: reclaim expired leases failed", "error", err)
+		return
+	}
+	if n > 0 {
+		w.logger.Info("curation: reclaimed expired leases", "count", n)
 	}
 }
 
@@ -48,10 +111,25 @@ func (w *Worker) Start(ctx context.Context) {
 	ticker := time.NewTicker(w.cfg.Interval)
 	defer ticker.Stop()
 
+	// Reclaim expired leases on a cadence well under the lease TTL so a crashed
+	// worker's batch is picked up within roughly the TTL window.
+	reclaimEvery := w.leaseTTL() / 2
+	if reclaimEvery < 30*time.Second {
+		reclaimEvery = 30 * time.Second
+	}
+	reclaimTicker := time.NewTicker(reclaimEvery)
+	defer reclaimTicker.Stop()
+
 	w.logger.Info("curation worker started",
 		"interval", w.cfg.Interval,
 		"batch_size", w.cfg.BatchSize,
+		"lease_ttl", w.leaseTTL(),
+		"leased", w.leased != nil,
 	)
+
+	// Startup recovery: return any already-expired leases to pending before the
+	// first tick. (The base migration also clears the pre-lease backlog once.)
+	w.reclaimExpired(ctx)
 
 	for {
 		select {
@@ -60,6 +138,8 @@ func (w *Worker) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			w.runBatchSafely(ctx)
+		case <-reclaimTicker.C:
+			w.reclaimExpired(ctx)
 		}
 	}
 }
@@ -87,7 +167,7 @@ func (w *Worker) runBatchSafely(ctx context.Context) {
 func (w *Worker) RunOnce(ctx context.Context) error { return w.processBatch(ctx) }
 
 func (w *Worker) processBatch(ctx context.Context) error {
-	ids, err := w.store.ClaimCurationBatch(ctx, w.cfg.BatchSize)
+	ids, err := w.claimBatch(ctx)
 	if err != nil {
 		return err
 	}
@@ -141,7 +221,7 @@ func (w *Worker) processBatch(ctx context.Context) error {
 				"memory_id", memID, "error", err)
 			w.markCurationFailed(ctx, memID, err.Error())
 		default:
-			if err := w.store.SetCurationDone(ctx, memID); err != nil {
+			if err := w.markDone(ctx, memID); err != nil {
 				w.logger.Warn("curation: set done status error",
 					"memory_id", memID, "error", err)
 			}
@@ -158,7 +238,13 @@ const maxCurationPeers = 2000
 // markCurationFailed records a curation failure for a memory, logging (not
 // returning) any store error so the batch loop stays linear.
 func (w *Worker) markCurationFailed(ctx context.Context, memID, reason string) {
-	if err := w.store.SetCurationFailed(ctx, memID, reason); err != nil {
+	var err error
+	if w.leased != nil {
+		err = w.leased.SetCurationFailedLeased(ctx, memID, w.owner, reason)
+	} else {
+		err = w.store.SetCurationFailed(ctx, memID, reason)
+	}
+	if err != nil {
 		w.logger.Warn("curation: set failed status error",
 			"memory_id", memID, "error", err)
 	}

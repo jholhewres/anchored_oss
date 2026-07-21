@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 20
+const schemaVersion = 21
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -397,6 +397,23 @@ CREATE INDEX IF NOT EXISTS idx_memory_write_idempotency_memory_id
     ON memory_write_idempotency(memory_id);
 `
 
+// migration021 adds lease/owner columns to the curation queue so orphaned work
+// from a crashed worker can be reclaimed instead of stranding forever in the
+// 'processing' state. owner_id identifies the claiming process and
+// lease_expires_at bounds how long a claim is honored. The one-time UPDATE
+// resets any row currently stuck in processing back to pending — on a fresh
+// process start (migrations hold the advisory lock) nothing is legitimately
+// in-flight, so this immediately recovers pre-existing orphans.
+const migration021 = `
+ALTER TABLE curation_queue ADD COLUMN IF NOT EXISTS owner_id TEXT;
+ALTER TABLE curation_queue ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_curation_queue_lease
+    ON curation_queue(lease_expires_at)
+    WHERE status IN ('processing', 'processing_dirty');
+UPDATE curation_queue SET status = 'pending', owner_id = NULL, lease_expires_at = NULL
+    WHERE status IN ('processing', 'processing_dirty');
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -418,6 +435,7 @@ var migrations = map[int]string{
 	18: migration018,
 	19: migration019,
 	20: migration020,
+	21: migration021,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

@@ -584,9 +584,9 @@ func TestPostgresEmbeddingWidthRejectedBeforeDatabaseCall(t *testing.T) {
 }
 
 func TestEmbeddingMigrationsPreservePublishedOrdering(t *testing.T) {
-	if schemaVersion != 20 || sqliteSchemaVersion != 20 {
+	if schemaVersion != 21 || sqliteSchemaVersion != 21 {
 		t.Fatalf(
-			"schema versions = postgres:%d sqlite:%d, want 20",
+			"schema versions = postgres:%d sqlite:%d, want 21",
 			schemaVersion,
 			sqliteSchemaVersion,
 		)
@@ -600,6 +600,12 @@ func TestEmbeddingMigrationsPreservePublishedOrdering(t *testing.T) {
 	}
 	if sqliteMigrations[20] != "" {
 		t.Fatal("SQLite migration 020 must stay in its guarded ALTER TABLE branch")
+	}
+	if !strings.Contains(migrations[21], "lease_expires_at") {
+		t.Fatal("Postgres migration 021 must add the curation lease/owner columns")
+	}
+	if sqliteMigrations[21] != "" {
+		t.Fatal("SQLite migration 021 must stay in its guarded ALTER TABLE branch")
 	}
 }
 

@@ -59,6 +59,11 @@ type CurationConfig struct {
 	// the worker only marks metadata, it never deletes.
 	StaleAfterDays         int  `yaml:"stale_after_days"`        // age past which an unpinned, non-superseded memory is marked stale; <=0 disables
 	ContradictionDetection bool `yaml:"contradiction_detection"` // enable contradiction-candidate marking
+
+	// LeaseTTL bounds how long a claimed batch is honored before an expired
+	// lease is reclaimed. It must comfortably exceed the time to process one
+	// batch (quality scoring + embedding). <=0 falls back to the store default.
+	LeaseTTL time.Duration `yaml:"lease_ttl"`
 }
 
 type ServerConfig struct {
@@ -114,6 +119,7 @@ func DefaultConfig() *Config {
 			NearDupThreshold:       0.85,
 			StaleAfterDays:         180,
 			ContradictionDetection: true,
+			LeaseTTL:               5 * time.Minute,
 		},
 		RateLimit: RateLimitConfig{
 			Enabled:               true,

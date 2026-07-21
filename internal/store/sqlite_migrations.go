@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 20
+const sqliteSchemaVersion = 21
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -329,6 +329,11 @@ CREATE INDEX IF NOT EXISTS idx_memory_write_idempotency_memory_id
 // added through the guarded migration branch below for legacy databases.
 const sqliteMigration020 = ``
 
+// sqliteMigration021 mirrors Postgres 021: curation-queue lease/owner columns.
+// The columns are added through the guarded migration branch below (SQLite has
+// no ADD COLUMN IF NOT EXISTS); the index and the one-time orphan reset run here.
+const sqliteMigration021 = ``
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -350,6 +355,7 @@ var sqliteMigrations = map[int]string{
 	18: sqliteMigration018,
 	19: sqliteMigration019,
 	20: sqliteMigration020,
+	21: sqliteMigration021,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {
@@ -461,6 +467,36 @@ func MigrateSQLite(db *sql.DB) error {
 				ON memory_write_idempotency(memory_id)`); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("migration %d index memory idempotency memory_id: %w", v, err)
+			}
+		}
+
+		// Handle ADD COLUMN + orphan reset for migration 21 (curation lease/owner).
+		if v == 21 {
+			if !columnExists(db, "curation_queue", "owner_id") {
+				if _, err := tx.Exec(`ALTER TABLE curation_queue ADD COLUMN owner_id TEXT`); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("migration %d add owner_id: %w", v, err)
+				}
+			}
+			if !columnExists(db, "curation_queue", "lease_expires_at") {
+				if _, err := tx.Exec(`ALTER TABLE curation_queue ADD COLUMN lease_expires_at TEXT`); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("migration %d add lease_expires_at: %w", v, err)
+				}
+			}
+			if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_curation_queue_lease
+				ON curation_queue(lease_expires_at)
+				WHERE status IN ('processing', 'processing_dirty')`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d index lease: %w", v, err)
+			}
+			// One-time recovery of rows stranded in processing before leasing
+			// existed. Safe on a fresh process: migrations run single-writer.
+			if _, err := tx.Exec(`UPDATE curation_queue
+				SET status = 'pending', owner_id = NULL, lease_expires_at = NULL
+				WHERE status IN ('processing', 'processing_dirty')`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d reset orphans: %w", v, err)
 			}
 		}
 
