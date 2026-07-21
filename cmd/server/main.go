@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -106,18 +107,23 @@ func main() {
 
 	// Build the embedder once and share it across the server handlers and the
 	// curation worker. The onnx provider keeps a ~470MB model resident, so a
-	// single instance avoids multiplying memory use. A bad config degrades to
-	// "no embeddings" rather than blocking startup.
-	embedder, err := embeddings.New(cfg.Embeddings, logger)
+	// single instance avoids multiplying memory use.
+	embedder, err := buildConfiguredEmbedder(cfg.Embeddings, logger)
 	if err != nil {
-		slog.Error("embeddings disabled (config error)", "error", err)
-		embedder = nil
+		slog.Error("invalid embeddings configuration", "error", err)
+		os.Exit(1)
+	}
+	if err := validateEmbeddingCompatibility(st, embedder); err != nil {
+		slog.Error("invalid embeddings configuration", "error", err)
+		os.Exit(1)
 	}
 	if embedder != nil {
 		slog.Info("embeddings enabled", "provider", embedder.Name(), "model", embedder.Model(), "dims", embedder.Dimensions())
 		if closer, ok := embedder.(interface{ Close() error }); ok {
 			defer closer.Close()
 		}
+	} else if embeddingProviderDisabled(cfg.Embeddings) {
+		slog.Info("embeddings disabled by configuration", "provider", cfg.Embeddings.Provider)
 	} else if cfg.Curation.WorkerEnabled {
 		// The curation worker runs text-only (BM25) without an embedder; vector
 		// search and semantic recall stay dormant until EMBEDDINGS_PROVIDER is
@@ -135,7 +141,13 @@ func main() {
 	// large corpus re-embeds without delaying startup. No-op when nothing is
 	// stale. Bounded by the app ctx so it stops cleanly on shutdown.
 	if embedder != nil {
-		if stale, staleErr := st.MemoriesStaleEmbedding(ctx, embedder.Model(), "", 1); staleErr != nil {
+		if stale, staleErr := store.MemoriesStaleInCompleteSpace(
+			ctx,
+			st,
+			embeddings.SemanticSpace(embedder),
+			"",
+			1,
+		); staleErr != nil {
 			logger.Warn("auto-reindex: stale check failed", "error", staleErr)
 		} else if len(stale) > 0 {
 			sharedEmbedder := embedder
@@ -154,9 +166,7 @@ func main() {
 		go w.Start(ctx)
 	}
 
-	if cfg.Audit.RetentionDays > 0 {
-		go runAuditPurge(ctx, st, cfg, logger)
-	}
+	go runAuditPurge(ctx, st, cfg, logger)
 
 	go func() {
 		if err := srv.Start(); err != nil {
@@ -178,26 +188,39 @@ func main() {
 	slog.Info("shutdown complete")
 }
 
-// runAuditPurge periodically deletes audit entries older than the configured
-// retention window, bounding unbounded audit_log growth. Runs an initial sweep
-// immediately, then every cfg.Audit.PurgeInterval until ctx is cancelled.
+const memoryIdempotencyRetentionDays = 90
+
+// runAuditPurge periodically bounds audit, rejection-stat, and idempotency
+// retention. Audit purging honors RetentionDays <= 0 as disabled. Replay
+// retention is deliberately independent: changing audit policy must not
+// silently shorten the window in which retrying clients receive the original
+// idempotent response.
 func runAuditPurge(ctx context.Context, st store.Store, cfg *config.Config, logger *slog.Logger) {
 	interval := cfg.Audit.PurgeInterval
 	if interval <= 0 {
 		interval = 6 * time.Hour
 	}
 	purge := func() {
-		cutoff := time.Now().UTC().AddDate(0, 0, -cfg.Audit.RetentionDays)
-		n, err := st.PurgeAuditOlderThan(ctx, cutoff)
-		if err != nil {
-			logger.Error("audit purge failed", "error", err)
-			return
+		now := time.Now().UTC()
+		if cfg.Audit.RetentionDays > 0 {
+			auditCutoff := now.AddDate(0, 0, -cfg.Audit.RetentionDays)
+			n, err := st.PurgeAuditOlderThan(ctx, auditCutoff)
+			if err != nil {
+				logger.Error("audit purge failed", "error", err)
+			} else if n > 0 {
+				logger.Info("audit purge", "removed", n, "older_than", auditCutoff)
+			}
 		}
-		if n > 0 {
-			logger.Info("audit purge", "removed", n, "older_than", cutoff)
+		if idempotencyStore, ok := st.(store.MemoryIdempotencyRetentionStore); ok {
+			idempotencyCutoff := now.AddDate(0, 0, -memoryIdempotencyRetentionDays)
+			if n, err := idempotencyStore.PurgeMemoryIdempotencyOlderThan(ctx, idempotencyCutoff); err != nil {
+				logger.Error("memory idempotency purge failed", "error", err)
+			} else if n > 0 {
+				logger.Info("memory idempotency purge", "removed", n, "older_than", idempotencyCutoff)
+			}
 		}
 		// Rejection counters back the memory-health view; 90 days is plenty.
-		statsCutoff := time.Now().UTC().AddDate(0, 0, -90).Format("2006-01-02")
+		statsCutoff := now.AddDate(0, 0, -90).Format("2006-01-02")
 		if n, err := st.PurgeRejectionStatsOlderThan(ctx, statsCutoff); err != nil {
 			logger.Error("rejection stats purge failed", "error", err)
 		} else if n > 0 {
@@ -223,9 +246,9 @@ func runAuditPurge(ctx context.Context, st store.Store, cfg *config.Config, logg
 // whose curation_queue rows are already 'done'. Pages by id so a mid-run
 // failure still makes forward progress.
 func runReindex(ctx context.Context, st store.Store, cfg *config.Config, logger *slog.Logger) error {
-	embedder, err := embeddings.New(cfg.Embeddings, logger)
+	embedder, err := buildConfiguredEmbedder(cfg.Embeddings, logger)
 	if err != nil {
-		return fmt.Errorf("build embedder: %w", err)
+		return err
 	}
 	if closer, ok := embedder.(interface{ Close() error }); ok {
 		defer closer.Close()
@@ -241,16 +264,19 @@ func runReindexWith(ctx context.Context, st store.Store, embedder embeddings.Emb
 		logger.Info("reindex: embeddings disabled in config; nothing to do")
 		return nil
 	}
+	if err := validateEmbeddingCompatibility(st, embedder); err != nil {
+		return err
+	}
 	logger.Info("reindex: starting", "provider", embedder.Name(), "model", embedder.Model(), "dims", embedder.Dimensions())
 
-	model := embedder.Model()
+	space := embeddings.SemanticSpace(embedder)
 	var afterID string
 	total, failures := 0, 0
 	for {
 		// Model-aware: re-embeds rows that are missing a vector OR were produced
 		// by a different model, so switching embeddings providers backfills the
 		// whole corpus into a single consistent vector space.
-		batch, err := st.MemoriesStaleEmbedding(ctx, model, afterID, 200)
+		batch, err := store.MemoriesStaleInCompleteSpace(ctx, st, space, afterID, 200)
 		if err != nil {
 			return fmt.Errorf("list memories stale embedding: %w", err)
 		}
@@ -265,9 +291,22 @@ func runReindexWith(ctx context.Context, st store.Store, embedder embeddings.Emb
 				logger.Warn("reindex: embed failed", "memory_id", m.ID, "error", err)
 				continue
 			}
-			if err := st.UpdateMemoryEmbedding(ctx, m.ID, vec, embedder.Model()); err != nil {
+			updated, err := store.UpdateMemoryEmbeddingForContentSpace(
+				ctx,
+				st,
+				m.ID,
+				m.ContentHash,
+				vec,
+				space,
+			)
+			if err != nil {
 				failures++
 				logger.Warn("reindex: store embedding failed", "memory_id", m.ID, "error", err)
+				continue
+			}
+			if !updated {
+				logger.Debug("reindex: memory changed while embedding; skipped stale vector",
+					"memory_id", m.ID)
 				continue
 			}
 			total++
@@ -276,6 +315,39 @@ func runReindexWith(ctx context.Context, st store.Store, embedder embeddings.Emb
 	}
 	logger.Info("reindex: done", "embedded", total, "failures", failures)
 	return nil
+}
+
+func buildConfiguredEmbedder(cfg embeddings.Config, logger *slog.Logger) (embeddings.Embedder, error) {
+	embedder, err := embeddings.New(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("build embeddings provider %q: %w", cfg.Provider, err)
+	}
+	return embedder, nil
+}
+
+func validateEmbeddingCompatibility(st store.Store, embedder embeddings.Embedder) error {
+	if embedder == nil {
+		return nil
+	}
+	dims := embedder.Dimensions()
+	if err := store.ValidateEmbeddingDimensions(st, dims); err != nil {
+		return fmt.Errorf(
+			"embeddings provider %q model %q is incompatible: %w; configure a model/dimensions pair compatible with the storage backend before startup or reindex",
+			embedder.Name(),
+			embedder.Model(),
+			err,
+		)
+	}
+	return nil
+}
+
+func embeddingProviderDisabled(cfg embeddings.Config) bool {
+	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
+	case "none", "disabled":
+		return true
+	default:
+		return false
+	}
 }
 
 func runBootstrap(s store.Store) error {

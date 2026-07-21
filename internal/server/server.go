@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -23,10 +24,11 @@ import (
 const defaultBodyLimit = 64 << 20 // 64 MiB
 
 type Server struct {
-	cfg    *config.Config
-	store  store.Store
-	logger *slog.Logger
-	http   *http.Server
+	cfg      *config.Config
+	store    store.Store
+	embedder embeddings.Embedder
+	logger   *slog.Logger
+	http     *http.Server
 }
 
 // New builds the HTTP server. embedder is the process-shared embedder (may be
@@ -174,8 +176,9 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	h = middleware.CORS(cfg.CORS.AllowedOrigins)(h)
 
 	return &Server{
-		cfg:   cfg,
-		store: st,
+		cfg:      cfg,
+		store:    st,
+		embedder: embedder,
 		http: &http.Server{
 			Addr:         cfg.Server.Address,
 			Handler:      h,
@@ -187,6 +190,16 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 }
 
 func (s *Server) Start() error {
+	if s.embedder != nil {
+		if err := store.ValidateEmbeddingDimensions(s.store, s.embedder.Dimensions()); err != nil {
+			return fmt.Errorf(
+				"invalid embeddings configuration for provider %q model %q: %w",
+				s.embedder.Name(),
+				s.embedder.Model(),
+				err,
+			)
+		}
+	}
 	s.logger.Info("server listening", "address", s.cfg.Server.Address)
 	if err := s.http.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err

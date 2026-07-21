@@ -64,7 +64,10 @@ embeddings:
   #             none   -> disable embeddings (text search only)
   # dimensions MUST match the pgvector column (384). Changing provider/model
   # requires a reindex (`anchored-oss -reindex`); the model is stored per-vector
-  # so reindex re-embeds only rows whose model differs.
+  # so reindex re-embeds only rows whose complete semantic identity differs.
+  # Startup intentionally fails closed for an unknown provider, missing model
+  # artifacts/credentials, or a dimension incompatible with the database.
+  # Use provider: none when text-only operation is intentional.
   provider: local
   model: local-hash-v1
   dimensions: 384
