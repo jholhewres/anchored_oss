@@ -78,13 +78,49 @@ func (h *ChatHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	space := embeddings.SemanticSpace(h.embedder)
+	stale, err := store.ProjectHasStaleCompleteSpace(
+		r.Context(),
+		h.store,
+		req.ProjectID,
+		space,
+	)
+	if err != nil {
+		h.logger.Error("chat: semantic readiness check failed",
+			"error", err, "project_id", req.ProjectID)
+		jsonCodedError(
+			w,
+			http.StatusUnprocessableEntity,
+			"semantic_unavailable",
+			"chat retrieval is unavailable while index readiness cannot be verified",
+		)
+		return
+	}
+	if stale {
+		w.Header().Set("Retry-After", "1")
+		jsonCodedError(
+			w,
+			http.StatusUnprocessableEntity,
+			"semantic_unavailable",
+			"chat retrieval is unavailable while the project index is being rebuilt",
+		)
+		return
+	}
+
 	vec, err := embeddings.EmbedOne(r.Context(), h.embedder, req.Query)
 	if err != nil {
 		h.logger.Error("chat: embed query failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "retrieval failed")
 		return
 	}
-	mems, err := h.store.SearchMemoriesByVector(r.Context(), req.ProjectID, vec, 8)
+	mems, err := store.SearchMemoriesByCompleteSpace(
+		r.Context(),
+		h.store,
+		req.ProjectID,
+		vec,
+		space,
+		8,
+	)
 	if err != nil {
 		h.logger.Error("chat: retrieval failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "retrieval failed")
@@ -119,7 +155,35 @@ func (h *ChatHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if h.provider != nil {
 		model = h.provider.Model()
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"enabled": enabled, "model": model})
+	indexState := "disabled"
+	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	if enabled {
+		indexState = "project_required"
+		if projectID != "" {
+			if !h.checkAccess(w, r, projectID) {
+				return
+			}
+			stale, err := store.ProjectHasStaleCompleteSpace(
+				r.Context(),
+				h.store,
+				projectID,
+				embeddings.SemanticSpace(h.embedder),
+			)
+			switch {
+			case err != nil:
+				h.logger.Error("chat status: semantic readiness check failed",
+					"error", err, "project_id", projectID)
+				indexState = "error"
+			case stale:
+				indexState = "rebuilding"
+			default:
+				indexState = "ready"
+			}
+		}
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"enabled": enabled, "model": model, "index_state": indexState,
+	})
 }
 
 func (h *ChatHandler) checkAccess(w http.ResponseWriter, r *http.Request, projectID string) bool {

@@ -44,16 +44,16 @@ type onboardingProjectInput struct {
 }
 
 type onboardingRequest struct {
-	Org      onboardingOrgInput      `json:"org"`
-	Admin    onboardingAdminInput    `json:"admin"`
+	Org      onboardingOrgInput       `json:"org"`
+	Admin    onboardingAdminInput     `json:"admin"`
 	Projects []onboardingProjectInput `json:"projects"`
 }
 
 type onboardingResponse struct {
-	APIKey   string            `json:"api_key"`
+	APIKey   string              `json:"api_key"`
 	Org      *model.Organization `json:"org"`
-	Admin    *model.Account    `json:"admin"`
-	Projects []*model.Project  `json:"projects"`
+	Admin    *model.Account      `json:"admin"`
+	Projects []*model.Project    `json:"projects"`
 }
 
 // Complete is a single-shot endpoint that bootstraps an org, admin, and
