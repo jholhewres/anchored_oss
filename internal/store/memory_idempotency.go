@@ -1,0 +1,317 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/jholhewres/anchored_oss/internal/model"
+	"github.com/lib/pq"
+)
+
+// MemoryIdempotencyStore is an additive capability implemented by the built-in
+// Postgres and SQLite stores. Keeping it separate from Store preserves source
+// compatibility for existing Store implementations.
+type MemoryIdempotencyStore interface {
+	// UpsertMemoryIdempotent atomically records an operation and applies its
+	// memory write. Replaying the same scoped operation and payload returns the
+	// original response without another write; a different payload returns
+	// ErrIdempotencyConflict.
+	UpsertMemoryIdempotent(
+		ctx context.Context,
+		orgID, actorID, operationID, payloadHash string,
+		memory *model.Memory,
+	) (result *model.Memory, replayed bool, err error)
+	// GetMemoryIdempotency returns a previously committed response before
+	// mutable write gates run. A reused key with another payload returns
+	// ErrIdempotencyConflict; found=false means the first write may proceed.
+	GetMemoryIdempotency(
+		ctx context.Context,
+		orgID, actorID, operationID, payloadHash string,
+	) (result *model.Memory, found bool, err error)
+}
+
+// UpsertMemoryIdempotent applies a memory write exactly once for a
+// caller-scoped operation ID. The transaction inserts the operation record
+// before the memory so concurrent callers serialize on the primary key. A
+// failed memory upsert rolls the operation record back with it.
+func (s *PostgresStore) UpsertMemoryIdempotent(
+	ctx context.Context,
+	orgID, actorID, operationID, payloadHash string,
+	m *model.Memory,
+) (*model.Memory, bool, error) {
+	result, replayed, _, err := s.UpsertMemoryIdempotentWithStatus(
+		ctx,
+		orgID,
+		actorID,
+		operationID,
+		payloadHash,
+		m,
+	)
+	return result, replayed, err
+}
+
+func (s *PostgresStore) UpsertMemoryIdempotentWithStatus(
+	ctx context.Context,
+	orgID, actorID, operationID, payloadHash string,
+	m *model.Memory,
+) (*model.Memory, bool, bool, error) {
+	responseJSON, err := encodeIdempotentMemoryRecord(m, false)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("marshal idempotent memory response: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("begin idempotent memory write: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO memory_write_idempotency
+		   (org_scope, actor_scope, operation_id, payload_hash, memory_id, response_json)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (org_scope, actor_scope, operation_id) DO NOTHING`,
+		orgID, actorID, operationID, payloadHash, m.ID, responseJSON,
+	)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("reserve memory idempotency key: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, false, fmt.Errorf("inspect memory idempotency reservation: %w", err)
+	}
+	if inserted == 0 {
+		replayed, created, err := postgresIdempotentMemoryStatus(ctx, tx, orgID, actorID, operationID, payloadHash)
+		if err != nil {
+			return nil, false, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, false, false, fmt.Errorf("commit idempotent memory replay: %w", err)
+		}
+		return replayed, true, created, nil
+	}
+
+	created, err := postgresUpsertMemoryStatusResult(ctx, tx, m)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("upsert idempotent memory: %w", err)
+	}
+	authoritative, err := postgresMemoryByID(ctx, tx, m.ID)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("load authoritative idempotent memory: %w", err)
+	}
+	responseJSON, err = encodeIdempotentMemoryRecord(authoritative, created)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("marshal authoritative idempotent memory: %w", err)
+	}
+	result, err = tx.ExecContext(ctx,
+		`UPDATE memory_write_idempotency
+		 SET memory_id = $1, response_json = $2
+		 WHERE org_scope = $3 AND actor_scope = $4 AND operation_id = $5`,
+		authoritative.ID, responseJSON, orgID, actorID, operationID,
+	)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("snapshot authoritative idempotent memory: %w", err)
+	}
+	if changed, rowsErr := result.RowsAffected(); rowsErr != nil {
+		return nil, false, false, fmt.Errorf("inspect authoritative idempotency snapshot: %w", rowsErr)
+	} else if changed != 1 {
+		return nil, false, false, fmt.Errorf(
+			"snapshot authoritative idempotent memory affected %d rows, want 1",
+			changed,
+		)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, false, false, fmt.Errorf("commit idempotent memory write: %w", err)
+	}
+	s.enqueueCurationBestEffort(ctx, authoritative.ID)
+	return authoritative, false, created, nil
+}
+
+// GetMemoryIdempotency reads a committed operation response without applying
+// mutable create-time policy, quota, or project-resolution gates.
+func (s *PostgresStore) GetMemoryIdempotency(
+	ctx context.Context,
+	orgID, actorID, operationID, payloadHash string,
+) (*model.Memory, bool, error) {
+	memory, _, found, err := s.GetMemoryIdempotencyWithStatus(
+		ctx,
+		orgID,
+		actorID,
+		operationID,
+		payloadHash,
+	)
+	return memory, found, err
+}
+
+func (s *PostgresStore) GetMemoryIdempotencyWithStatus(
+	ctx context.Context,
+	orgID, actorID, operationID, payloadHash string,
+) (*model.Memory, bool, bool, error) {
+	var existingHash string
+	var responseJSON []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT payload_hash, response_json
+		 FROM memory_write_idempotency
+		 WHERE org_scope = $1 AND actor_scope = $2 AND operation_id = $3`,
+		orgID, actorID, operationID,
+	).Scan(&existingHash, &responseJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, false, nil
+	}
+	if err != nil {
+		return nil, false, false, fmt.Errorf("load memory idempotency record: %w", err)
+	}
+	memory, created, err := decodeIdempotentMemoryRecord(existingHash, payloadHash, responseJSON)
+	if err != nil {
+		return nil, false, false, err
+	}
+	return memory, created, true, nil
+}
+
+func (s *PostgresStore) PurgeMemoryIdempotencyOlderThan(
+	ctx context.Context,
+	before time.Time,
+) (int64, error) {
+	result, err := s.db.ExecContext(
+		ctx,
+		`DELETE FROM memory_write_idempotency WHERE created_at < $1`,
+		before,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("purge memory idempotency records: %w", err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("inspect memory idempotency purge: %w", err)
+	}
+	return removed, nil
+}
+
+func postgresIdempotentMemoryStatus(
+	ctx context.Context,
+	tx queryRower,
+	orgID, actorID, operationID, payloadHash string,
+) (*model.Memory, bool, error) {
+	var existingHash string
+	var responseJSON []byte
+	err := tx.QueryRowContext(ctx,
+		`SELECT payload_hash, response_json
+		 FROM memory_write_idempotency
+		 WHERE org_scope = $1 AND actor_scope = $2 AND operation_id = $3`,
+		orgID, actorID, operationID,
+	).Scan(&existingHash, &responseJSON)
+	if err != nil {
+		return nil, false, fmt.Errorf("load memory idempotency record: %w", err)
+	}
+	return decodeIdempotentMemoryRecord(existingHash, payloadHash, responseJSON)
+}
+
+type idempotentMemoryRecord struct {
+	Memory  *model.Memory `json:"memory"`
+	Created bool          `json:"created"`
+}
+
+func encodeIdempotentMemoryRecord(memory *model.Memory, created bool) ([]byte, error) {
+	return json.Marshal(idempotentMemoryRecord{Memory: memory, Created: created})
+}
+
+func decodeIdempotentMemoryRecord(existingHash, payloadHash string, responseJSON []byte) (*model.Memory, bool, error) {
+	if existingHash != payloadHash {
+		return nil, false, fmt.Errorf("%w: operation ID already used with another payload", ErrIdempotencyConflict)
+	}
+	var record idempotentMemoryRecord
+	if err := json.Unmarshal(responseJSON, &record); err == nil && record.Memory != nil {
+		return record.Memory, record.Created, nil
+	}
+
+	// Migration 019 originally stored the memory object directly. Accept that
+	// shape indefinitely; those historical POSTs were create operations.
+	var memory model.Memory
+	if err := json.Unmarshal(responseJSON, &memory); err != nil {
+		return nil, false, fmt.Errorf("decode idempotent memory response: %w", err)
+	}
+	return &memory, true, nil
+}
+
+func postgresMemoryByID(
+	ctx context.Context,
+	querier queryRower,
+	id string,
+) (*model.Memory, error) {
+	var memory model.Memory
+	var metadataJSON []byte
+	err := querier.QueryRowContext(ctx,
+		`SELECT id, project_id, category, content, content_hash, keywords,
+		 source, author_id, author_name, created_at, updated_at, deleted_at, metadata
+		 FROM memories WHERE id = $1`,
+		id,
+	).Scan(
+		&memory.ID,
+		&memory.ProjectID,
+		&memory.Category,
+		&memory.Content,
+		&memory.ContentHash,
+		pq.Array(&memory.Keywords),
+		&memory.Source,
+		scanNullString(&memory.AuthorID),
+		&memory.AuthorName,
+		&memory.CreatedAt,
+		&memory.UpdatedAt,
+		&memory.DeletedAt,
+		&metadataJSON,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(metadataJSON) > 0 {
+		if err := json.Unmarshal(metadataJSON, &memory.Metadata); err != nil {
+			return nil, fmt.Errorf("decode authoritative memory metadata: %w", err)
+		}
+	}
+	return &memory, nil
+}
+
+type queryRower interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+type memoryExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+type memoryQuerierExecer interface {
+	memoryExecer
+	queryRower
+}
+
+func validateRequestedMemoryProjects(memories []*model.Memory) error {
+	projects := make(map[string]string, len(memories))
+	for _, memory := range memories {
+		if memory == nil {
+			return fmt.Errorf("%w: nil memory in batch", ErrConflict)
+		}
+		if projectID, exists := projects[memory.ID]; exists && projectID != memory.ProjectID {
+			return fmt.Errorf(
+				"%w: memory ID %s appears under multiple projects",
+				ErrConflict,
+				memory.ID,
+			)
+		}
+		projects[memory.ID] = memory.ProjectID
+	}
+	return nil
+}
+
+func (s *PostgresStore) enqueueCurationBestEffort(ctx context.Context, memoryID string) {
+	if err := s.EnqueueCuration(ctx, []string{memoryID}); err != nil {
+		slog.Default().Warn("enqueue curation failed", "memory_id", memoryID, "error", err)
+	}
+}
