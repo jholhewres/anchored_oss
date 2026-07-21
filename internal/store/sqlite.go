@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
@@ -15,7 +16,8 @@ func containsParam(dsn, param string) bool {
 
 // SQLiteStore implements Store backed by a SQLite database file.
 type SQLiteStore struct {
-	db *sql.DB
+	db            *sql.DB
+	idempotencyMu sync.Mutex
 }
 
 // NewSQLiteStore opens (or creates) a SQLite database, sets pragmas, runs

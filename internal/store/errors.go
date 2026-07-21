@@ -16,6 +16,10 @@ var ErrNotFound = errors.New("not found")
 // caller can surface as a 409 (e.g. a slug already in use within an org).
 var ErrConflict = errors.New("conflict")
 
+// ErrIdempotencyConflict is returned when a scoped operation ID was already
+// committed with a different payload.
+var ErrIdempotencyConflict = errors.New("idempotency conflict")
+
 // isUniqueViolation reports whether err is a unique-constraint violation from
 // either backend: modernc sqlite surfaces it as a string ("UNIQUE constraint
 // failed"), while pgx surfaces a *pgconn.PgError with SQLSTATE 23505.

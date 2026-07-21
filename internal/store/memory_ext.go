@@ -21,7 +21,7 @@ func (s *PostgresStore) GetMemoryByID(ctx context.Context, id string) (*model.Me
 		 FROM memories WHERE id = $1`,
 		id,
 	).Scan(&m.ID, &m.ProjectID, &m.Category, &m.Content, &m.ContentHash,
-		pq.Array(&m.Keywords), &m.Source, &m.AuthorID, &m.AuthorName,
+		pq.Array(&m.Keywords), &m.Source, scanNullString(&m.AuthorID), &m.AuthorName,
 		&m.CreatedAt, &m.UpdatedAt, &m.DeletedAt, &metadataBytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -52,6 +52,37 @@ func (s *PostgresStore) UpdateMemoryMetadata(ctx context.Context, id string, met
 		return fmt.Errorf("update memory metadata: %w", err)
 	}
 	return nil
+}
+
+func (s *PostgresStore) UpdateMemoryMetadataIfContent(
+	ctx context.Context,
+	id string,
+	expectedContentHash string,
+	metadata any,
+) (bool, error) {
+	if expectedContentHash == "" {
+		return false, fmt.Errorf("update memory metadata: expected content hash is required")
+	}
+	b, err := json.Marshal(metadata)
+	if err != nil {
+		return false, fmt.Errorf("marshal metadata: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE memories
+		 SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+		 WHERE id = $2 AND content_hash = $3`,
+		string(b),
+		id,
+		expectedContentHash,
+	)
+	if err != nil {
+		return false, fmt.Errorf("update memory metadata: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("inspect memory metadata update: %w", err)
+	}
+	return affected == 1, nil
 }
 
 // ListProjectMemoriesSince returns all non-deleted memories in a project

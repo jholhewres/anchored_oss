@@ -63,8 +63,9 @@ type Store interface {
 
 	// Memories.
 	SearchMemories(ctx context.Context, projectID string, query string, limit int) ([]*model.Memory, error)
-	// SearchMemoriesByVector ranks project memories by cosine similarity to the
-	// query vector (semantic search). Postgres uses pgvector; SQLite brute-forces.
+	// SearchMemoriesByVector is retained for source compatibility. New server
+	// retrieval must use SemanticSpaceSearcher so model identity and dimensions
+	// are filtered before comparison.
 	SearchMemoriesByVector(ctx context.Context, projectID string, vec []float32, k int) ([]*model.Memory, error)
 	// UpdateMemoryEmbedding stores (or replaces) a memory's vector and model.
 	UpdateMemoryEmbedding(ctx context.Context, memoryID string, vec []float32, model string) error
@@ -75,7 +76,7 @@ type Store interface {
 	// missing OR was produced by a different model than `model` (id > afterID,
 	// ordered by id). Used by reindex to re-embed an existing corpus after an
 	// embeddings provider/model change so the whole vector space stays
-	// consistent. Only id and content are populated.
+	// consistent. Only id, content, and content hash are populated.
 	MemoriesStaleEmbedding(ctx context.Context, model, afterID string, limit int) ([]*model.Memory, error)
 	UpsertMemory(ctx context.Context, m *model.Memory) error
 	// UpsertMemories upserts a batch of memories in a single statement.
@@ -160,7 +161,7 @@ type Store interface {
 
 	// Quota.
 	// GetOrgStorageBytes returns the total bytes used by non-deleted memories
-	// in all active projects under the given org.
+	// in active projects plus retained idempotency response snapshots.
 	GetOrgStorageBytes(ctx context.Context, orgID string) (int64, error)
 
 	// Invites.

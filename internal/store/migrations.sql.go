@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 18
+const schemaVersion = 20
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -345,7 +345,6 @@ const migration017 = `
 ALTER TABLE org_policies ADD COLUMN IF NOT EXISTS max_memories_per_sync INTEGER NOT NULL DEFAULT 500;
 `
 
-
 // migration018 adds per-account task threads (Feature C): the personal
 // kanban's storage. Threads are PRIVATE to the owning account — every query
 // is account-scoped and there is deliberately no admin/org-wide listing.
@@ -363,6 +362,39 @@ CREATE TABLE IF NOT EXISTS account_task_threads (
     PRIMARY KEY (account_id, task_key)
 );
 CREATE INDEX IF NOT EXISTS idx_account_task_threads_status ON account_task_threads(account_id, status);
+`
+
+// migration019 records successful memory writes by caller-scoped operation ID.
+// The response snapshot lets a replay return the original result even if the
+// current memory is changed later. The row and memory upsert are committed in
+// one transaction by UpsertMemoryIdempotent.
+const migration019 = `
+CREATE TABLE IF NOT EXISTS memory_write_idempotency (
+    org_scope TEXT NOT NULL,
+    actor_scope TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    memory_id TEXT NOT NULL,
+    response_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_scope, actor_scope, operation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_write_idempotency_created_at
+    ON memory_write_idempotency(created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_write_idempotency_memory_id
+    ON memory_write_idempotency(memory_id);
+`
+
+// migration020 adds the complete embedding-space identity. Existing vectors
+// remain readable through legacy APIs but are intentionally stale for complete
+// semantic-space search until reindexed.
+const migration020 = `
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS semantic_space_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_memories_semantic_space
+    ON memories(project_id, semantic_space_id)
+    WHERE embedding IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_memory_write_idempotency_memory_id
+    ON memory_write_idempotency(memory_id);
 `
 
 var migrations = map[int]string{
@@ -384,6 +416,8 @@ var migrations = map[int]string{
 	16: migration016,
 	17: migration017,
 	18: migration018,
+	19: migration019,
+	20: migration020,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

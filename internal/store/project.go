@@ -165,13 +165,19 @@ func (s *PostgresStore) HasProjectAccess(ctx context.Context, accountID, project
 // so the statement stays backend-agnostic. Idempotent: returns ErrNotFound only
 // when the project never existed; double-deletes are a no-op.
 func (s *PostgresStore) SoftDeleteProject(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin soft delete project: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var slug string
-	err := s.db.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`SELECT slug FROM projects WHERE id = $1 AND deleted_at IS NULL`, id,
 	).Scan(&slug)
 	if errors.Is(err, sql.ErrNoRows) {
 		var exists bool
-		if qerr := s.db.QueryRowContext(ctx,
+		if qerr := tx.QueryRowContext(ctx,
 			`SELECT EXISTS (SELECT 1 FROM projects WHERE id = $1)`, id,
 		).Scan(&exists); qerr != nil {
 			return fmt.Errorf("verify project existence: %w", qerr)
@@ -179,18 +185,43 @@ func (s *PostgresStore) SoftDeleteProject(ctx context.Context, id string) error 
 		if !exists {
 			return ErrNotFound
 		}
-		return nil // already deleted: idempotent no-op
+		if _, purgeErr := tx.ExecContext(ctx,
+			`UPDATE memory_write_idempotency
+			 SET response_json = jsonb_build_object(
+			   'memory', jsonb_build_object('id', memory_id),
+			   'created', false
+			 )
+			 WHERE memory_id IN (SELECT id FROM memories WHERE project_id = $1)`,
+			id,
+		); purgeErr != nil {
+			return fmt.Errorf("redact project idempotency after soft delete: %w", purgeErr)
+		}
+		return tx.Commit()
 	}
 	if err != nil {
 		return fmt.Errorf("load project for soft delete: %w", err)
 	}
 
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE memory_write_idempotency
+		 SET response_json = jsonb_build_object(
+		   'memory', jsonb_build_object('id', memory_id),
+		   'created', false
+		 )
+		 WHERE memory_id IN (SELECT id FROM memories WHERE project_id = $1)`,
+		id,
+	); err != nil {
+		return fmt.Errorf("redact project idempotency on soft delete: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE projects SET deleted_at = now(), slug = $1, remote_key = $2, remote_key_v1 = NULL, repo_url = NULL
 		 WHERE id = $3 AND deleted_at IS NULL`,
 		mangleDeletedSlug(slug, id), deletedRemoteKey(id), id,
 	); err != nil {
 		return fmt.Errorf("soft delete project: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit soft delete project: %w", err)
 	}
 	return nil
 }

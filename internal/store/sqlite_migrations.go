@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 18
+const sqliteSchemaVersion = 20
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -289,7 +289,6 @@ CREATE INDEX IF NOT EXISTS idx_sync_rejection_org_day ON sync_rejection_stats(or
 // guard in the v == 17 branch below; this SQL block is intentionally empty.
 const sqliteMigration017 = ``
 
-
 // sqliteMigration018 mirrors Postgres 018 (per-account task threads).
 const sqliteMigration018 = `
 CREATE TABLE IF NOT EXISTS account_task_threads (
@@ -306,6 +305,29 @@ CREATE TABLE IF NOT EXISTS account_task_threads (
 );
 CREATE INDEX IF NOT EXISTS idx_account_task_threads_status ON account_task_threads(account_id, status);
 `
+
+// sqliteMigration019 mirrors Postgres 019: caller-scoped memory write
+// idempotency with the original successful response preserved for replay.
+const sqliteMigration019 = `
+CREATE TABLE IF NOT EXISTS memory_write_idempotency (
+    org_scope TEXT NOT NULL,
+    actor_scope TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    memory_id TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (org_scope, actor_scope, operation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_write_idempotency_created_at
+    ON memory_write_idempotency(created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_write_idempotency_memory_id
+    ON memory_write_idempotency(memory_id);
+`
+
+// sqliteMigration020 adds complete semantic-space identity. The column is
+// added through the guarded migration branch below for legacy databases.
+const sqliteMigration020 = ``
 
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
@@ -326,6 +348,8 @@ var sqliteMigrations = map[int]string{
 	16: sqliteMigration016,
 	17: sqliteMigration017,
 	18: sqliteMigration018,
+	19: sqliteMigration019,
+	20: sqliteMigration020,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {
@@ -414,6 +438,29 @@ func MigrateSQLite(db *sql.DB) error {
 			if _, err := tx.Exec(`ALTER TABLE org_policies ADD COLUMN max_memories_per_sync INTEGER NOT NULL DEFAULT 500`); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("migration %d add max_memories_per_sync: %w", v, err)
+			}
+		}
+
+		if v == 20 {
+			if !columnExists(db, "memories", "semantic_space_id") {
+				if _, err := tx.Exec(`ALTER TABLE memories ADD COLUMN semantic_space_id TEXT`); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("migration %d add semantic_space_id: %w", v, err)
+				}
+			}
+			if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_semantic_space
+				ON memories(project_id, semantic_space_id)
+				WHERE embedding IS NOT NULL AND deleted_at IS NULL`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d index semantic_space_id: %w", v, err)
+			}
+			// Databases that already ran the development version of migration
+			// 019 still need the deletion-lookup index. Keep migration 020's
+			// SQL text empty because its ALTER TABLE must remain guarded.
+			if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_memory_write_idempotency_memory_id
+				ON memory_write_idempotency(memory_id)`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d index memory idempotency memory_id: %w", v, err)
 			}
 		}
 

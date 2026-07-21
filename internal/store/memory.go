@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -98,12 +99,88 @@ func (s *PostgresStore) SearchMemories(ctx context.Context, projectID string, qu
 }
 
 func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error {
+	if _, err := postgresUpsertMemoryResult(ctx, s.db, m); err != nil {
+		return err
+	}
+	if err := s.EnqueueCuration(ctx, []string{m.ID}); err != nil {
+		slog.Default().Warn("enqueue curation failed", "memory_id", m.ID, "error", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpsertMemoryWithStatus(ctx context.Context, m *model.Memory) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin memory upsert: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	created, err := postgresUpsertMemoryStatusResult(ctx, tx, m)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit memory upsert: %w", err)
+	}
+	if err := s.EnqueueCuration(ctx, []string{m.ID}); err != nil {
+		slog.Default().Warn("enqueue curation failed", "memory_id", m.ID, "error", err)
+	}
+	return created, nil
+}
+
+func postgresUpsertMemoryStatusResult(ctx context.Context, execer memoryQuerierExecer, m *model.Memory) (bool, error) {
 	var metadataBytes []byte
 	if m.Metadata != nil {
 		var err error
 		metadataBytes, err = json.Marshal(m.Metadata)
 		if err != nil {
-			return fmt.Errorf("marshal memory metadata: %w", err)
+			return false, fmt.Errorf("marshal memory metadata: %w", err)
+		}
+	}
+	result, err := execer.ExecContext(ctx,
+		`INSERT INTO memories
+		   (id, project_id, category, content, content_hash, keywords, source,
+		    author_id, author_name, created_at, updated_at, metadata)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 ON CONFLICT (id) DO NOTHING`,
+		m.ID,
+		m.ProjectID,
+		m.Category,
+		m.Content,
+		m.ContentHash,
+		pq.Array(m.Keywords),
+		m.Source,
+		nilIfEmpty(m.AuthorID),
+		m.AuthorName,
+		m.CreatedAt,
+		m.UpdatedAt,
+		metadataBytes,
+	)
+	if err != nil {
+		return false, fmt.Errorf("insert memory: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("inspect memory insert result: %w", err)
+	}
+	if inserted == 1 {
+		return true, nil
+	}
+	if inserted != 0 {
+		return false, fmt.Errorf("insert memory affected %d rows, want 0 or 1", inserted)
+	}
+	if _, err := postgresUpsertMemoryResult(ctx, execer, m); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func postgresUpsertMemoryResult(ctx context.Context, execer memoryQuerierExecer, m *model.Memory) (int64, error) {
+	var metadataBytes []byte
+	if m.Metadata != nil {
+		var err error
+		metadataBytes, err = json.Marshal(m.Metadata)
+		if err != nil {
+			return 0, fmt.Errorf("marshal memory metadata: %w", err)
 		}
 	}
 
@@ -112,7 +189,7 @@ func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error
 	// (content_hash, project_id) and replaced it with a plain index kept for
 	// lookups only — content-level dupes under different ids are legal; dedup
 	// and quality filtering are handled asynchronously by the curation worker.
-	_, err := s.db.ExecContext(ctx,
+	result, err := execer.ExecContext(ctx,
 		`INSERT INTO memories (id, project_id, category, content, content_hash, keywords, source, author_id, author_name, created_at, updated_at, metadata)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 ON CONFLICT (id) DO UPDATE SET
@@ -126,19 +203,54 @@ func (s *PostgresStore) UpsertMemory(ctx context.Context, m *model.Memory) error
 		   author_name = EXCLUDED.author_name,
 		   updated_at = EXCLUDED.updated_at,
 		   metadata = EXCLUDED.metadata,
+		   embedding = CASE
+		     WHEN memories.content IS DISTINCT FROM EXCLUDED.content
+		       OR memories.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+		     THEN NULL ELSE memories.embedding END,
+		   embed_model = CASE
+		     WHEN memories.content IS DISTINCT FROM EXCLUDED.content
+		       OR memories.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+		     THEN NULL ELSE memories.embed_model END,
+		   embed_dims = CASE
+		     WHEN memories.content IS DISTINCT FROM EXCLUDED.content
+		       OR memories.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+		     THEN NULL ELSE memories.embed_dims END,
+		   semantic_space_id = CASE
+		     WHEN memories.content IS DISTINCT FROM EXCLUDED.content
+		       OR memories.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+		     THEN NULL ELSE memories.semantic_space_id END,
 		   deleted_at = NULL
-		 WHERE memories.updated_at <= EXCLUDED.updated_at`,
+		 WHERE memories.project_id IS NOT DISTINCT FROM EXCLUDED.project_id
+		   AND memories.updated_at <= EXCLUDED.updated_at`,
 		m.ID, m.ProjectID, m.Category, m.Content, m.ContentHash,
 		pq.Array(m.Keywords), m.Source, m.AuthorID, m.AuthorName,
 		m.CreatedAt, m.UpdatedAt, metadataBytes,
 	)
 	if err != nil {
-		return fmt.Errorf("upsert memory: %w", err)
+		return 0, fmt.Errorf("upsert memory: %w", err)
 	}
-	if err := s.EnqueueCuration(ctx, []string{m.ID}); err != nil {
-		slog.Default().Warn("enqueue curation failed", "memory_id", m.ID, "error", err)
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("inspect upsert memory result: %w", err)
 	}
-	return nil
+	if affected == 0 {
+		var existingProjectID string
+		err := execer.QueryRowContext(ctx,
+			`SELECT project_id FROM memories WHERE id = $1`,
+			m.ID,
+		).Scan(&existingProjectID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("inspect existing memory project: %w", err)
+		}
+		if err == nil && existingProjectID != m.ProjectID {
+			return 0, fmt.Errorf(
+				"%w: memory ID %s belongs to another project",
+				ErrConflict,
+				m.ID,
+			)
+		}
+	}
+	return affected, nil
 }
 
 // UpsertMemories runs a single batched INSERT ... ON CONFLICT (id) DO UPDATE
@@ -161,6 +273,9 @@ func (s *PostgresStore) UpsertMemories(ctx context.Context, ms []*model.Memory) 
 }
 
 func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Memory) error {
+	if err := validateRequestedMemoryProjects(ms); err != nil {
+		return err
+	}
 	args := make([]any, 0, memoryUpsertCols*len(ms))
 	placeholders := make([]string, 0, len(ms))
 	for i, m := range ms {
@@ -198,11 +313,39 @@ func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Mem
 		   author_name = EXCLUDED.author_name,
 		   updated_at = EXCLUDED.updated_at,
 		   metadata = EXCLUDED.metadata,
+		   embedding = CASE
+		     WHEN memories.content IS DISTINCT FROM EXCLUDED.content
+		       OR memories.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+		     THEN NULL ELSE memories.embedding END,
+		   embed_model = CASE
+		     WHEN memories.content IS DISTINCT FROM EXCLUDED.content
+		       OR memories.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+		     THEN NULL ELSE memories.embed_model END,
+		   embed_dims = CASE
+		     WHEN memories.content IS DISTINCT FROM EXCLUDED.content
+		       OR memories.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+		     THEN NULL ELSE memories.embed_dims END,
+		   semantic_space_id = CASE
+		     WHEN memories.content IS DISTINCT FROM EXCLUDED.content
+		       OR memories.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+		     THEN NULL ELSE memories.semantic_space_id END,
 		   deleted_at = NULL
-		 WHERE memories.updated_at <= EXCLUDED.updated_at`
+		 WHERE memories.project_id IS NOT DISTINCT FROM EXCLUDED.project_id
+		   AND memories.updated_at <= EXCLUDED.updated_at`
 
-	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin upsert memories batch: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("upsert memories batch: %w", err)
+	}
+	if err := validatePostgresStoredMemoryProjects(ctx, tx, ms); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit upsert memories batch: %w", err)
 	}
 	ids := make([]string, len(ms))
 	for i, m := range ms {
@@ -212,6 +355,41 @@ func (s *PostgresStore) upsertMemoriesChunk(ctx context.Context, ms []*model.Mem
 		slog.Default().Warn("enqueue curation failed", "memory_count", len(ids), "error", err)
 	}
 	return nil
+}
+
+func validatePostgresStoredMemoryProjects(
+	ctx context.Context,
+	tx *sql.Tx,
+	memories []*model.Memory,
+) error {
+	expected := make(map[string]string, len(memories))
+	ids := make([]string, 0, len(memories))
+	for _, memory := range memories {
+		expected[memory.ID] = memory.ProjectID
+		ids = append(ids, memory.ID)
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, project_id FROM memories WHERE id = ANY($1)`,
+		pq.Array(ids),
+	)
+	if err != nil {
+		return fmt.Errorf("validate memory batch projects: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, projectID string
+		if err := rows.Scan(&id, &projectID); err != nil {
+			return fmt.Errorf("scan memory batch project: %w", err)
+		}
+		if projectID != expected[id] {
+			return fmt.Errorf(
+				"%w: memory ID %s belongs to another project",
+				ErrConflict,
+				id,
+			)
+		}
+	}
+	return rows.Err()
 }
 
 func (s *PostgresStore) GetMemoriesUpdatedSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error) {
@@ -290,7 +468,7 @@ func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID str
 		var metadataBytes []byte
 		if err := rows.Scan(
 			&m.ID, &m.ProjectID, &m.Category, &m.Content, &m.ContentHash,
-			pq.Array(&m.Keywords), &m.Source, &m.AuthorID, &m.AuthorName,
+			pq.Array(&m.Keywords), &m.Source, scanNullString(&m.AuthorID), &m.AuthorName,
 			&m.CreatedAt, &m.UpdatedAt, &m.DeletedAt, &metadataBytes, &total,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan memory: %w", err)
@@ -309,7 +487,12 @@ func (s *PostgresStore) ListMemoriesPaginated(ctx context.Context, projectID str
 }
 
 func (s *PostgresStore) SoftDeleteMemory(ctx context.Context, id, projectID string) error {
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin soft delete memory: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
 		`UPDATE memories SET deleted_at = now(), updated_at = now() WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL`,
 		id, projectID,
 	)
@@ -322,6 +505,20 @@ func (s *PostgresStore) SoftDeleteMemory(ctx context.Context, id, projectID stri
 	}
 	if affected == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE memory_write_idempotency
+		 SET response_json = jsonb_build_object(
+		   'memory', jsonb_build_object('id', memory_id),
+		   'created', false
+		 )
+		 WHERE memory_id = $1`,
+		id,
+	); err != nil {
+		return fmt.Errorf("redact memory idempotency on soft delete: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit soft delete memory: %w", err)
 	}
 	return nil
 }
@@ -357,7 +554,7 @@ func scanMemories(rows *sql.Rows) ([]*model.Memory, error) {
 		var metadataBytes []byte
 		if err := rows.Scan(
 			&m.ID, &m.ProjectID, &m.Category, &m.Content, &m.ContentHash,
-			pq.Array(&m.Keywords), &m.Source, &m.AuthorID, &m.AuthorName,
+			pq.Array(&m.Keywords), &m.Source, scanNullString(&m.AuthorID), &m.AuthorName,
 			&m.CreatedAt, &m.UpdatedAt, &m.DeletedAt, &metadataBytes,
 		); err != nil {
 			return nil, fmt.Errorf("scan memory: %w", err)

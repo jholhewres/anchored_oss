@@ -94,14 +94,25 @@ func scanNullTime(dest **time.Time) *nullTimeScanner {
 	return &nullTimeScanner{dest: dest}
 }
 
-func scanNullString(dest *string) *sql.NullString {
-	return &sql.NullString{}
+type nullStringScanner struct {
+	dest *string
 }
 
-func fromNullString(ns *sql.NullString, dest *string) {
-	if ns.Valid {
-		*dest = ns.String
+func (s *nullStringScanner) Scan(value any) error {
+	var nullable sql.NullString
+	if err := nullable.Scan(value); err != nil {
+		return err
 	}
+	if nullable.Valid {
+		*s.dest = nullable.String
+	} else {
+		*s.dest = ""
+	}
+	return nil
+}
+
+func scanNullString(dest *string) *nullStringScanner {
+	return &nullStringScanner{dest: dest}
 }
 
 // nullIfEmpty maps "" to a SQL NULL so nullable TEXT columns stay NULL instead

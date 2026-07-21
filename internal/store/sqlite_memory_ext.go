@@ -20,7 +20,7 @@ func (s *SQLiteStore) GetMemoryByID(ctx context.Context, id string) (*model.Memo
 		 FROM memories WHERE id = ?`,
 		id,
 	).Scan(&m.ID, &m.ProjectID, &m.Category, &m.Content, &m.ContentHash,
-		&kwBytes, &m.Source, &m.AuthorID, &m.AuthorName,
+		&kwBytes, &m.Source, scanNullString(&m.AuthorID), &m.AuthorName,
 		scanTime(&m.CreatedAt), scanTime(&m.UpdatedAt), scanNullTime(&m.DeletedAt), &metadataBytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -86,6 +86,82 @@ func (s *SQLiteStore) UpdateMemoryMetadata(ctx context.Context, id string, metad
 		return fmt.Errorf("update memory metadata: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLiteStore) UpdateMemoryMetadataIfContent(
+	ctx context.Context,
+	id string,
+	expectedContentHash string,
+	metadata any,
+) (bool, error) {
+	if expectedContentHash == "" {
+		return false, fmt.Errorf("update memory metadata: expected content hash is required")
+	}
+	b, err := json.Marshal(metadata)
+	if err != nil {
+		return false, fmt.Errorf("marshal metadata: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin metadata update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var existing []byte
+	var currentContentHash string
+	err = tx.QueryRowContext(
+		ctx,
+		`SELECT metadata, content_hash FROM memories WHERE id = ?`,
+		id,
+	).Scan(&existing, &currentContentHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("read existing metadata: %w", err)
+	}
+	if currentContentHash != expectedContentHash {
+		return false, nil
+	}
+
+	merged := make(map[string]any)
+	if len(existing) > 0 {
+		if err := json.Unmarshal(existing, &merged); err != nil {
+			return false, fmt.Errorf("unmarshal existing metadata: %w", err)
+		}
+		if merged == nil {
+			merged = make(map[string]any)
+		}
+	}
+	var patch map[string]any
+	if err := json.Unmarshal(b, &patch); err != nil {
+		return false, fmt.Errorf("unmarshal patch metadata: %w", err)
+	}
+	for key, value := range patch {
+		merged[key] = value
+	}
+	out, err := json.Marshal(merged)
+	if err != nil {
+		return false, fmt.Errorf("marshal merged metadata: %w", err)
+	}
+	result, err := tx.ExecContext(
+		ctx,
+		`UPDATE memories SET metadata = ? WHERE id = ? AND content_hash = ?`,
+		string(out),
+		id,
+		expectedContentHash,
+	)
+	if err != nil {
+		return false, fmt.Errorf("update memory metadata: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("inspect memory metadata update: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit metadata update: %w", err)
+	}
+	return affected == 1, nil
 }
 
 func (s *SQLiteStore) ListProjectMemoriesSince(ctx context.Context, projectID string, since time.Time) ([]*model.Memory, error) {
