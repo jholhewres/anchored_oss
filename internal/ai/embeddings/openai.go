@@ -3,9 +3,12 @@ package embeddings
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -28,6 +31,7 @@ func NewOpenAIEmbedder(baseURL, model, apiKey string, dims int) *OpenAIEmbedder 
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
+	baseURL = normalizeOpenAIBaseURL(baseURL)
 	return &OpenAIEmbedder{
 		baseURL: baseURL,
 		model:   model,
@@ -40,10 +44,15 @@ func NewOpenAIEmbedder(baseURL, model, apiKey string, dims int) *OpenAIEmbedder 
 func (e *OpenAIEmbedder) Dimensions() int { return e.dims }
 func (e *OpenAIEmbedder) Model() string   { return e.model }
 func (e *OpenAIEmbedder) Name() string    { return "openai" }
+func (e *OpenAIEmbedder) SemanticProviderIdentity() string {
+	sum := sha256.Sum256([]byte(e.baseURL))
+	return fmt.Sprintf("openai-endpoint-sha256:%x", sum)
+}
 
 type openAIRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
+	Model      string   `json:"model"`
+	Input      []string `json:"input"`
+	Dimensions int      `json:"dimensions,omitempty"`
 }
 
 type openAIResponse struct {
@@ -59,7 +68,15 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 	if len(texts) == 0 {
 		return nil, nil
 	}
-	body, err := json.Marshal(openAIRequest{Model: e.model, Input: texts})
+	requestedDimensions := 0
+	if supportsOpenAIDimensions(e.model) {
+		requestedDimensions = e.dims
+	}
+	body, err := json.Marshal(openAIRequest{
+		Model:      e.model,
+		Input:      texts,
+		Dimensions: requestedDimensions,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("embeddings: marshal request: %w", err)
 	}
@@ -95,7 +112,31 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 
 	out := make([][]float32, len(parsed.Data))
 	for i, d := range parsed.Data {
+		if len(d.Embedding) != e.dims {
+			return nil, fmt.Errorf(
+				"embeddings: vector %d has %d dimensions, want %d",
+				i,
+				len(d.Embedding),
+				e.dims,
+			)
+		}
 		out[i] = l2normalize(d.Embedding)
 	}
 	return out, nil
+}
+
+func supportsOpenAIDimensions(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "text-embedding-3-")
+}
+
+func normalizeOpenAIBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return baseURL
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
 }

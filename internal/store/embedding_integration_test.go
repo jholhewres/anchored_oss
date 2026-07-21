@@ -79,12 +79,25 @@ func TestVectorSearch_Postgres(t *testing.T) {
 			t.Fatalf("store embedding %s: %v", s.id, err)
 		}
 	}
+	oldSpaceID := "m-old-space-" + u
+	oldSpaceContent := "how are schema migrations handled when the server boots"
+	if err := st.UpsertMemory(ctx, &model.Memory{
+		ID: oldSpaceID, ProjectID: proj.ID, Category: "fact",
+		Content: oldSpaceContent, ContentHash: oldSpaceID, AuthorID: acc.ID,
+		AuthorName: "Vec", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert old semantic space: %v", err)
+	}
+	oldSpaceVector, _ := embeddings.EmbedOne(ctx, emb, oldSpaceContent)
+	if err := st.UpdateMemoryEmbedding(ctx, oldSpaceID, oldSpaceVector, "old-model-same-dims"); err != nil {
+		t.Fatalf("store old semantic space: %v", err)
+	}
 
 	qvec, err := embeddings.EmbedOne(ctx, emb, "how are schema migrations handled when the server boots")
 	if err != nil {
 		t.Fatalf("embed query: %v", err)
 	}
-	results, err := st.SearchMemoriesByVector(ctx, proj.ID, qvec, 3)
+	results, err := st.SearchMemoriesByVectorSpace(ctx, proj.ID, qvec, emb.Model(), emb.Dimensions(), 3)
 	if err != nil {
 		t.Fatalf("vector search: %v", err)
 	}
@@ -93,6 +106,11 @@ func TestVectorSearch_Postgres(t *testing.T) {
 	}
 	if results[0].ID != "m-db" {
 		t.Fatalf("expected migrations memory (m-db) ranked first, got %s", results[0].ID)
+	}
+	for _, result := range results {
+		if result.ID == oldSpaceID {
+			t.Fatal("same-width vector from another model leaked into active semantic-space search")
+		}
 	}
 }
 
@@ -243,7 +261,7 @@ func TestStaleEmbedding_Postgres(t *testing.T) {
 		}
 		return false
 	}
-	staleVsNew, err := st.MemoriesStaleEmbedding(ctx, "onnx-multilingual-v2", "", 1000)
+	staleVsNew, err := st.MemoriesStaleEmbeddingSpace(ctx, "onnx-multilingual-v2", 384, "", 1000)
 	if err != nil {
 		t.Fatalf("stale vs new: %v", err)
 	}
@@ -252,12 +270,202 @@ func TestStaleEmbedding_Postgres(t *testing.T) {
 	}
 
 	// Relative to its OWN model => not stale.
-	staleVsSame, err := st.MemoriesStaleEmbedding(ctx, "old-model-v1", "", 1000)
+	staleVsSame, err := st.MemoriesStaleEmbeddingSpace(ctx, "old-model-v1", 384, "", 1000)
 	if err != nil {
 		t.Fatalf("stale vs same: %v", err)
 	}
 	if contains(staleVsSame, id) {
 		t.Fatal("memory must NOT be stale relative to the same model that produced it")
+	}
+
+	if _, err := st.db.ExecContext(ctx, `UPDATE memories SET embed_dims = 1536 WHERE id = $1`, id); err != nil {
+		t.Fatalf("simulate stale dimensions: %v", err)
+	}
+	staleVsWrongDims, err := st.MemoriesStaleEmbeddingSpace(ctx, "old-model-v1", 384, "", 1000)
+	if err != nil {
+		t.Fatalf("stale vs wrong dimensions: %v", err)
+	}
+	if !contains(staleVsWrongDims, id) {
+		t.Fatal("same-model vector with incompatible embed_dims must be stale")
+	}
+}
+
+func TestContentChangeInvalidatesEmbedding_Postgres(t *testing.T) {
+	dsn := os.Getenv("ANCHORED_TEST_DSN")
+	if dsn == "" {
+		t.Skip("ANCHORED_TEST_DSN not set")
+	}
+	st, err := NewPostgresStore(PoolConfig{DSN: dsn})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	u := uniq()
+	org, _ := st.CreateOrganization(ctx, "InvalidateOrg", "invalidateorg-"+u)
+	account, _ := st.CreateAccount(ctx, "invalidate-"+u+"@example.com", "Invalidate", "x")
+	project, err := st.CreateProject(
+		ctx,
+		org.ID,
+		"InvalidateProj",
+		"invalidateproj-"+u,
+		"invalidate-"+u,
+		"",
+		"",
+		account.ID,
+		"service",
+	)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	t0 := time.Now().UTC().Add(-time.Hour)
+	memory := &model.Memory{
+		ID:          "invalidate-" + u,
+		ProjectID:   project.ID,
+		Category:    "fact",
+		Content:     "original content",
+		ContentHash: "sha256:original-" + u,
+		AuthorID:    account.ID,
+		AuthorName:  "Invalidate",
+		CreatedAt:   t0,
+		UpdatedAt:   t0,
+	}
+	if err := st.UpsertMemory(ctx, memory); err != nil {
+		t.Fatalf("insert memory: %v", err)
+	}
+	embedder := embeddings.NewLocalEmbedder(PostgresEmbeddingDimensions)
+	vector, err := embeddings.EmbedOne(ctx, embedder, memory.Content)
+	if err != nil {
+		t.Fatalf("embed memory: %v", err)
+	}
+	if err := st.UpdateMemoryEmbeddingInSpace(
+		ctx,
+		memory.ID,
+		vector,
+		embeddings.SemanticSpace(embedder),
+	); err != nil {
+		t.Fatalf("store embedding: %v", err)
+	}
+	if _, err := st.db.ExecContext(
+		ctx,
+		`UPDATE curation_queue SET status = 'done' WHERE memory_id = $1`,
+		memory.ID,
+	); err != nil {
+		t.Fatalf("mark initial curation done: %v", err)
+	}
+
+	edited := *memory
+	edited.Content = "replacement content"
+	edited.ContentHash = "sha256:replacement-" + u
+	edited.UpdatedAt = t0.Add(time.Minute)
+	if err := st.UpsertMemory(ctx, &edited); err != nil {
+		t.Fatalf("content update: %v", err)
+	}
+	assertPostgresEmbeddingPresence(t, st, memory.ID, false)
+	assertPostgresCurationStatus(t, st, memory.ID, "pending")
+
+	replacementVector, err := embeddings.EmbedOne(ctx, embedder, edited.Content)
+	if err != nil {
+		t.Fatalf("embed replacement: %v", err)
+	}
+	updated, err := st.UpdateMemoryEmbeddingInSpaceIfContent(
+		ctx,
+		memory.ID,
+		memory.ContentHash,
+		vector,
+		embeddings.SemanticSpace(embedder),
+	)
+	if err != nil {
+		t.Fatalf("conditionally store stale embedding: %v", err)
+	}
+	if updated {
+		t.Fatal("embedding computed for old content was attached to replacement content")
+	}
+	assertPostgresEmbeddingPresence(t, st, memory.ID, false)
+
+	updated, err = st.UpdateMemoryEmbeddingInSpaceIfContent(
+		ctx,
+		memory.ID,
+		edited.ContentHash,
+		replacementVector,
+		embeddings.SemanticSpace(embedder),
+	)
+	if err != nil || !updated {
+		t.Fatalf("store replacement embedding: updated=%v err=%v", updated, err)
+	}
+	if _, err := st.db.ExecContext(
+		ctx,
+		`UPDATE curation_queue SET status = 'processing' WHERE memory_id = $1`,
+		memory.ID,
+	); err != nil {
+		t.Fatalf("mark old worker processing: %v", err)
+	}
+
+	batchEdit := edited
+	batchEdit.ContentHash = "sha256:replacement-v2-" + u
+	batchEdit.UpdatedAt = t0.Add(2 * time.Minute)
+	if err := st.UpsertMemories(ctx, []*model.Memory{&batchEdit}); err != nil {
+		t.Fatalf("batch content update: %v", err)
+	}
+	assertPostgresEmbeddingPresence(t, st, memory.ID, false)
+	assertPostgresCurationStatus(t, st, memory.ID, "processing_dirty")
+
+	if err := st.SetCurationDone(ctx, memory.ID); err != nil {
+		t.Fatalf("old worker completion: %v", err)
+	}
+	assertPostgresCurationStatus(t, st, memory.ID, "pending")
+}
+
+func assertPostgresEmbeddingPresence(t *testing.T, st *PostgresStore, memoryID string, want bool) {
+	t.Helper()
+	var embeddingPresent, modelPresent, dimensionsPresent, spacePresent bool
+	if err := st.db.QueryRow(
+		`SELECT
+		   embedding IS NOT NULL,
+		   embed_model IS NOT NULL,
+		   embed_dims IS NOT NULL,
+		   semantic_space_id IS NOT NULL
+		 FROM memories WHERE id = $1`,
+		memoryID,
+	).Scan(&embeddingPresent, &modelPresent, &dimensionsPresent, &spacePresent); err != nil {
+		t.Fatalf("read embedding state: %v", err)
+	}
+	if want {
+		if !embeddingPresent || !modelPresent || !dimensionsPresent || !spacePresent {
+			t.Fatalf(
+				"complete embedding missing (embedding=%v model=%v dims=%v space=%v)",
+				embeddingPresent,
+				modelPresent,
+				dimensionsPresent,
+				spacePresent,
+			)
+		}
+		return
+	}
+	if embeddingPresent || modelPresent || dimensionsPresent || spacePresent {
+		t.Fatalf(
+			"content change retained embedding identity (embedding=%v model=%v dims=%v space=%v)",
+			embeddingPresent,
+			modelPresent,
+			dimensionsPresent,
+			spacePresent,
+		)
+	}
+}
+
+func assertPostgresCurationStatus(t *testing.T, st *PostgresStore, memoryID, want string) {
+	t.Helper()
+	var status string
+	if err := st.db.QueryRow(
+		`SELECT status FROM curation_queue WHERE memory_id = $1`,
+		memoryID,
+	).Scan(&status); err != nil {
+		t.Fatalf("read curation status: %v", err)
+	}
+	if status != want {
+		t.Fatalf("curation status = %q, want %q", status, want)
 	}
 }
 

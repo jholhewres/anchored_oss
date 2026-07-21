@@ -30,6 +30,9 @@ func NewLocalEmbedder(dims int) *LocalEmbedder {
 func (e *LocalEmbedder) Dimensions() int { return e.dims }
 func (e *LocalEmbedder) Model() string   { return "local-hash-v1" }
 func (e *LocalEmbedder) Name() string    { return "local" }
+func (e *LocalEmbedder) ModelRevision() string {
+	return "fnv1a-unigram-trigram-v1"
+}
 
 func (e *LocalEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))
