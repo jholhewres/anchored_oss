@@ -108,14 +108,23 @@ func main() {
 	// Build the embedder once and share it across the server handlers and the
 	// curation worker. The onnx provider keeps a ~470MB model resident, so a
 	// single instance avoids multiplying memory use.
+	// Anti-brick: an embeddings problem must never stop the server from serving.
+	// A bad provider or an embedder incompatible with the stored vectors degrades
+	// to text-only (semantic search returns 422 semantic_unavailable) and the
+	// server still boots, so an upgrade can't take a previously-healthy instance
+	// offline. The operator sees the exact reason logged and can fix the config
+	// or reindex, then restart. (Historically these were os.Exit(1) and bricked
+	// servers on upgrade — see the v0.6.0→v0.6.1 regression.)
 	embedder, err := buildConfiguredEmbedder(cfg.Embeddings, logger)
 	if err != nil {
-		slog.Error("invalid embeddings configuration", "error", err)
-		os.Exit(1)
-	}
-	if err := validateEmbeddingCompatibility(st, embedder); err != nil {
-		slog.Error("invalid embeddings configuration", "error", err)
-		os.Exit(1)
+		slog.Error("embeddings disabled: could not build the configured provider; serving with semantic search OFF (text search still works) — fix the embeddings config or run --reindex, then restart", "error", err)
+		embedder = nil
+	} else if err := validateEmbeddingCompatibility(st, embedder); err != nil {
+		slog.Error("embeddings disabled: configured provider is incompatible with the stored vectors; serving with semantic search OFF until reindexed — fix the config or reindex, then restart", "error", err)
+		if closer, ok := embedder.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		embedder = nil
 	}
 	if embedder != nil {
 		slog.Info("embeddings enabled", "provider", embedder.Name(), "model", embedder.Model(), "dims", embedder.Dimensions())
