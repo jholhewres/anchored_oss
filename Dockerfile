@@ -7,7 +7,7 @@ COPY web/ .
 RUN npm run build
 
 # Stage 2: compile the Go binary with the SPA bundle embedded
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25.12-alpine AS builder
 ARG VERSION=dev
 ENV VERSION_PKG=github.com/jholhewres/anchored_oss/internal/version
 WORKDIR /app
