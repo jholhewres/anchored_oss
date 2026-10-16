@@ -116,3 +116,26 @@ func TestDeriveRemoteKeyEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestIsValidGitRemote(t *testing.T) {
+	tests := []struct {
+		remote string
+		valid  bool
+	}{
+		{"https://github.com/acme/repo.git", true},
+		{"git@github.com:acme/repo.git", true},
+		{"ssh://git@github.com/acme/repo.git", true},
+		{"ssh://git@bitbucket.example.com:7999/acme/repo.git", true},
+		{"", false},
+		{"   ", false},
+		{"github.com/acme/repo", false},
+		{"https://github.com", false},
+		{"http://github.com/acme/repo", false},
+		{"https://token@example.com/acme/repo", false},
+	}
+	for _, tt := range tests {
+		if got := IsValidGitRemote(tt.remote); got != tt.valid {
+			t.Errorf("IsValidGitRemote(%q) = %t, want %t", tt.remote, got, tt.valid)
+		}
+	}
+}

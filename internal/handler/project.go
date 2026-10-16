@@ -26,12 +26,10 @@ func NewProjectHandler(st store.Store, logger *slog.Logger) *ProjectHandler {
 }
 
 type createProjectRequest struct {
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	RemoteKey string `json:"remote_key"`
-	// RepoURL is an optional git remote URL (ssh or https). When set and
-	// RemoteKey is empty, the server derives RemoteKey from it using the same
-	// normalization as the CLI, so a repo's sync resolves to this project.
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+	// RepoURL is the Git remote that identifies this project. The server always
+	// derives remote keys from it, using the same normalization as the CLI.
 	RepoURL  string `json:"repo_url"`
 	Category string `json:"category"`
 }
@@ -89,6 +87,9 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Name = strings.TrimSpace(req.Name)
+	req.Slug = strings.TrimSpace(req.Slug)
+	req.RepoURL = strings.TrimSpace(req.RepoURL)
 	if req.Name == "" {
 		jsonError(w, http.StatusBadRequest, "name is required")
 		return
@@ -98,42 +99,26 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Derive the remote_key from a pasted git URL (ssh or https) when no key was
-	// given, so the project matches the key the CLI stamps on sync. Identical
-	// normalization on both sides is enforced by internal/project parity tests.
-	// The legacy key (remote_key_v1) lets repos keyed before the v2 change still
-	// resolve; it is only meaningful when we derived from a repo URL.
-	remoteKey := req.RemoteKey
-	remoteKeyV1 := ""
-	repoURL := req.RepoURL
-	if remoteKey == "" && repoURL != "" {
-		remoteKey = projectpkg.DeriveRemoteKey(repoURL)
-		remoteKeyV1 = projectpkg.DeriveLegacyRemoteKey(repoURL)
+	if !projectpkg.IsValidGitRemote(req.RepoURL) {
+		jsonError(w, http.StatusBadRequest, "repo_url must be a valid HTTPS or SSH git remote")
+		return
+	}
+	// Derive both identifiers from the validated remote. This makes public
+	// project creation unambiguously repository-backed while retaining v1 sync
+	// resolution for clients that still send the legacy key.
+	remoteKey := projectpkg.DeriveRemoteKey(req.RepoURL)
+	remoteKeyV1 := projectpkg.DeriveLegacyRemoteKey(req.RepoURL)
+
+	if _, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, remoteKey); err == nil {
+		jsonError(w, http.StatusConflict, "a project with this git remote already exists")
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		h.logger.Error("project by remote_key lookup failed", "error", err, "org_id", orgID)
+		jsonError(w, http.StatusInternalServerError, "failed to check existing project")
+		return
 	}
 
-	// Idempotent on remote_key: if a project for this repo already exists (e.g.
-	// the repo synced first, or the form was submitted twice), return it instead
-	// of creating a duplicate — duplicates are exactly what repo-keying prevents.
-	if remoteKey != "" {
-		if existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, remoteKey); err == nil {
-			if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, existing.ID); err != nil {
-				h.logger.Error("grant creator access failed", "error", err, "project_id", existing.ID)
-			}
-			jsonResponse(w, http.StatusOK, existing)
-			return
-		} else if !errors.Is(err, store.ErrNotFound) {
-			h.logger.Error("project by remote_key lookup failed", "error", err, "org_id", orgID)
-			jsonError(w, http.StatusInternalServerError, "failed to check existing project")
-			return
-		}
-	} else {
-		// Manual project (no repo linked): synthesize a unique, unmatchable key
-		// so multiple keyless projects don't collide on UNIQUE(org_id,
-		// remote_key). No repo's git-origin hash can collide with this form.
-		remoteKey = req.Slug + "-" + randomSuffix(8)
-	}
-
-	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, remoteKeyV1, repoURL, accountID, model.NormalizeCategory(req.Category))
+	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, remoteKeyV1, req.RepoURL, accountID, model.NormalizeCategory(req.Category))
 	if err != nil {
 		h.logger.Error("create project failed", "error", err, "org_id", orgID)
 		jsonError(w, http.StatusInternalServerError, "failed to create project")
@@ -265,9 +250,9 @@ type updateProjectRequest struct {
 }
 
 // Update applies a partial update to a project. Admin only. Body is partial
-// JSON: any omitted field is left unchanged; a present field (including an
-// empty repo_url) is applied. Setting repo_url recomputes both remote keys;
-// clearing it (empty string) unlinks the repo.
+// JSON: any omitted field is left unchanged. Setting repo_url recomputes both
+// remote keys; clearing or replacing it with an invalid remote is rejected so
+// an already-linked project cannot silently lose its routing identity.
 func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !uuidRe.MatchString(id) {
@@ -296,6 +281,14 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RepoURL != nil {
 		*req.RepoURL = strings.TrimSpace(*req.RepoURL)
+		if *req.RepoURL == "" {
+			jsonError(w, http.StatusBadRequest, "repo_url cannot be empty")
+			return
+		}
+		if !projectpkg.IsValidGitRemote(*req.RepoURL) {
+			jsonError(w, http.StatusBadRequest, "repo_url must be a valid HTTPS or SSH git remote")
+			return
+		}
 	}
 
 	if req.Name != nil && *req.Name == "" {

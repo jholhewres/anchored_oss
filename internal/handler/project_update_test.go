@@ -104,6 +104,35 @@ func TestProjectUpdate_InvalidSlug(t *testing.T) {
 	}
 }
 
+func TestProjectUpdate_InvalidRepoURL(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "empty", body: `{"repo_url":""}`},
+		{name: "http", body: `{"repo_url":"http://git.example.com/team/repo.git"}`},
+		{name: "credentials", body: `{"repo_url":"https://token@git.example.com/team/repo.git"}`},
+		{name: "malformed", body: `{"repo_url":"not-a-remote"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newProjectTestStore(t)
+			orgID, acctID, projectID := seedProject(t, st)
+			h := NewProjectHandler(st, slog.Default())
+			req := httptest.NewRequest(http.MethodPatch, "/v1/projects/"+projectID, strings.NewReader(tt.body)).
+				WithContext(adminCtx(orgID, acctID))
+			req.SetPathValue("id", projectID)
+			rec := httptest.NewRecorder()
+
+			h.Update(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestProjectUpdate_NotFoundCrossOrg(t *testing.T) {
 	st := newProjectTestStore(t)
 	_, _, projectID := seedProject(t, st)

@@ -31,6 +31,9 @@ type Store interface {
 	GetOrganizationByID(ctx context.Context, id string) (*model.Organization, error)
 	AddOrgMember(ctx context.Context, orgID, accountID, role string) error
 	CountOrganizations(ctx context.Context) (int, error)
+	// BootstrapOnboarding creates the first organization and every dependent
+	// owner resource in one transaction.
+	BootstrapOnboarding(ctx context.Context, input OnboardingBootstrapInput) (*OnboardingBootstrapResult, error)
 
 	// Teams.
 	CreateTeam(ctx context.Context, orgID, name, slug string) (*model.Team, error)

@@ -11,6 +11,7 @@ package project
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -114,6 +115,48 @@ func DeriveRemoteKey(rawURL string) string {
 // created before the v2 change still resolve by their old key.
 func DeriveLegacyRemoteKey(rawURL string) string {
 	return deriveKey(normalizeRemoteURLLegacy(rawURL))
+}
+
+// IsValidGitRemote reports whether rawURL is an HTTPS or SSH Git remote with a
+// repository path. It deliberately does not change NormalizeRemoteURL: that
+// normalization is shared with the CLI and must remain byte-identical for sync
+// routing parity.
+func IsValidGitRemote(rawURL string) bool {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" || strings.ContainsAny(rawURL, " \t\r\n") {
+		return false
+	}
+
+	// scp-style SSH remote: git@example.com:group/repository.git.
+	if !strings.Contains(rawURL, "://") {
+		at := strings.IndexByte(rawURL, '@')
+		if at <= 0 {
+			return false
+		}
+		rest := rawURL[at+1:]
+		if colon := strings.IndexByte(rest, ':'); colon > 0 {
+			host, path := rest[:colon], strings.Trim(rest[colon+1:], "/")
+			return host != "" && path != "" && !strings.ContainsAny(host, "@/:")
+		}
+		return false
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Hostname() == "" || strings.Trim(parsed.Path, "/") == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	// Git's conventional remote schemes are case-sensitive in the existing
+	// normalization routine, so only accept the forms it can derive correctly.
+	if parsed.Scheme != "https" && parsed.Scheme != "ssh" {
+		return false
+	}
+	// Credentials in persisted HTTPS URLs are unsafe and would alter the derived
+	// identity. The conventional SSH user, git, is part of the remote grammar
+	// and is explicitly handled by the shared normalization routine.
+	if parsed.Scheme == "https" {
+		return parsed.User == nil
+	}
+	return parsed.User == nil || (parsed.User.Username() == "git" && !strings.Contains(parsed.User.String(), ":"))
 }
 
 func deriveKey(normalized string) string {
