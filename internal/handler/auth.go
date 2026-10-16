@@ -66,6 +66,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	scope := sessionScopeForRole(role)
 
 	if err := h.store.RevokeSessionKeys(r.Context(), account.ID); err != nil {
 		h.logger.Error("login: failed to revoke previous session keys", "error", err)
@@ -78,7 +79,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.store.CreateAPIKey(r.Context(), orgID, account.ID, middleware.SessionAPIKeyName, prefix, hash, role, nil); err != nil {
+	if _, err := h.store.CreateAPIKey(r.Context(), orgID, account.ID, middleware.SessionAPIKeyName, prefix, hash, scope, nil); err != nil {
 		h.logger.Error("login: failed to store session key", "error", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -88,6 +89,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		APIKey:    fullKey,
 		AccountID: account.ID,
 		OrgID:     orgID,
-		Scope:     role,
+		Scope:     scope,
 	})
+}
+
+// sessionScopeForRole maps an org role to the key scope of its login session.
+// Accounts added through POST /v1/accounts join as "member", which is not a key
+// scope; they get sync, the same as a sync invite. Only admin and readonly keep
+// their own scope.
+func sessionScopeForRole(role string) string {
+	switch role {
+	case "admin", "readonly":
+		return role
+	default:
+		return "sync"
+	}
 }
