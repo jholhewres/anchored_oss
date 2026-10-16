@@ -5,21 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/anchor.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Anchored OSS</title>
-    <script>
-      (() => {
-        const key = "anchored_theme";
-        const normalize = (value) => (value === "warm" ? "warm" : "light");
-        let theme = "light";
-        try {
-          theme = normalize(localStorage.getItem(key));
-        } catch {
-          theme = "light";
-        }
-        const root = document.documentElement;
-        root.dataset.theme = theme;
-        root.style.colorScheme = theme === "warm" ? "dark" : "light";
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
