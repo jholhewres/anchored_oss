@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -63,6 +64,10 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "name, scope, and account_id are required")
 		return
 	}
+	if req.Name == middleware.SessionAPIKeyName {
+		jsonError(w, http.StatusBadRequest, "name session is reserved for login credentials")
+		return
+	}
 	if !allowedScopes[req.Scope] {
 		jsonError(w, http.StatusBadRequest, "scope must be one of: sync, readonly, admin")
 		return
@@ -74,6 +79,20 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	member, err := h.store.IsOrgMember(r.Context(), orgID, req.AccountID)
+	if err != nil {
+		h.logger.Error("check api key account membership failed", "error", err)
+		jsonError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !member {
+		jsonError(w, http.StatusNotFound, "account not found")
+		return
+	}
 
 	fullKey, prefix, hash, err := auth.GenerateAPIKey()
 	if err != nil {
@@ -115,7 +134,16 @@ func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.RevokeAPIKey(r.Context(), id); err != nil {
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.store.RevokeAPIKey(r.Context(), orgID, id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			jsonError(w, http.StatusNotFound, "api key not found")
+			return
+		}
 		h.logger.Error("failed to revoke API key", "error", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return

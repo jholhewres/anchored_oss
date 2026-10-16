@@ -68,13 +68,67 @@ func (s *PostgresStore) ListAPIKeysByOrg(ctx context.Context, orgID string) ([]*
 	return out, nil
 }
 
-func (s *PostgresStore) RevokeAPIKey(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE api_keys SET revoked_at = now() WHERE id = $1`,
-		id,
+func (s *PostgresStore) RevokeAPIKey(ctx context.Context, orgID, id string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL`,
+		id, orgID,
 	)
 	if err != nil {
 		return fmt.Errorf("revoke api key: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("revoke api key: %w", err)
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListAPIKeysByOwner(ctx context.Context, orgID, accountID string) ([]*model.APIKey, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, org_id, account_id, name, key_prefix, key_hash, scope, expires_at, created_at, revoked_at
+		 FROM api_keys
+		 WHERE org_id = $1 AND account_id = $2 AND scope IN ('sync', 'readonly')
+		 ORDER BY created_at DESC`,
+		orgID, accountID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list api keys by owner: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*model.APIKey, 0)
+	for rows.Next() {
+		var k model.APIKey
+		if err := rows.Scan(&k.ID, &k.OrgID, &k.AccountID, &k.Name, &k.KeyPrefix, &k.KeyHash, &k.Scope, &k.ExpiresAt, &k.CreatedAt, &k.RevokedAt); err != nil {
+			return nil, fmt.Errorf("scan api key: %w", err)
+		}
+		out = append(out, &k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate api keys: %w", err)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) RevokeAPIKeyByOwner(ctx context.Context, orgID, accountID, id string) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET revoked_at = now()
+		 WHERE id = $1 AND org_id = $2 AND account_id = $3
+		   AND scope IN ('sync', 'readonly') AND revoked_at IS NULL`,
+		id, orgID, accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke api key by owner: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("revoke api key by owner: %w", err)
+	}
+	if changed == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

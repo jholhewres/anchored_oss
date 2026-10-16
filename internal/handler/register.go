@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jholhewres/anchored_oss/internal/auth"
+	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -115,7 +116,7 @@ func (h *RegisterHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.store.CreateAPIKey(r.Context(), org.ID, account.ID, "default", prefix, hash, "admin", nil); err != nil {
+	if _, err := h.store.CreateAPIKey(r.Context(), org.ID, account.ID, middleware.SessionAPIKeyName, prefix, hash, "admin", nil); err != nil {
 		h.logger.Error("register: failed to store api key", "error", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return

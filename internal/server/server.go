@@ -66,6 +66,7 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 
 	authMW := middleware.Auth(st, logger)
 	requireAdmin := middleware.RequireScope("admin")
+	requireSession := middleware.RequireSession
 
 	meHandler := handler.NewMeHandler(st, logger)
 	mux.HandleFunc("GET /v1/me", authMW(http.HandlerFunc(meHandler.Get)).ServeHTTP)
@@ -99,6 +100,10 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	mux.HandleFunc("GET /v1/api-keys", authMW(requireAdmin(http.HandlerFunc(apiKeyHandler.List))).ServeHTTP)
 	mux.HandleFunc("POST /v1/api-keys", authMW(requireAdmin(http.HandlerFunc(apiKeyHandler.Create))).ServeHTTP)
 	mux.HandleFunc("DELETE /v1/api-keys/{id}", authMW(requireAdmin(http.HandlerFunc(apiKeyHandler.Revoke))).ServeHTTP)
+	personalAPIKeyHandler := handler.NewPersonalAPIKeyHandler(st, logger)
+	mux.HandleFunc("GET /v1/me/api-keys", authMW(requireSession(http.HandlerFunc(personalAPIKeyHandler.List))).ServeHTTP)
+	mux.HandleFunc("POST /v1/me/api-keys", authMW(requireSession(http.HandlerFunc(personalAPIKeyHandler.Create))).ServeHTTP)
+	mux.HandleFunc("DELETE /v1/me/api-keys/{id}", authMW(requireSession(http.HandlerFunc(personalAPIKeyHandler.Revoke))).ServeHTTP)
 
 	projectHandler := handler.NewProjectHandler(st, logger)
 	mux.HandleFunc("POST /v1/projects", authMW(requireAdmin(http.HandlerFunc(projectHandler.Create))).ServeHTTP)

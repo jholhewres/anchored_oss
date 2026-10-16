@@ -15,10 +15,16 @@ import (
 
 type contextKey string
 
+// SessionAPIKeyName is reserved for the per-account session credential issued
+// by a password-authenticated dashboard entry flow; a new login revokes the
+// prior credential with this name.
+const SessionAPIKeyName = "session"
+
 const (
-	AccountIDKey contextKey = "account_id"
-	OrgIDKey     contextKey = "org_id"
-	ScopeKey     contextKey = "scope"
+	AccountIDKey  contextKey = "account_id"
+	OrgIDKey      contextKey = "org_id"
+	ScopeKey      contextKey = "scope"
+	APIKeyNameKey contextKey = "api_key_name"
 )
 
 func GetAccountID(ctx context.Context) string {
@@ -33,6 +39,14 @@ func GetOrgID(ctx context.Context) string {
 
 func GetScope(ctx context.Context) string {
 	v, _ := ctx.Value(ScopeKey).(string)
+	return v
+}
+
+// GetAPIKeyName returns the authenticated credential's server-assigned name.
+// It is set only by Auth and is used where a route requires a login session
+// rather than an arbitrary persistent API key.
+func GetAPIKeyName(ctx context.Context) string {
+	v, _ := ctx.Value(APIKeyNameKey).(string)
 	return v
 }
 
@@ -79,10 +93,25 @@ func Auth(st store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
 			ctx := context.WithValue(r.Context(), AccountIDKey, apiKey.AccountID)
 			ctx = context.WithValue(ctx, OrgIDKey, apiKey.OrgID)
 			ctx = context.WithValue(ctx, ScopeKey, apiKey.Scope)
+			ctx = context.WithValue(ctx, APIKeyNameKey, apiKey.Name)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// RequireSession restricts a route to the credential minted by a
+// password-authenticated dashboard entry flow. It deliberately does not
+// require an admin scope: a session retains its member role while still being
+// allowed to manage that account's own API keys.
+func RequireSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if GetAPIKeyName(r.Context()) != SessionAPIKeyName {
+			writeForbidden(w)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // RequireScope returns middleware that checks the scope from context.

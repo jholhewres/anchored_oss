@@ -68,6 +68,32 @@ func (s *SQLiteStore) GetAccountOrgID(ctx context.Context, accountID string) (st
 	return orgID, nil
 }
 
+func (s *SQLiteStore) GetAccountOrgMembership(ctx context.Context, accountID string) (orgID, role string, err error) {
+	err = s.db.QueryRowContext(ctx,
+		`SELECT org_id, role FROM org_members WHERE account_id = ? LIMIT 1`,
+		accountID,
+	).Scan(&orgID, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("get account organization membership: %w", err)
+	}
+	return orgID, role, nil
+}
+
+func (s *SQLiteStore) IsOrgMember(ctx context.Context, orgID, accountID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = ? AND account_id = ?)`,
+		orgID, accountID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check organization membership: %w", err)
+	}
+	return exists, nil
+}
+
 func (s *SQLiteStore) SetAccountPassword(ctx context.Context, accountID, passwordHash string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE accounts SET password_hash = ? WHERE id = ?`,

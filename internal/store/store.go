@@ -20,6 +20,8 @@ type Store interface {
 	GetAccountByID(ctx context.Context, id string) (*model.Account, error)
 	GetAccountByEmail(ctx context.Context, email string) (*model.Account, error)
 	GetAccountOrgID(ctx context.Context, accountID string) (string, error)
+	GetAccountOrgMembership(ctx context.Context, accountID string) (orgID, role string, err error)
+	IsOrgMember(ctx context.Context, orgID, accountID string) (bool, error)
 	SetAccountPassword(ctx context.Context, accountID, passwordHash string) error
 	GetOrCreateAccountByEmail(ctx context.Context, orgID, email, displayName string) (account *model.Account, created bool, err error)
 	ListAccountsByOrg(ctx context.Context, orgID string) ([]*model.AccountWithRole, error)
@@ -134,7 +136,16 @@ type Store interface {
 	CreateAPIKey(ctx context.Context, orgID, accountID, name, keyPrefix, keyHash, scope string, expiresAt *time.Time) (*model.APIKey, error)
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (*model.APIKey, error)
 	ListAPIKeysByOrg(ctx context.Context, orgID string) ([]*model.APIKey, error)
-	RevokeAPIKey(ctx context.Context, id string) error
+	RevokeAPIKey(ctx context.Context, orgID, id string) error
+	// ListAPIKeysByOwner returns only self-service (sync or readonly) API keys
+	// owned by accountID in orgID. Personal-key handlers must use this instead
+	// of the organization-wide list, which also contains admin/session keys.
+	ListAPIKeysByOwner(ctx context.Context, orgID, accountID string) ([]*model.APIKey, error)
+	// RevokeAPIKeyByOwner revokes one active key only when its organization and
+	// account match the caller and have a self-service scope (sync or readonly).
+	// Missing, revoked, admin/session, and foreign keys all return ErrNotFound
+	// so the operation cannot disclose or alter privileged keys.
+	RevokeAPIKeyByOwner(ctx context.Context, orgID, accountID, id string) error
 	RevokeSessionKeys(ctx context.Context, accountID string) error
 
 	// Audit.
