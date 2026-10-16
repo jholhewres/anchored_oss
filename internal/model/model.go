@@ -39,6 +39,71 @@ type Project struct {
 	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
+const (
+	SkillStatusDraft      = "draft"
+	SkillStatusActive     = "active"
+	SkillStatusDeprecated = "deprecated"
+	SkillStatusRevoked    = "revoked"
+)
+
+// Skill is an organization-owned instruction catalog entry. CurrentVersion is
+// immutable once published; changing content or purpose creates another row.
+type Skill struct {
+	ID             string        `json:"id"`
+	OrgID          string        `json:"org_id"`
+	Name           string        `json:"name"`
+	Slug           string        `json:"slug"`
+	Purpose        string        `json:"purpose"`
+	Status         string        `json:"status"`
+	ProjectCount   int           `json:"project_count"`
+	CreatedBy      string        `json:"created_by"`
+	CurrentVersion *SkillVersion `json:"current_version,omitempty"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	DeletedAt      *time.Time    `json:"deleted_at,omitempty"`
+}
+
+type SkillVersion struct {
+	SkillID     string         `json:"skill_id"`
+	Version     int            `json:"version"`
+	Purpose     string         `json:"purpose"`
+	Frontmatter map[string]any `json:"frontmatter,omitempty"`
+	Body        string         `json:"body,omitempty"`
+	// Content is the exact SKILL.md delivered to a runtime. For legacy rows it
+	// is the original body bytes; canonical rows render it from Frontmatter and
+	// Body with the reserved name and description fields.
+	Content     string    `json:"content"`
+	ContentHash string    `json:"content_hash"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// SkillDescriptor is the bounded runtime search result; it deliberately omits
+// Markdown bodies, which are available only through the load endpoint.
+type SkillDescriptor struct {
+	ID          string     `json:"id"`
+	Slug        string     `json:"slug"`
+	Name        string     `json:"name"`
+	Purpose     string     `json:"purpose"`
+	Status      string     `json:"status"`
+	Version     int        `json:"version"`
+	ContentHash string     `json:"content_hash"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	AttachedAt  *time.Time `json:"attached_at,omitempty"`
+}
+
+type SkillUpdate struct {
+	Name        *string         `json:"name"`
+	Purpose     *string         `json:"purpose"`
+	Frontmatter *map[string]any `json:"frontmatter"`
+	Body        *string         `json:"body"`
+	// Content is a compatibility alias for legacy callers. New callers should
+	// send body and frontmatter separately.
+	Content *string `json:"content"`
+	Status  *string `json:"status"`
+}
+
 // ProjectUpdate holds the partial fields a PATCH /v1/projects/{id} may change.
 // A nil pointer means "leave unchanged"; a non-nil pointer (including an empty
 // string) means "set to this value". RepoURL drives remote-key recomputation:

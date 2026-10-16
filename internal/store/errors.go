@@ -16,6 +16,10 @@ var ErrNotFound = errors.New("not found")
 // caller can surface as a 409 (e.g. a slug already in use within an org).
 var ErrConflict = errors.New("conflict")
 
+// ErrInvalid is returned when a caller asks the store to persist an invalid
+// domain transition (for example, creating or PATCHing a terminally revoked skill).
+var ErrInvalid = errors.New("invalid")
+
 // ErrIdempotencyConflict is returned when a scoped operation ID was already
 // committed with a different payload.
 var ErrIdempotencyConflict = errors.New("idempotency conflict")

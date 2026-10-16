@@ -111,6 +111,18 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	mux.HandleFunc("POST /v1/projects/{id}/triples", authMW(http.HandlerFunc(projectHandler.IngestTriples)).ServeHTTP)
 	mux.HandleFunc("DELETE /v1/projects/{id}", authMW(requireAdmin(http.HandlerFunc(projectHandler.SoftDelete))).ServeHTTP)
 
+	skillHandler := handler.NewSkillHandler(st, logger)
+	mux.HandleFunc("GET /v1/skill-templates", authMW(requireAdmin(http.HandlerFunc(skillHandler.ListTemplates))).ServeHTTP)
+	mux.HandleFunc("GET /v1/skills", authMW(requireAdmin(http.HandlerFunc(skillHandler.List))).ServeHTTP)
+	mux.HandleFunc("POST /v1/skills", authMW(requireAdmin(http.HandlerFunc(skillHandler.Create))).ServeHTTP)
+	mux.HandleFunc("GET /v1/skills/{id}", authMW(requireAdmin(http.HandlerFunc(skillHandler.Get))).ServeHTTP)
+	mux.HandleFunc("PATCH /v1/skills/{id}", authMW(requireAdmin(http.HandlerFunc(skillHandler.Update))).ServeHTTP)
+	mux.HandleFunc("DELETE /v1/skills/{id}", authMW(requireAdmin(http.HandlerFunc(skillHandler.Delete))).ServeHTTP)
+	mux.HandleFunc("GET /v1/projects/{id}/skills", authMW(http.HandlerFunc(skillHandler.ListProject)).ServeHTTP)
+	mux.HandleFunc("GET /v1/projects/{id}/skills/{slug}", authMW(http.HandlerFunc(skillHandler.GetProject)).ServeHTTP)
+	mux.HandleFunc("GET /v1/projects/{id}/skill-attachments", authMW(requireAdmin(http.HandlerFunc(skillHandler.ListAttachments))).ServeHTTP)
+	mux.HandleFunc("PUT /v1/projects/{id}/skills", authMW(requireAdmin(http.HandlerFunc(skillHandler.ReplaceProject))).ServeHTTP)
+
 	healthMemHandler := handler.NewMemoryHealthHandler(st, logger)
 	mux.HandleFunc("GET /v1/projects/{id}/memory-health", authMW(http.HandlerFunc(healthMemHandler.Project)).ServeHTTP)
 	mux.HandleFunc("GET /v1/orgs/memory-health", authMW(requireAdmin(http.HandlerFunc(healthMemHandler.Org))).ServeHTTP)

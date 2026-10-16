@@ -584,9 +584,9 @@ func TestPostgresEmbeddingWidthRejectedBeforeDatabaseCall(t *testing.T) {
 }
 
 func TestEmbeddingMigrationsPreservePublishedOrdering(t *testing.T) {
-	if schemaVersion != 21 || sqliteSchemaVersion != 21 {
+	if schemaVersion != 24 || sqliteSchemaVersion != 24 {
 		t.Fatalf(
-			"schema versions = postgres:%d sqlite:%d, want 21",
+			"schema versions = postgres:%d sqlite:%d, want 24",
 			schemaVersion,
 			sqliteSchemaVersion,
 		)
@@ -606,6 +606,14 @@ func TestEmbeddingMigrationsPreservePublishedOrdering(t *testing.T) {
 	}
 	if sqliteMigrations[21] != "" {
 		t.Fatal("SQLite migration 021 must stay in its guarded ALTER TABLE branch")
+	}
+	if !strings.Contains(migrations[22], "skill_versions") ||
+		!strings.Contains(sqliteMigrations[22], "project_skills") {
+		t.Fatal("migration 022 must add skills, immutable versions, and project attachments")
+	}
+	if !strings.Contains(migrations[23], "idx_project_skills_skill_project") ||
+		!strings.Contains(sqliteMigrations[23], "idx_project_skills_skill_project") {
+		t.Fatal("migration 023 must replace the redundant project_skills index with reverse lookup")
 	}
 }
 

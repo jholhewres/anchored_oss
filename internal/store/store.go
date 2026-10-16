@@ -64,6 +64,24 @@ type Store interface {
 	// org's default team (creating the team if needed). Idempotent.
 	EnsureDefaultTeamMembership(ctx context.Context, orgID, accountID string) error
 
+	// Skills are org-scoped, versioned Markdown instructions. Runtime project
+	// reads only return currently active, explicitly attached skills.
+	CreateSkill(ctx context.Context, skill *model.Skill, content string) error
+	ListSkills(ctx context.Context, orgID string) ([]*model.Skill, error)
+	GetSkill(ctx context.Context, orgID, id string) (*model.Skill, error)
+	UpdateSkill(ctx context.Context, orgID, id, actorID string, upd model.SkillUpdate) (*model.Skill, error)
+	RevokeSkill(ctx context.Context, orgID, id string) error
+	ListProjectSkills(ctx context.Context, projectID, query string, limit int) ([]*model.SkillDescriptor, error)
+	// ListProjectSkillAttachments returns every explicit attachment for an active
+	// project in orgID, including inactive and soft-deleted skills. It is for
+	// admin attachment management only; runtime reads use ListProjectSkills.
+	ListProjectSkillAttachments(ctx context.Context, orgID, projectID string) ([]*model.SkillDescriptor, error)
+	GetProjectSkill(ctx context.Context, projectID, slug string) (*model.Skill, error)
+	// ReplaceProjectSkills atomically replaces a project's attachment set and
+	// returns its sorted pre-replacement IDs from the same transaction. Existing
+	// revoked/deleted attachments may be retained but cannot be newly attached.
+	ReplaceProjectSkills(ctx context.Context, orgID, projectID string, skillIDs []string) ([]string, error)
+
 	// Memories.
 	SearchMemories(ctx context.Context, projectID string, query string, limit int) ([]*model.Memory, error)
 	// SearchMemoriesByVector is retained for source compatibility. New server

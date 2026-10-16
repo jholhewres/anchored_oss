@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 21
+const sqliteSchemaVersion = 24
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -334,6 +334,50 @@ const sqliteMigration020 = ``
 // no ADD COLUMN IF NOT EXISTS); the index and the one-time orphan reset run here.
 const sqliteMigration021 = ``
 
+const sqliteMigration022 = `
+CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'deprecated', 'revoked')),
+    current_version INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT REFERENCES accounts(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TEXT,
+    UNIQUE(org_id, slug)
+);
+CREATE TABLE IF NOT EXISTS skill_versions (
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK (version > 0),
+    purpose TEXT NOT NULL,
+    body TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_by TEXT REFERENCES accounts(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (skill_id, version)
+);
+CREATE TABLE IF NOT EXISTS project_skills (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (project_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_skills_org_active ON skills(org_id, status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_project_skills_project ON project_skills(project_id, skill_id);
+`
+
+const sqliteMigration023 = `
+DROP INDEX IF EXISTS idx_project_skills_project;
+CREATE INDEX IF NOT EXISTS idx_project_skills_skill_project ON project_skills(skill_id, project_id);
+`
+
+// SQLite adds the nullable TEXT column through the guarded branch in
+// MigrateSQLite. Values are validated JSON by the skill store before writes.
+const sqliteMigration024 = ``
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -356,6 +400,9 @@ var sqliteMigrations = map[int]string{
 	19: sqliteMigration019,
 	20: sqliteMigration020,
 	21: sqliteMigration021,
+	22: sqliteMigration022,
+	23: sqliteMigration023,
+	24: sqliteMigration024,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {
@@ -467,6 +514,13 @@ func MigrateSQLite(db *sql.DB) error {
 				ON memory_write_idempotency(memory_id)`); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("migration %d index memory idempotency memory_id: %w", v, err)
+			}
+		}
+
+		if v == 24 && !columnExists(db, "skill_versions", "frontmatter") {
+			if _, err := tx.Exec(`ALTER TABLE skill_versions ADD COLUMN frontmatter TEXT CHECK (frontmatter IS NULL OR json_valid(frontmatter))`); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d add skill frontmatter: %w", v, err)
 			}
 		}
 

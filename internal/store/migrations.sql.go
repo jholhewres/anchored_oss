@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 21
+const schemaVersion = 24
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -414,6 +414,57 @@ UPDATE curation_queue SET status = 'pending', owner_id = NULL, lease_expires_at 
     WHERE status IN ('processing', 'processing_dirty');
 `
 
+// migration022 adds organization-governed, immutable Markdown skills and
+// explicit project attachments. The version row carries purpose as well as the
+// body so a published instruction can be reconstructed without mutable state.
+const migration022 = `
+CREATE TABLE IF NOT EXISTS skills (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'deprecated', 'revoked')),
+    current_version INTEGER NOT NULL DEFAULT 1,
+    created_by UUID REFERENCES accounts(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE(org_id, slug)
+);
+CREATE TABLE IF NOT EXISTS skill_versions (
+    skill_id UUID NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK (version > 0),
+    purpose TEXT NOT NULL,
+    body TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_by UUID REFERENCES accounts(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (skill_id, version)
+);
+CREATE TABLE IF NOT EXISTS project_skills (
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    skill_id UUID NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (project_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_skills_org_active ON skills(org_id, status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_project_skills_project ON project_skills(project_id, skill_id);
+`
+
+// migration023 removes the index duplicated by project_skills' primary key
+// and adds the reverse lookup used when inspecting a skill's attachments.
+const migration023 = `
+DROP INDEX IF EXISTS idx_project_skills_project;
+CREATE INDEX IF NOT EXISTS idx_project_skills_skill_project ON project_skills(skill_id, project_id);
+`
+
+// migration024 adds nullable structured metadata without rewriting historical
+// SKILL.md bytes. A NULL frontmatter value explicitly identifies legacy rows.
+const migration024 = `
+ALTER TABLE skill_versions ADD COLUMN IF NOT EXISTS frontmatter JSONB;
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -436,6 +487,9 @@ var migrations = map[int]string{
 	19: migration019,
 	20: migration020,
 	21: migration021,
+	22: migration022,
+	23: migration023,
+	24: migration024,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from
