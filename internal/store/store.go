@@ -25,9 +25,12 @@ type Store interface {
 	SetAccountPassword(ctx context.Context, accountID, passwordHash string) error
 	GetOrCreateAccountByEmail(ctx context.Context, orgID, email, displayName string) (account *model.Account, created bool, err error)
 	ListAccountsByOrg(ctx context.Context, orgID string) ([]*model.AccountWithRole, error)
-	UpdateAccount(ctx context.Context, id, displayName, role string) error
-	SoftDeleteAccount(ctx context.Context, id string) error
-	ListAccountProjects(ctx context.Context, accountID string) ([]*model.Project, error)
+	// UpdateAccount, SoftDeleteAccount and ListAccountProjects act only inside
+	// orgID: the role, keys, team memberships and projects of other orgs the
+	// account belongs to are untouched and invisible.
+	UpdateAccount(ctx context.Context, orgID, id, displayName, role string) error
+	SoftDeleteAccount(ctx context.Context, orgID, id string) error
+	ListAccountProjects(ctx context.Context, orgID, accountID string) ([]*model.Project, error)
 	SetAccountProjects(ctx context.Context, orgID, accountID string, projectIDs []string) error
 	CreateOrganization(ctx context.Context, name, slug string) (*model.Organization, error)
 	GetOrganizationByID(ctx context.Context, id string) (*model.Organization, error)

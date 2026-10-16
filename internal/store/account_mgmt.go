@@ -9,7 +9,7 @@ import (
 
 // UpdateAccount updates display_name and/or role for the given account.
 // An empty string for either field means "no change".
-func (s *PostgresStore) UpdateAccount(ctx context.Context, id, displayName, role string) error {
+func (s *PostgresStore) UpdateAccount(ctx context.Context, orgID, id, displayName, role string) error {
 	if displayName != "" {
 		if _, err := s.db.ExecContext(ctx,
 			`UPDATE accounts SET display_name = $1 WHERE id = $2`,
@@ -20,8 +20,8 @@ func (s *PostgresStore) UpdateAccount(ctx context.Context, id, displayName, role
 	}
 	if role != "" {
 		if _, err := s.db.ExecContext(ctx,
-			`UPDATE org_members SET role = $1 WHERE account_id = $2`,
-			role, id,
+			`UPDATE org_members SET role = $1 WHERE account_id = $2 AND org_id = $3`,
+			role, id, orgID,
 		); err != nil {
 			return fmt.Errorf("update account role: %w", err)
 		}
@@ -30,17 +30,17 @@ func (s *PostgresStore) UpdateAccount(ctx context.Context, id, displayName, role
 }
 
 // SoftDeleteAccount marks an account deleted and revokes all its API keys.
-func (s *PostgresStore) SoftDeleteAccount(ctx context.Context, id string) error {
+func (s *PostgresStore) SoftDeleteAccount(ctx context.Context, orgID, id string) error {
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE api_keys SET revoked_at = now() WHERE account_id = $1 AND revoked_at IS NULL`,
-		id,
+		`UPDATE api_keys SET revoked_at = now() WHERE account_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
+		id, orgID,
 	); err != nil {
 		return fmt.Errorf("revoke account keys: %w", err)
 	}
 	// Remove from all teams so they lose project access immediately.
 	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM team_members WHERE account_id = $1`,
-		id,
+		`DELETE FROM team_members WHERE account_id = $1 AND team_id IN (SELECT id FROM teams WHERE org_id = $2)`,
+		id, orgID,
 	); err != nil {
 		return fmt.Errorf("remove team memberships: %w", err)
 	}
@@ -48,15 +48,15 @@ func (s *PostgresStore) SoftDeleteAccount(ctx context.Context, id string) error 
 }
 
 // ListAccountProjects returns all non-deleted projects accessible to accountID.
-func (s *PostgresStore) ListAccountProjects(ctx context.Context, accountID string) ([]*model.Project, error) {
+func (s *PostgresStore) ListAccountProjects(ctx context.Context, orgID, accountID string) ([]*model.Project, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.category, p.remote_key, p.created_by, p.created_at
 		 FROM projects p
 		 JOIN team_project_access tpa ON tpa.project_id = p.id
 		 JOIN team_members tm ON tm.team_id = tpa.team_id
-		 WHERE tm.account_id = $1 AND p.deleted_at IS NULL
+		 WHERE tm.account_id = $1 AND p.org_id = $2 AND p.deleted_at IS NULL
 		 ORDER BY p.name`,
-		accountID,
+		accountID, orgID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list account projects: %w", err)

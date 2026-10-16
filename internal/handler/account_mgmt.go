@@ -15,6 +15,10 @@ type updateAccountRequest struct {
 	Role        string `json:"role"`
 }
 
+// accountRoles are the org roles an admin may assign. "member" is what
+// POST /v1/accounts gives new accounts; its login session gets key scope sync.
+var accountRoles = map[string]bool{"admin": true, "sync": true, "readonly": true, "member": true}
+
 type setAccountProjectsRequest struct {
 	ProjectIDs []string `json:"project_ids"`
 }
@@ -35,8 +39,16 @@ func (h *AccountHandler) Update(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "at least one of display_name or role is required")
 		return
 	}
+	if req.Role != "" && !accountRoles[req.Role] {
+		jsonError(w, http.StatusBadRequest, "role must be one of: admin, sync, readonly, member")
+		return
+	}
+	orgID, ok := h.requireOrgMember(w, r, id)
+	if !ok {
+		return
+	}
 
-	if err := h.store.UpdateAccount(r.Context(), id, req.DisplayName, req.Role); err != nil {
+	if err := h.store.UpdateAccount(r.Context(), orgID, id, req.DisplayName, req.Role); err != nil {
 		h.logger.Error("update account failed", "error", err, "account_id", id)
 		jsonError(w, http.StatusInternalServerError, "update account failed")
 		return
@@ -69,7 +81,12 @@ func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.SoftDeleteAccount(r.Context(), id); err != nil {
+	orgID, ok := h.requireOrgMember(w, r, id)
+	if !ok {
+		return
+	}
+
+	if err := h.store.SoftDeleteAccount(r.Context(), orgID, id); err != nil {
 		h.logger.Error("delete account failed", "error", err, "account_id", id)
 		jsonError(w, http.StatusInternalServerError, "delete account failed")
 		return
@@ -84,7 +101,12 @@ func (h *AccountHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	projects, err := h.store.ListAccountProjects(r.Context(), id)
+	orgID, ok := h.requireOrgMember(w, r, id)
+	if !ok {
+		return
+	}
+
+	projects, err := h.store.ListAccountProjects(r.Context(), orgID, id)
 	if err != nil {
 		h.logger.Error("list account projects failed", "error", err, "account_id", id)
 		jsonError(w, http.StatusInternalServerError, "list account projects failed")
@@ -124,4 +146,26 @@ func (h *AccountHandler) SetProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// requireOrgMember resolves the caller's org and answers 404 when the target
+// account is not a member of it, so admins cannot read or change accounts of
+// other orgs (or learn that they exist).
+func (h *AccountHandler) requireOrgMember(w http.ResponseWriter, r *http.Request, accountID string) (string, bool) {
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return "", false
+	}
+	member, err := h.store.IsOrgMember(r.Context(), orgID, accountID)
+	if err != nil {
+		h.logger.Error("check account org membership failed", "error", err, "account_id", accountID)
+		jsonError(w, http.StatusInternalServerError, "internal error")
+		return "", false
+	}
+	if !member {
+		jsonError(w, http.StatusNotFound, "account not found")
+		return "", false
+	}
+	return orgID, true
 }
