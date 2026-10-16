@@ -66,6 +66,7 @@ func TestSQLiteMigration024KeepsLegacySkillRowsByteExact(t *testing.T) {
 		CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
 		CREATE TABLE organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL);
 		CREATE TABLE accounts (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT NOT NULL);
+		CREATE TABLE api_keys (id TEXT PRIMARY KEY, name TEXT NOT NULL, revoked_at TEXT);
 		CREATE TABLE skills (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, slug TEXT NOT NULL, purpose TEXT NOT NULL, status TEXT NOT NULL, current_version INTEGER NOT NULL, created_by TEXT);
 		CREATE TABLE skill_versions (skill_id TEXT NOT NULL, version INTEGER NOT NULL, purpose TEXT NOT NULL, body TEXT NOT NULL, content_hash TEXT NOT NULL, created_by TEXT, PRIMARY KEY (skill_id, version));
 		INSERT INTO schema_version(version) VALUES (23);

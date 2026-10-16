@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 24
+const schemaVersion = 25
 
 // advisoryLockKey is a constant 64-bit key used to serialize migrations
 // across concurrent server instances on the same database.
@@ -465,6 +465,13 @@ const migration024 = `
 ALTER TABLE skill_versions ADD COLUMN IF NOT EXISTS frontmatter JSONB;
 `
 
+// migration025 revokes every dashboard session key minted before login
+// sessions carried the account's org role. Older releases gave every login a
+// never-expiring admin key named "session"; holders simply log in again.
+const migration025 = `
+UPDATE api_keys SET revoked_at = now() WHERE name = 'session' AND revoked_at IS NULL;
+`
+
 var migrations = map[int]string{
 	1:  migration001,
 	2:  migration002,
@@ -490,6 +497,7 @@ var migrations = map[int]string{
 	22: migration022,
 	23: migration023,
 	24: migration024,
+	25: migration025,
 }
 
 // Migrate brings the schema up to schemaVersion. Safe to call from

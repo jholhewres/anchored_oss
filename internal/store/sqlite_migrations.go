@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const sqliteSchemaVersion = 24
+const sqliteSchemaVersion = 25
 
 const sqliteMigration001 = `
 CREATE TABLE IF NOT EXISTS accounts (
@@ -378,6 +378,12 @@ CREATE INDEX IF NOT EXISTS idx_project_skills_skill_project ON project_skills(sk
 // MigrateSQLite. Values are validated JSON by the skill store before writes.
 const sqliteMigration024 = ``
 
+// sqliteMigration025 mirrors migration025: legacy admin session keys are
+// revoked so the next login gets a role-scoped session.
+const sqliteMigration025 = `
+UPDATE api_keys SET revoked_at = datetime('now') WHERE name = 'session' AND revoked_at IS NULL;
+`
+
 var sqliteMigrations = map[int]string{
 	1:  sqliteMigration001,
 	2:  sqliteMigration002,
@@ -403,6 +409,7 @@ var sqliteMigrations = map[int]string{
 	22: sqliteMigration022,
 	23: sqliteMigration023,
 	24: sqliteMigration024,
+	25: sqliteMigration025,
 }
 
 func columnExists(db *sql.DB, table, column string) bool {

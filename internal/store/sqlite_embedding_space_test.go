@@ -584,9 +584,9 @@ func TestPostgresEmbeddingWidthRejectedBeforeDatabaseCall(t *testing.T) {
 }
 
 func TestEmbeddingMigrationsPreservePublishedOrdering(t *testing.T) {
-	if schemaVersion != 24 || sqliteSchemaVersion != 24 {
+	if schemaVersion != 25 || sqliteSchemaVersion != 25 {
 		t.Fatalf(
-			"schema versions = postgres:%d sqlite:%d, want 24",
+			"schema versions = postgres:%d sqlite:%d, want 25",
 			schemaVersion,
 			sqliteSchemaVersion,
 		)
