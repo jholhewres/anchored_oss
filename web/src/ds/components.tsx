@@ -450,6 +450,11 @@ export const Code: React.FC<CodeProps> = ({
   const lineArr =
     lines ||
     (typeof children === "string" ? children.split("\n") : null);
+  const copyText = typeof children === "string"
+    ? children
+    : lines?.every((line): line is string => typeof line === "string")
+      ? lines.join("\n")
+      : "";
   return (
     <div
       style={{
@@ -494,22 +499,13 @@ export const Code: React.FC<CodeProps> = ({
             {lang && <span>{lang}</span>}
           </div>
           {copy && (
-            <button
-              style={{
-                border: 0,
-                background: "transparent",
-                color: "var(--text-dim)",
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                padding: 2,
-              }}
-            >
-              <I.copy size={12} />
-            </button>
+            <ClipboardButton
+              text={copyText}
+              label="Copy code"
+              iconOnly
+              disabled={!copyText}
+              style={{ padding: 2 }}
+            />
           )}
         </div>
       )}
@@ -550,6 +546,113 @@ export const Code: React.FC<CodeProps> = ({
   );
 };
 
+/** Copies text on both secure HTTPS origins and HTTP/IP deployments. */
+export async function copyText(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Permissions can be denied even on a secure origin; try the guarded fallback.
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+interface ClipboardButtonProps extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "children" | "onClick"> {
+  text: string;
+  label?: string;
+  successLabel?: string;
+  errorLabel?: string;
+  ariaLabel?: string;
+  iconOnly?: boolean;
+  onCopied?: (success: boolean) => void;
+}
+
+/**
+ * Shared copy control. Its visible and live feedback is driven by the actual
+ * clipboard result, never by an optimistic click state.
+ */
+export const ClipboardButton: React.FC<ClipboardButtonProps> = ({
+  text,
+  label = "copy",
+  successLabel = "copied",
+  errorLabel = "copy failed",
+  ariaLabel,
+  iconOnly = false,
+  onCopied,
+  style = {},
+  disabled,
+  ...buttonProps
+}) => {
+  const [state, setState] = useState<"idle" | "success" | "error">("idle");
+
+  const copy = async () => {
+    const success = await copyText(text);
+    setState(success ? "success" : "error");
+    onCopied?.(success);
+    window.setTimeout(() => setState("idle"), 1800);
+  };
+
+  const outcome = state === "success" ? successLabel : state === "error" ? errorLabel : label;
+  const accessibleLabel = state === "success"
+    ? `${ariaLabel || label} copied`
+    : state === "error"
+      ? `${ariaLabel || label} failed`
+      : ariaLabel || label;
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={accessibleLabel}
+        title={iconOnly ? accessibleLabel : undefined}
+        disabled={disabled || !text}
+        onClick={copy}
+        style={{
+          position: "relative",
+          border: 0,
+          background: "transparent",
+          color: state === "success" ? "var(--ok)" : state === "error" ? "var(--err)" : "var(--text-dim)",
+          cursor: disabled || !text ? "not-allowed" : "pointer",
+          opacity: disabled || !text ? 0.55 : 1,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          ...style,
+        }}
+        {...buttonProps}
+      >
+        {state === "success" ? <I.check size={12} /> : state === "error" ? <I.x size={12} /> : <I.copy size={12} />}
+        {!iconOnly && outcome}
+      </button>
+      <span aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clipPath: "inset(50%)" }}>
+        {state === "success" ? "Copied to clipboard" : state === "error" ? "Copy failed" : ""}
+      </span>
+    </>
+  );
+};
+
 interface InstallCmdProps {
   cmd?: string;
   label?: string;
@@ -560,26 +663,6 @@ export const InstallCmd: React.FC<InstallCmdProps> = ({
   cmd = "curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored/main/install/install.sh | bash",
   accent = false,
 }) => {
-  const [copied, setCopied] = useState(false);
-
-  const copyCommand = async () => {
-    try {
-      await navigator.clipboard.writeText(cmd);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = cmd;
-      textarea.setAttribute("readonly", "");
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  };
-
   return (
     <div
       style={{
@@ -616,29 +699,22 @@ export const InstallCmd: React.FC<InstallCmdProps> = ({
       >
         {cmd}
       </span>
-      <button
-        type="button"
-        aria-label={copied ? "Install command copied" : "Copy install command"}
-        onClick={copyCommand}
+      <ClipboardButton
+        text={cmd}
+        label="copy"
+        successLabel="copied"
+        ariaLabel="Copy install command"
         style={{
           border: 0,
           borderLeft: "1px solid var(--border)",
           background: "transparent",
-          color: copied ? "var(--ok)" : "var(--text-muted)",
           padding: "10px 12px",
-          cursor: "pointer",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
           fontFamily: "inherit",
           fontSize: 12,
           minWidth: 78,
           justifyContent: "center",
         }}
-      >
-        {copied ? <I.check size={14} /> : <I.copy size={14} />}
-        {copied ? "copied" : "copy"}
-      </button>
+      />
     </div>
   );
 };
@@ -798,7 +874,8 @@ export const Table: React.FC<TableProps> = ({ cols, rows, dense = false }) => {
   return (
     <div
       style={{
-        overflow: "hidden",
+        overflowX: "auto",
+        overflowY: "hidden",
         border: "1px solid var(--border)",
         borderRadius: "var(--radius-lg)",
       }}
@@ -806,6 +883,7 @@ export const Table: React.FC<TableProps> = ({ cols, rows, dense = false }) => {
       <table
         style={{
           width: "100%",
+          minWidth: cols.length > 4 ? 720 : undefined,
           borderCollapse: "collapse",
           fontSize: 13.5,
         }}
@@ -1008,23 +1086,48 @@ interface TabsProps {
   tabs: TabItem[];
   active: string;
   onSet?: (key: string) => void;
+  id?: string;
 }
 
-export const Tabs: React.FC<TabsProps> = ({ tabs, active, onSet }) => {
+export const Tabs: React.FC<TabsProps> = ({ tabs, active, onSet, id }) => {
+  const generatedId = React.useId();
+  const baseId = id || `tabs-${generatedId.replace(/:/g, "")}`;
+  const moveFocus = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+    else if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    onSet?.(tabs[next].key);
+    document.getElementById(`${baseId}-tab-${tabs[next].key}`)?.focus();
+  };
+
   return (
     <div
+      className="a-tabs"
+      role="tablist"
+      aria-label="Project sections"
       style={{
         display: "flex",
         gap: 0,
         borderBottom: "1px solid var(--border)",
+        overflowX: "auto",
       }}
     >
-      {tabs.map((t) => {
+      {tabs.map((t, index) => {
         const on = t.key === active;
         return (
           <button
             key={t.key}
+            id={`${baseId}-tab-${t.key}`}
+            role="tab"
+            aria-selected={on}
+            aria-controls={`${baseId}-panel-${t.key}`}
+            tabIndex={on ? 0 : -1}
             onClick={() => onSet?.(t.key)}
+            onKeyDown={(event) => moveFocus(event, index)}
             style={{
               border: 0,
               background: "transparent",
@@ -1039,6 +1142,8 @@ export const Tabs: React.FC<TabsProps> = ({ tabs, active, onSet }) => {
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
+              flex: "0 0 auto",
+              whiteSpace: "nowrap",
             }}
           >
             {t.icon && React.cloneElement(t.icon, { size: 14 })}

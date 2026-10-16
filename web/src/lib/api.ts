@@ -25,6 +25,10 @@ import type {
   ProjectCategory,
   RegisterResponse,
   Scope,
+  Skill,
+  SkillHeader,
+  SkillStatus,
+  SkillTemplate,
   Team,
   TeamDetail,
   UpdateCheckResponse,
@@ -93,7 +97,7 @@ async function request<T>(
   });
   if (res.status === 401) {
     clearToken();
-    if (location.pathname !== "/login") {
+    if (auth && location.pathname !== "/login") {
       location.replace("/login");
     }
     throw new ApiError(401, null, "unauthorized");
@@ -149,6 +153,38 @@ export const api = {
     ),
   getProjectMemoryHealth: (id: string) =>
     request<MemoryHealth>("GET", `/v1/projects/${id}/memory-health`),
+  getSkills: () => request<Skill[]>("GET", "/v1/skills"),
+  getSkill: (id: string) => request<Skill>("GET", `/v1/skills/${id}`),
+  getSkillTemplates: () => request<SkillTemplate[]>("GET", "/v1/skill-templates"),
+  createSkill: (body: {
+    name: string;
+    slug: string;
+    purpose: string;
+    body?: string;
+    content?: string;
+    frontmatter?: SkillHeader;
+    template_id?: string;
+    status: SkillStatus;
+  }) =>
+    request<Skill>("POST", "/v1/skills", body),
+  updateSkill: (id: string, body: Partial<{
+    name: string;
+    purpose: string;
+    body: string;
+    content: string;
+    frontmatter: SkillHeader;
+    status: SkillStatus;
+  }>) =>
+    request<Skill>("PATCH", `/v1/skills/${id}`, body),
+  deleteSkill: (id: string) => request<void>("DELETE", `/v1/skills/${id}`),
+  getProjectSkills: (id: string, q?: string) => {
+    const params = q ? `?${new URLSearchParams({ q }).toString()}` : "";
+    return request<Skill[]>("GET", `/v1/projects/${id}/skills${params}`);
+  },
+  getProjectSkillAttachments: (id: string) =>
+    request<Skill[]>("GET", `/v1/projects/${id}/skill-attachments`),
+  setProjectSkills: (id: string, skill_ids: string[]) =>
+    request<void>("PUT", `/v1/projects/${id}/skills`, { skill_ids }),
   // searchMemories runs server-side search. mode "semantic" uses vector KNN
   // (falls back to text on the server if embeddings are disabled); "text" runs
   // substring/keyword search. Returns a flat ranked array.
@@ -198,6 +234,17 @@ export const api = {
       expires_in: expiresIn ?? "",
     }),
   revokeAPIKey: (id: string) => request<void>("DELETE", `/v1/api-keys/${id}`),
+  getMyAPIKeys: () => request<APIKey[]>("GET", "/v1/me/api-keys"),
+  createMyAPIKey: (
+    name: string,
+    scope: "sync" | "readonly",
+    expiresIn: "30d" | "90d" | "180d" | "365d",
+  ) => request<APIKeyMintResponse>("POST", "/v1/me/api-keys", {
+    name,
+    scope,
+    expires_in: expiresIn,
+  }),
+  revokeMyAPIKey: (id: string) => request<void>("DELETE", `/v1/me/api-keys/${id}`),
 
   getAudit: (filters: AuditFilters) => {
     const q = new URLSearchParams();
@@ -217,7 +264,7 @@ export const api = {
   completeOnboarding: (body: {
     org: { name: string; slug: string };
     admin: { email: string; password: string; display_name: string };
-    projects: { name: string; category: ProjectCategory; repo_url?: string }[];
+    projects: { name: string; category: ProjectCategory; repo_url: string }[];
   }) => request<OnboardingComplete>("POST", "/v1/onboarding/complete", body, { auth: false }),
 
   // Invites
@@ -239,7 +286,7 @@ export const api = {
     request<void>("PUT", `/v1/accounts/${id}/projects`, { project_ids }),
 
   // Projects
-  createProject: (body: { name: string; slug?: string; category: ProjectCategory; remote_key?: string; repo_url?: string }) =>
+  createProject: (body: { name: string; slug?: string; category: ProjectCategory; remote_key?: string; repo_url: string }) =>
     request<Project>("POST", "/v1/projects", body),
 
   // Optional RAG chat

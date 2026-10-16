@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, Badge, Status, Btn, Input, Empty } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { repositoryError } from "@/lib/gitRemote";
 import { useToast } from "@/components/ui/toast";
 import {
   type Project,
@@ -42,6 +44,7 @@ function NewProjectModal({ onClose, onCreated }: NewProjectModalProps) {
   const [repoUrl, setRepoUrl] = useState("");
   const [category, setCategory] = useState<ProjectCategory>("service");
   const [submitting, setSubmitting] = useState(false);
+  const [repoError, setRepoError] = useState<string | null>(null);
 
   function handleNameChange(v: string) {
     setName(v);
@@ -50,18 +53,21 @@ function NewProjectModal({ onClose, onCreated }: NewProjectModalProps) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    const validationError = repositoryError(repoUrl);
+    setRepoError(validationError);
+    if (!name.trim() || validationError) return;
     setSubmitting(true);
     try {
       const p = await api.createProject({
         name: name.trim(),
         slug: slug.trim() || slugify(name),
         category,
-        repo_url: repoUrl.trim() || undefined,
+        repo_url: repoUrl.trim(),
       });
       onCreated(p);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to create project";
+      setRepoError(msg);
       toast.push({ title: "Create failed", description: msg, variant: "error" });
     } finally {
       setSubmitting(false);
@@ -110,14 +116,15 @@ function NewProjectModal({ onClose, onCreated }: NewProjectModalProps) {
             </div>
             <div>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>
-                Repository (optional)
+                Repository
               </div>
               <Input full size="md" placeholder="git@github.com:org/repo.git" value={repoUrl}
-                onChange={e => setRepoUrl(e.target.value)} mono />
-              <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
-                Paste the git remote (ssh or https — both resolve to the same repo).
+                onChange={e => { setRepoUrl(e.target.value); if (repoError) setRepoError(null); }} onBlur={() => setRepoError(repositoryError(repoUrl))} mono error={Boolean(repoError)} required aria-describedby="project-repository-help project-repository-error" />
+              <div id="project-repository-help" style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
+                Paste the Git remote (SSH or HTTPS — equivalent remotes resolve to the same repository).
                 Memories synced from this repo will land here automatically.
               </div>
+              {repoError && <div id="project-repository-error" role="alert" style={{ marginTop: 6, fontSize: 12, color: "var(--err)" }}>{repoError}</div>}
             </div>
             <div>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>
@@ -178,6 +185,8 @@ function ProjectCard({ p, onClick }: { p: Project; onClick: () => void }) {
 // ── Main page ───────────────────────────────────────────────────────────────
 export function ProjectsPage() {
   const navigate = useNavigate();
+  const { me } = useAuth();
+  const canCreateProjects = me?.scope === "admin";
   const [searchParams, setSearchParams] = useSearchParams();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,10 +197,10 @@ export function ProjectsPage() {
   // Open modal automatically when ?new=1
   useEffect(() => {
     if (searchParams.get("new") === "1") {
-      setShowModal(true);
+      if (canCreateProjects) setShowModal(true);
       setSearchParams({}, { replace: true });
     }
-  }, [searchParams, setSearchParams]);
+  }, [canCreateProjects, searchParams, setSearchParams]);
 
   useEffect(() => {
     api.getProjects()
@@ -241,17 +250,17 @@ export function ProjectsPage() {
 
         <div style={{ flex: 1 }} />
         <Badge tone="ok" dot>{activeProjects.length} active</Badge>
-        <Btn variant="primary" size="sm" icon={<I.plus />} onClick={() => setShowModal(true)}>
+        {canCreateProjects && <Btn variant="primary" size="sm" icon={<I.plus />} onClick={() => setShowModal(true)}>
           New project
-        </Btn>
+        </Btn>}
       </div>
 
       {filtered.length === 0 ? (
         <Empty
           icon={<I.folder />}
           title="No projects"
-          body="Create your first project to start sharing team memory."
-          actions={<Btn variant="primary" size="sm" icon={<I.plus />} onClick={() => setShowModal(true)}>New project</Btn>}
+          body={canCreateProjects ? "Create your first project to start sharing team memory." : "No projects are available to this session yet."}
+          actions={canCreateProjects ? <Btn variant="primary" size="sm" icon={<I.plus />} onClick={() => setShowModal(true)}>New project</Btn> : undefined}
         />
       ) : view === "all" ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
@@ -291,7 +300,7 @@ export function ProjectsPage() {
         </div>
       )}
 
-      {showModal && (
+      {canCreateProjects && showModal && (
         <NewProjectModal onClose={() => setShowModal(false)} onCreated={handleCreated} />
       )}
     </div>

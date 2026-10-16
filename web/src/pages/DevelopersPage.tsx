@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Card, ScopeChip, Status, Btn, Input, Avatar, Table, Badge } from "@/ds/components";
+import { Card, ClipboardButton, ScopeChip, Status, Btn, Input, Avatar, Table, Badge } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
@@ -436,10 +436,9 @@ export function DevelopersPage() {
                 wordBreak: "break-all" as const,
               }}>{freshInviteUrl}</div>
             </div>
-            <Btn variant="outline" size="sm" icon={<I.copy />}
-              onClick={() => { navigator.clipboard.writeText(freshInviteUrl); }}>
-              Copy
-            </Btn>
+            <ClipboardButton text={freshInviteUrl} label="Copy" ariaLabel="Copy invite link" style={{
+              border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "6px 10px",
+            }} />
             <button type="button" onClick={() => setFreshInviteUrl(null)} style={{
               border: 0, background: "transparent", color: "var(--text-dim)", cursor: "pointer",
               display: "inline-flex", padding: 4,

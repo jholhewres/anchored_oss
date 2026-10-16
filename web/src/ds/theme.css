@@ -1,43 +1,79 @@
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500,600,700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap');
 
-:root {
-  --bg: #0a0908;
-  --bg-1: #100e0c;
-  --bg-2: #161310;
-  --bg-3: #1c1815;
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f6fa;
+  --bg-1: #ffffff;
+  --bg-2: #f8fafc;
+  --bg-3: #eaf0f7;
+  --bg-input: #ffffff;
+
+  --border: #d8e1ec;
+  --border-strong: #b7c5d6;
+  --border-accent: #60a5fa;
+
+  --text: #172033;
+  --text-muted: #526174;
+  --text-dim: #718096;
+  --text-ghost: #9caabc;
+
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-dim: #1e40af;
+  --accent-bg: rgba(37,99,235,0.09);
+  --accent-border: rgba(37,99,235,0.26);
+
+  --ok: #16805b;
+  --ok-bg: rgba(22,128,91,0.10);
+  --warn: #a85f08;
+  --warn-bg: rgba(168,95,8,0.10);
+  --err: #c13d4b;
+  --err-bg: rgba(193,61,75,0.10);
+  --info: #0e7490;
+  --info-bg: rgba(14,116,144,0.10);
+
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "Fraunces", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius: 10px;
+  --radius-sm: 8px;
+  --radius-lg: 16px;
+  --pad: 1;
+}
+
+html[data-theme="warm"] {
+  color-scheme: dark;
+  --bg: #0b0908;
+  --bg-1: #11100e;
+  --bg-2: #171411;
+  --bg-3: #1f1a16;
   --bg-input: #0e0c0a;
 
-  --border: #26211d;
-  --border-strong: #3a322c;
-  --border-accent: #5a3a28;
+  --border: #2c251f;
+  --border-strong: #3c3229;
+  --border-accent: #5f3d2b;
 
-  --text: #f5f1eb;
-  --text-muted: #a39a90;
-  --text-dim: #6b6258;
-  --text-ghost: #4a4239;
+  --text: #f4ede6;
+  --text-muted: #b2a79a;
+  --text-dim: #7d7267;
+  --text-ghost: #544b42;
 
-  --accent: #c2410c;
-  --accent-hover: #dd5520;
-  --accent-dim: #7c2d12;
-  --accent-bg: rgba(194,65,12,0.08);
-  --accent-border: rgba(194,65,12,0.25);
+  --accent: #d56a2a;
+  --accent-hover: #eb7d36;
+  --accent-dim: #8c4120;
+  --accent-bg: rgba(213,106,42,0.10);
+  --accent-border: rgba(213,106,42,0.26);
 
-  --ok: #84cc16;
-  --ok-bg: rgba(132,204,22,0.10);
-  --warn: #f59e0b;
-  --warn-bg: rgba(245,158,11,0.10);
-  --err: #ef4444;
-  --err-bg: rgba(239,68,68,0.10);
-  --info: #22d3ee;
-  --info-bg: rgba(34,211,238,0.10);
-
-  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-
-  --radius: 6px;
-  --radius-sm: 4px;
-  --radius-lg: 10px;
-  --pad: 1;
+  --ok: #8eca64;
+  --ok-bg: rgba(142,202,100,0.10);
+  --warn: #f0b44f;
+  --warn-bg: rgba(240,180,79,0.10);
+  --err: #f16f63;
+  --err-bg: rgba(241,111,99,0.10);
+  --info: #52d0e0;
+  --info-bg: rgba(82,208,224,0.10);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -52,6 +88,131 @@ a { color: var(--text); text-decoration: none; }
 a:hover { color: var(--accent); }
 
 button { font-family: inherit; }
+
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+h1, h2, h3, h4, h5, h6, .display-font {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+}
+
+.a-tabs {
+  overflow-y: hidden !important;
+  scrollbar-width: none;
+}
+
+.a-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 72px minmax(0, 1fr) !important;
+  }
+
+  .project-detail-hero {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .app-sidebar {
+    width: 72px !important;
+  }
+
+  .app-main {
+    padding: 22px 20px 48px !important;
+  }
+
+  .sidebar-org {
+    padding: 14px 10px !important;
+  }
+
+  .sidebar-org-button,
+  .sidebar-nav-link {
+    justify-content: center;
+  }
+
+  .sidebar-org-button {
+    padding: 9px !important;
+  }
+
+  .sidebar-org-copy,
+  .sidebar-org-chevron,
+  .sidebar-group-label,
+  .sidebar-nav-label,
+  .sidebar-user-copy {
+    display: none !important;
+  }
+
+  .project-detail-hero-actions {
+    width: 100%;
+  }
+
+  .sidebar-org-menu {
+    left: 10px !important;
+    right: auto !important;
+    width: 210px;
+  }
+
+  .sidebar-nav {
+    gap: 8px !important;
+  }
+
+  .sidebar-nav-link {
+    padding: 9px !important;
+  }
+
+  .sidebar-footer {
+    padding: 12px 10px !important;
+  }
+
+  .sidebar-footer > div {
+    justify-content: center;
+    padding: 6px 0 !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-main {
+    padding: 18px 14px 40px !important;
+  }
+
+  .app-header {
+    min-height: 52px !important;
+    padding: 12px 14px !important;
+  }
+
+  .app-header-title {
+    font-size: 18px !important;
+  }
+
+  .app-header-email {
+    display: none !important;
+  }
+
+  .my-api-keys-header {
+    align-items: stretch !important;
+    flex-direction: column;
+  }
+
+  .my-api-keys-header button {
+    align-self: flex-start;
+  }
+
+  .api-key-command {
+    white-space: nowrap;
+  }
+
+  .skill-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .skill-row-actions {
+    justify-content: flex-start !important;
+  }
+}
 
 .grid-bg {
   background-image: radial-gradient(circle, color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 1px);
@@ -88,8 +249,20 @@ button { font-family: inherit; }
 
 body {
   font-family: var(--font-sans);
-  background: var(--bg);
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 12%, transparent) 0, transparent 28%),
+    radial-gradient(circle at 88% 12%, color-mix(in srgb, var(--info) 8%, transparent) 0, transparent 26%),
+    linear-gradient(180deg, var(--bg-1) 0%, var(--bg) 100%);
   color: var(--text);
   font-feature-settings: "ss01", "cv11", "tnum";
   margin: 0;
+  min-height: 100vh;
+}
+
+html {
+  background: var(--bg);
+}
+
+#root {
+  min-height: 100vh;
 }

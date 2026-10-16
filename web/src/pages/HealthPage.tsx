@@ -108,12 +108,12 @@ function UpdateSection() {
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
             <span style={{ color: "var(--text-dim)" }}>current: </span>
-            <span style={{ color: "var(--text)" }}>v{data.current_version}</span>
+            <span style={{ color: "var(--text)" }}>{data.current_version}</span>
           </div>
           {data.update_available && (
             <div style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
               <span style={{ color: "var(--text-dim)" }}>latest: </span>
-              <span style={{ color: "var(--ok)" }}>v{data.latest_version}</span>
+              <span style={{ color: "var(--ok)" }}>{data.latest_version}</span>
             </div>
           )}
           <Btn variant="ghost" size="sm" onClick={doCheck}>Check again</Btn>
@@ -126,7 +126,7 @@ function UpdateSection() {
               background: "var(--ok-bg)", border: "1px solid color-mix(in srgb, var(--ok) 25%, transparent)",
               borderRadius: "var(--radius)", fontSize: 12.5, color: "var(--text-muted)",
             }}>
-              Update available: <strong style={{ color: "var(--text)" }}>v{data.current_version} → v{data.latest_version}</strong>
+              Update available: <strong style={{ color: "var(--text)" }}>{data.current_version} → {data.latest_version}</strong>
             </div>
             {phase.kind === "confirming" ? (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -162,7 +162,7 @@ function UpdateSection() {
     return (
       <div style={{ fontSize: 12.5, color: "var(--info)", fontFamily: "var(--font-mono)", display: "inline-flex", alignItems: "center", gap: 8 }}>
         <I.refresh size={13} />
-        Updating… the server will restart. Waiting for v{phase.latestVersion}…
+        Updating… the server will restart. Waiting for {phase.latestVersion}…
       </div>
     );
   }
@@ -170,7 +170,7 @@ function UpdateSection() {
   if (phase.kind === "success") {
     return (
       <div style={{ fontSize: 12.5, color: "var(--ok)", display: "inline-flex", alignItems: "center", gap: 6 }}>
-        <I.check size={13} /> Updated to v{phase.version}
+        <I.check size={13} /> Updated to {phase.version}
       </div>
     );
   }

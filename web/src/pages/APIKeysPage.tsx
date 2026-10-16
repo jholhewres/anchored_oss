@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Card, ScopeChip, Status, Table, Btn } from "@/ds/components";
+import { Card, ClipboardButton, ScopeChip, Status, Table, Btn } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -127,14 +127,6 @@ interface ShowKeyModalProps {
 }
 
 function ShowKeyModal({ fullKey, onClose }: ShowKeyModalProps) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    try { await navigator.clipboard.writeText(fullKey); } catch { /* ignore */ }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
-  }
-
   return (
     <Backdrop onClose={onClose}>
       <ModalBox>
@@ -154,14 +146,7 @@ function ShowKeyModal({ fullKey, onClose }: ShowKeyModalProps) {
           <code style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 12.5, wordBreak: "break-all" as const, color: "var(--text)" }}>
             {fullKey}
           </code>
-          <button type="button" onClick={copy} style={{
-            border: 0, background: "transparent", color: copied ? "var(--ok)" : "var(--text-dim)",
-            cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4,
-            fontFamily: "var(--font-mono)", fontSize: 11, padding: "2px 6px",
-          }}>
-            {copied ? <I.check size={13} /> : <I.copy size={13} />}
-            {copied ? "copied" : "copy"}
-          </button>
+          <ClipboardButton text={fullKey} label="copy" ariaLabel="Copy API key" style={{ padding: "2px 6px" }} />
         </div>
         <Btn variant="primary" size="md" full onClick={onClose}>Done — I've saved it</Btn>
       </ModalBox>

@@ -4,6 +4,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { I, AnchoredLogo } from "@/ds/icons";
 import { Avatar, ScopeChip } from "@/ds/components";
 import { useAuth } from "@/lib/auth";
+import { applyTheme, readTheme, THEME_MODES, type ThemeMode } from "@/lib/theme";
 import { api } from "@/lib/api";
 import type { Health } from "@/lib/types";
 
@@ -25,7 +26,8 @@ const groups: NavGroup[] = [
     items: [
       { to: "/dashboard", icon: <I.home />, label: "Overview" },
       { to: "/projects", icon: <I.folder />, label: "Projects" },
-      { to: "/my-tasks", icon: <I.check />, label: "My tasks" },
+      { to: "/skills", icon: <I.layers />, label: "Skills", adminOnly: true },
+      { to: "/my-api-keys", icon: <I.key />, label: "My API keys" },
       { to: "/developers", icon: <I.users />, label: "Developers", adminOnly: true },
     ],
   },
@@ -33,7 +35,7 @@ const groups: NavGroup[] = [
     label: "Admin",
     items: [
       { to: "/guardrails", icon: <I.shield />, label: "Guardrails", adminOnly: true },
-      { to: "/api-keys", icon: <I.key />, label: "API keys", adminOnly: true },
+      { to: "/api-keys", icon: <I.key />, label: "Organization API keys", adminOnly: true },
       { to: "/audit", icon: <I.activity />, label: "Audit log", adminOnly: true },
       { to: "/health", icon: <I.pulse />, label: "Health" },
     ],
@@ -44,6 +46,7 @@ export function Sidebar() {
   const { me, logout } = useAuth();
   const location = useLocation();
   const isAdmin = me?.scope === "admin";
+  const [theme, setTheme] = useState<ThemeMode>(() => readTheme());
 
   const [dropOpen, setDropOpen] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
@@ -55,6 +58,16 @@ export function Sidebar() {
     api.getHealth()
       .then((h) => { setHealth(h); setHealthLoaded(true); })
       .catch(() => { setHealthLoaded(true); });
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setTheme(readTheme());
+    window.addEventListener("storage", sync);
+    window.addEventListener("anchored-theme-change", sync as EventListener);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("anchored-theme-change", sync as EventListener);
+    };
   }, []);
 
   // Click-outside to close dropdown
@@ -74,8 +87,15 @@ export function Sidebar() {
     window.location.replace("/login");
   }
 
+  function handleTheme(next: ThemeMode) {
+    applyTheme(next);
+    setTheme(next);
+    setDropOpen(false);
+  }
+
   return (
     <aside
+      className="app-sidebar"
       style={{
         background: "var(--bg-1)",
         borderRight: "1px solid var(--border)",
@@ -87,9 +107,13 @@ export function Sidebar() {
       }}
     >
       {/* Org pill with dropdown */}
-      <div style={{ padding: "16px 14px", borderBottom: "1px solid var(--border)", position: "relative" }} ref={dropRef}>
+      <div className="sidebar-org" style={{ padding: "16px 14px", borderBottom: "1px solid var(--border)", position: "relative" }} ref={dropRef}>
         <button
+          className="sidebar-org-button"
           type="button"
+          aria-label="Open organization menu"
+          aria-expanded={dropOpen}
+          aria-haspopup="menu"
           onClick={() => setDropOpen(o => !o)}
           style={{
             display: "flex",
@@ -106,7 +130,7 @@ export function Sidebar() {
           }}
         >
           <AnchoredLogo size={18} wordmark={false} />
-          <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+          <div className="sidebar-org-copy" style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
             <div style={{ fontSize: 13, fontWeight: 500, letterSpacing: -0.2 }}>
               anchored
             </div>
@@ -114,12 +138,12 @@ export function Sidebar() {
               org · self-hosted
             </div>
           </div>
-          <I.chevD size={14} />
+          <span className="sidebar-org-chevron"><I.chevD size={14} /></span>
         </button>
 
         {/* Dropdown */}
         {dropOpen && (
-          <div style={{
+          <div className="sidebar-org-menu" style={{
             position: "absolute", top: "calc(100% - 2px)", left: 14, right: 14,
             background: "var(--bg-2)", border: "1px solid var(--border)",
             borderRadius: "var(--radius)", zIndex: 40,
@@ -150,9 +174,52 @@ export function Sidebar() {
                 fontFamily: "var(--font-mono)", fontSize: 11,
                 color: "var(--text-dim)", borderBottom: "1px solid var(--border)",
               }}>
-                v{health.version}
+                {health.version}
               </div>
             )}
+
+            <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
+              <div
+                className="sidebar-theme-label"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  color: "var(--text-dim)",
+                  letterSpacing: 0.5,
+                  textTransform: "uppercase" as const,
+                  marginBottom: 8,
+                }}
+              >
+                Theme
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                {THEME_MODES.map((option) => {
+                  const on = theme === option;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => handleTheme(option)}
+                      style={{
+                        borderRadius: "var(--radius-sm)",
+                        border: on ? "1px solid var(--accent-border)" : "1px solid var(--border)",
+                        background: on ? "var(--accent-bg)" : "var(--bg-1)",
+                        color: on ? "var(--accent)" : "var(--text-muted)",
+                        cursor: "pointer",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 11,
+                        fontWeight: 500,
+                        padding: "8px 10px",
+                        textAlign: "left",
+                      }}
+                    >
+                      {option === "light" ? "Light" : "Warm"}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
             {/* Logout */}
             <button
@@ -174,6 +241,7 @@ export function Sidebar() {
       </div>
 
       <nav
+        className="sidebar-nav"
         style={{
           flex: 1,
           padding: "12px 10px",
@@ -187,6 +255,7 @@ export function Sidebar() {
           <div key={gi}>
             {g.label && (
               <div
+                className="sidebar-group-label"
                 style={{
                   fontFamily: "var(--font-mono)",
                   fontSize: 10,
@@ -206,6 +275,8 @@ export function Sidebar() {
                   const on = location.pathname === it.to || (!it.end && location.pathname.startsWith(it.to) && it.to !== "/");
                   return (
                     <NavLink
+                      className="sidebar-nav-link"
+                      aria-label={it.label}
                       key={it.to}
                       to={it.to}
                       end={it.end}
@@ -227,7 +298,7 @@ export function Sidebar() {
                       }}
                     >
                       {React.cloneElement(it.icon, { size: 15 })}
-                      <span style={{ flex: 1 }}>{it.label}</span>
+                      <span className="sidebar-nav-label" style={{ flex: 1 }}>{it.label}</span>
                       {it.to === "/health" && (
                         <span
                           style={{
@@ -256,13 +327,13 @@ export function Sidebar() {
 
       {/* Footer: non-interactive user display */}
       {me && (
-        <div style={{ padding: 14, borderTop: "1px solid var(--border)" }}>
+        <div className="sidebar-footer" style={{ padding: 14, borderTop: "1px solid var(--border)" }}>
           <div style={{
             display: "flex", alignItems: "center", gap: 10,
             padding: "6px 8px",
           }}>
             <Avatar name={me.display_name} size={28} />
-            <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="sidebar-user-copy" style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>
                 {me.display_name}
               </div>

@@ -1,38 +1,15 @@
-import React, { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { Card, Badge, Status, Btn, Input, Tabs } from "@/ds/components";
+import React from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { Card, Badge, Status, Btn, ClipboardButton, Input, Tabs } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Project, Memory, Triple, ChatAnswer, ProjectCategory } from "@/lib/types";
+import type { Project, Memory, Triple, ProjectCategory } from "@/lib/types";
 import { PROJECT_CATEGORIES, PROJECT_CATEGORY_LABELS } from "@/lib/types";
 import { GraphView } from "@/components/GraphView";
 import { HealthPanel } from "@/components/HealthPanel";
-
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through */ }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
-}
+import { ProjectSkillsTab } from "@/components/ProjectSkillsTab";
+import { repositoryError } from "@/lib/gitRemote";
 
 function CommandBox({ cmd }: { cmd: string }) {
   return (
@@ -54,28 +31,15 @@ function CommandBox({ cmd }: { cmd: string }) {
 }
 
 function CopyButton({ text, label = "copy", inline }: { text: string; label?: string; inline?: boolean }) {
-  const [state, setState] = useState<"idle" | "ok" | "err">("idle");
-  async function onClick() {
-    const ok = await copyToClipboard(text);
-    setState(ok ? "ok" : "err");
-    setTimeout(() => setState("idle"), 1800);
-  }
-  const color = state === "ok" ? "var(--ok)" : state === "err" ? "var(--err)" : "var(--text-dim)";
   return (
-    <button type="button" onClick={onClick} style={{
+    <ClipboardButton text={text} label={label} successLabel="copied!" errorLabel="failed" style={{
       background: "transparent",
       border: inline ? "1px solid var(--border)" : 0,
       borderLeft: inline ? "1px solid var(--border)" : "1px solid var(--border)",
       borderRadius: inline ? "var(--radius)" : 0,
-      color, cursor: "pointer",
       padding: inline ? "4px 10px" : "10px 14px",
-      fontFamily: "var(--font-mono)", fontSize: 11,
-      display: "inline-flex", alignItems: "center", gap: 5,
       alignSelf: "stretch", transition: "color .15s",
-    }}>
-      {state === "ok" ? <I.check size={12} /> : state === "err" ? <I.x size={12} /> : <I.copy size={12} />}
-      {state === "ok" ? "copied!" : state === "err" ? "failed" : label}
-    </button>
+    }} />
   );
 }
 
@@ -173,71 +137,12 @@ function MemoryDetail({ memory, onClose }: { memory: Memory; onClose: () => void
   );
 }
 
-// ChatTab is the optional RAG chat panel. It self-hides its input when the
-// server reports chat disabled, so the feature stays opt-in.
-function ChatTab({ projectId }: { projectId: string }) {
-  const [enabled, setEnabled] = React.useState<boolean | null>(null);
-  const [model, setModel] = React.useState("");
-  const [q, setQ] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-  const [ans, setAns] = React.useState<ChatAnswer | null>(null);
-  const [err, setErr] = React.useState<string | null>(null);
+const PROJECT_TAB_KEYS = ["connect", "memories", "graph", "skills", "health", "settings"] as const;
+type ProjectTabKey = (typeof PROJECT_TAB_KEYS)[number];
+const DEFAULT_PROJECT_TAB: ProjectTabKey = "connect";
 
-  React.useEffect(() => {
-    api.getChatStatus().then(s => { setEnabled(s.enabled); setModel(s.model); }).catch(() => setEnabled(false));
-  }, []);
-
-  const ask = () => {
-    const query = q.trim();
-    if (!query) return;
-    setBusy(true); setErr(null); setAns(null);
-    api.chat(projectId, query)
-      .then(setAns)
-      .catch((e: unknown) => setErr(e instanceof Error ? e.message : "chat failed"))
-      .finally(() => setBusy(false));
-  };
-
-  if (enabled === null) return <div style={{ color: "var(--text-dim)", padding: 20 }}>Loading…</div>;
-  if (!enabled) {
-    return (
-      <Card style={{ padding: "32px 22px", textAlign: "center" }}>
-        <I.brain size={22} />
-        <div style={{ fontSize: 14, fontWeight: 500, marginTop: 10 }}>Chat is not enabled</div>
-        <div style={{ fontSize: 12.5, color: "var(--text-dim)", marginTop: 6, maxWidth: 420, marginInline: "auto" }}>
-          An admin can enable the optional AI chat by configuring an LLM provider (OpenAI, z.ai, Anthropic, OpenRouter) in the server config. It answers using this project's memories.
-        </div>
-      </Card>
-    );
-  }
-
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-        <Input full size="sm" placeholder="ask about this project's memories…" value={q}
-          onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter") ask(); }} />
-        <Btn variant="primary" size="sm" onClick={ask} disabled={busy}>{busy ? "Thinking…" : "Ask"}</Btn>
-      </div>
-      {model && <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 12, fontFamily: "var(--font-mono)" }}>model: {model}</div>}
-      {err && <Card style={{ padding: 16, color: "var(--err)", fontSize: 13 }}>{err}</Card>}
-      {ans && (
-        <Card style={{ padding: 18 }}>
-          <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{ans.answer}</div>
-          {ans.sources.length > 0 && (
-            <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-              <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginBottom: 8, fontFamily: "var(--font-mono)" }}>sources</div>
-              {ans.sources.map((s, i) => (
-                <div key={s.id} style={{ display: "flex", gap: 8, padding: "5px 0", fontSize: 12.5 }}>
-                  <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>[{i + 1}]</span>
-                  <Badge tone={categoryTones[s.category] || "neutral"}>{s.category}</Badge>
-                  <span style={{ color: "var(--text-muted)" }}>{s.snippet}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
-    </div>
-  );
+function isProjectTabKey(value: string | null): value is ProjectTabKey {
+  return Boolean(value && PROJECT_TAB_KEYS.includes(value as ProjectTabKey));
 }
 
 function ConnectTab({ project, onGoToSettings }: { project: Project; onGoToSettings: () => void }) {
@@ -264,7 +169,7 @@ function ConnectTab({ project, onGoToSettings }: { project: Project; onGoToSetti
       <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 6 }}>Connect your CLI to this project</div>
       <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.55, marginBottom: 22 }}>
         Run these commands on your dev machine to sync local memories with <strong>{project.name}</strong>.
-        You need an API key — create one in the <a href="/api-keys" style={{ color: "var(--accent)" }}>API Keys</a> page if you don't have one.
+        You need an API key — create one in the <a href="/my-api-keys" style={{ color: "var(--accent)" }}>My API keys</a> page if you don't have one.
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
@@ -352,10 +257,17 @@ function SettingsTab({ project, onUpdated }: { project: Project; onUpdated: (p: 
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    const repoChanged = repoUrl.trim() !== (project.repo_url ?? "").trim();
+    const repoValidationError = repoChanged ? repositoryError(repoUrl) : null;
+    if (repoValidationError) {
+      setSaveError(repoValidationError);
+      setSaveState("error");
+      return;
+    }
     const patch: Record<string, string> = {};
     if (name !== project.name) patch.name = name;
     if (slug !== project.slug) patch.slug = slug;
-    if (repoUrl !== (project.repo_url ?? "")) patch.repo_url = repoUrl;
+    if (repoChanged) patch.repo_url = repoUrl.trim();
     if (category !== project.category) patch.category = category;
     if (Object.keys(patch).length === 0) {
       setSaveState("saved");
@@ -424,8 +336,15 @@ function SettingsTab({ project, onUpdated }: { project: Project; onUpdated: (p: 
             <div>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", letterSpacing: 0.4, textTransform: "uppercase" as const, marginBottom: 6 }}>Repository URL</div>
               <Input full size="md" placeholder="git@github.com:org/repo.git" value={repoUrl} mono
-                onChange={e => setRepoUrl(e.target.value)} disabled={!isAdmin} />
-              <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 4, lineHeight: 1.5 }}>
+                onChange={e => { setRepoUrl(e.target.value); setSaveError(null); setSaveState("idle"); }}
+                onBlur={() => {
+                  const repoChanged = repoUrl.trim() !== (project.repo_url ?? "").trim();
+                  if (repoChanged) setSaveError(repositoryError(repoUrl));
+                }}
+                disabled={!isAdmin}
+                error={Boolean(saveError && repoUrl.trim() !== (project.repo_url ?? "").trim())}
+                aria-describedby="project-settings-repository-help" />
+              <div id="project-settings-repository-help" style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 4, lineHeight: 1.5 }}>
                 Git remote URL (SSH or HTTPS). Used to route <code style={{ fontFamily: "var(--font-mono)" }}>anchored remote sync</code> by git origin.
               </div>
             </div>
@@ -529,13 +448,14 @@ function SettingsTab({ project, onUpdated }: { project: Project; onUpdated: (p: 
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { me } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = React.useState<Project | null>(null);
   const [memories, setMemories] = React.useState<Memory[]>([]);
   const [memTotal, setMemTotal] = React.useState(0);
   const [offset, setOffset] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState("");
-  const [activeTab, setActiveTab] = React.useState("memories");
   const [triples, setTriples] = React.useState<Triple[]>([]);
   const [tripleTotal, setTripleTotal] = React.useState(0);
   const [graphPred, setGraphPred] = React.useState("");
@@ -546,8 +466,26 @@ export function ProjectDetailPage() {
   const [selected, setSelected] = React.useState<Memory | null>(null);
   const [categoryFilter, setCategoryFilter] = React.useState<string>("");
 
+  const urlTab = searchParams.get("tab");
+  const activeTab: ProjectTabKey = isProjectTabKey(urlTab) ? urlTab : DEFAULT_PROJECT_TAB;
+
+  function setActiveTab(next: string) {
+    if (!isProjectTabKey(next)) return;
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", next);
+    setSearchParams(params);
+  }
+
   // Reset offset when category changes to avoid empty pages.
   React.useEffect(() => { setOffset(0); }, [categoryFilter]);
+
+  React.useEffect(() => {
+    if (!id) return;
+    if (urlTab === activeTab) return;
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", activeTab);
+    setSearchParams(params, { replace: true });
+  }, [id, activeTab, searchParams, setSearchParams, urlTab]);
 
   const runSearch = React.useCallback(() => {
     if (!id) return;
@@ -591,61 +529,156 @@ export function ProjectDetailPage() {
 
   if (loading) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Loading...</div>;
   if (!project) return <div style={{ color: "var(--text-dim)", padding: 40 }}>Project not found.</div>;
-
   // Server results take precedence; until a search is submitted, fall back to
   // a client-side substring filter over the loaded page for responsiveness.
   const displayed = results ?? (search
     ? memories.filter(m => m.content.toLowerCase().includes(search.toLowerCase()) || m.category.toLowerCase().includes(search.toLowerCase()))
     : memories);
 
+  const predicates = Array.from(new Set(triples.map(t => t.predicate))).sort();
+  const gq = graphSearch.trim().toLowerCase();
+  const filteredTriples = triples.filter(t =>
+    (!graphPred || t.predicate === graphPred) &&
+    (!gq || t.subject.toLowerCase().includes(gq) || t.object.toLowerCase().includes(gq))
+  );
+
   return (
-    <div>
-      <div style={{
-        display: "flex", alignItems: "flex-start", justifyContent: "space-between",
-        gap: 24, marginBottom: 24, paddingBottom: 22, borderBottom: "1px solid var(--border)",
-      }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: "var(--radius)",
-            background: "var(--accent-bg)", color: "var(--accent)",
-            border: "1px solid var(--accent-border)",
-            display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none",
-          }}>
-            <I.folder size={20} />
-          </div>
-          <div>
-            <div style={{ fontSize: 13.5, color: "var(--text-muted)" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <section
+        className="project-detail-hero"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1.4fr) minmax(290px, 0.8fr)",
+          gap: 18,
+          padding: 22,
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-lg)",
+          background: "linear-gradient(180deg, color-mix(in srgb, var(--bg-1) 92%, white), var(--bg-2))",
+          boxShadow: "0 12px 30px color-mix(in srgb, var(--accent) 6%, transparent)",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)", letterSpacing: 0.6, textTransform: "uppercase" }}>
               Project · {project.slug}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 10, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>
-              <span><span style={{ color: "var(--text)" }}>{memTotal.toLocaleString()}</span> memories</span>
-              <span style={{ color: "var(--text-ghost)" }}>·</span>
-              <Badge tone="outline">{project.remote_key}</Badge>
-              <span style={{ color: "var(--text-ghost)" }}>·</span>
-              <Status value="online" label={`created ${timeAgo(project.created_at)}`} />
-            </div>
+            </span>
+            <Badge tone={categoryTones[project.category] || "neutral"}>{PROJECT_CATEGORY_LABELS[project.category]}</Badge>
+            <Status value="online" label={`created ${timeAgo(project.created_at)}`} />
+          </div>
+          <h1 className="display-font" style={{ fontSize: "clamp(2rem, 3vw, 3.1rem)", lineHeight: 1, margin: 0 }}>
+            {project.name}
+          </h1>
+          <p style={{ margin: "14px 0 0", maxWidth: 640, fontSize: 15.5, lineHeight: 1.7, color: "var(--text-muted)" }}>
+            Connect the CLI first, then use the project memories, graph, skills, and settings views as a single working surface.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 18 }}>
+            <Badge tone="outline">{memTotal.toLocaleString()} memories</Badge>
+            <Badge tone="outline">{project.remote_key}</Badge>
+            <Badge tone="outline">{PROJECT_CATEGORY_LABELS[project.category]}</Badge>
           </div>
         </div>
-      </div>
+
+        <div className="project-detail-hero-actions" style={{ display: "flex", flexDirection: "column", gap: 10, justifyContent: "center" }}>
+          <Btn variant="primary" size="lg" full icon={<I.terminal />} onClick={() => setActiveTab("connect")}>
+            Connect project
+          </Btn>
+          <Btn variant="outline" size="lg" full icon={<I.cube />} onClick={() => setActiveTab("memories")}>
+            Browse memories
+          </Btn>
+          {me?.scope === "admin" ? (
+            <Btn variant="ghost" size="lg" full icon={<I.settings />} onClick={() => setActiveTab("settings")}>
+              Project settings
+            </Btn>
+          ) : (
+            <div
+              style={{
+                padding: "12px 14px",
+                borderRadius: "var(--radius)",
+                border: "1px solid var(--border)",
+                background: "var(--bg-1)",
+                color: "var(--text-dim)",
+                fontSize: 12.5,
+                lineHeight: 1.55,
+              }}
+            >
+              Settings are admin-only. Use Connect to prepare the project and then browse the data views.
+            </div>
+          )}
+        </div>
+      </section>
+
+      {project.repo_url ? (
+        <div
+          style={{
+            padding: "14px 16px",
+            background: "var(--ok-bg)",
+            border: "1px solid color-mix(in srgb, var(--ok) 22%, transparent)",
+            borderRadius: "var(--radius)",
+            fontSize: 13,
+            color: "var(--text-muted)",
+            lineHeight: 1.6,
+          }}
+        >
+          <strong style={{ color: "var(--ok)" }}>Auto-routing enabled.</strong>{" "}
+          Any clone with git origin <code style={{ fontFamily: "var(--font-mono)" }}>{project.repo_url}</code> will
+          automatically route syncs to this project.
+          <Btn
+            variant="ghost"
+            size="sm"
+            onClick={() => setActiveTab("settings")}
+            style={{ marginLeft: 8, paddingInline: 0, height: "auto" }}
+          >
+            Review settings
+          </Btn>
+        </div>
+      ) : (
+        <div
+          style={{
+            padding: "14px 16px",
+            background: "var(--warn-bg)",
+            border: "1px solid color-mix(in srgb, var(--warn) 22%, transparent)",
+            borderRadius: "var(--radius)",
+            fontSize: 13,
+            color: "var(--text-muted)",
+            lineHeight: 1.6,
+          }}
+        >
+          <strong style={{ color: "var(--warn)" }}>No repository URL set.</strong>{" "}
+          Syncs route by git origin. Set the Repository URL in Settings so your team's clones resolve automatically.
+          <Btn
+            variant="ghost"
+            size="sm"
+            onClick={() => setActiveTab("settings")}
+            style={{ marginLeft: 8, paddingInline: 0, height: "auto" }}
+          >
+            Open settings
+          </Btn>
+        </div>
+      )}
 
       <Tabs
+        id="project-tabs"
         active={activeTab}
         onSet={setActiveTab}
         tabs={[
+          { key: "connect", label: "Connect", icon: <I.terminal /> },
           { key: "memories", label: "Memories", icon: <I.cube />, count: memTotal },
           { key: "graph", label: "Knowledge graph", icon: <I.graph />, count: tripleTotal },
-          { key: "chat", label: "Chat", icon: <I.brain /> },
+          { key: "skills", label: "Skills", icon: <I.layers /> },
           { key: "health", label: "Health", icon: <I.pulse /> },
-          { key: "connect", label: "Connect", icon: <I.terminal /> },
           { key: "settings", label: "Settings", icon: <I.settings /> },
         ]}
       />
 
-      {activeTab === "health" && id && <HealthPanel projectId={id} />}
+      {activeTab === "connect" && id && (
+        <div id="project-tabs-panel-connect" role="tabpanel" aria-labelledby="project-tabs-tab-connect" style={{ marginTop: 22 }}>
+          <ConnectTab project={project} onGoToSettings={() => setActiveTab("settings")} />
+        </div>
+      )}
 
       {activeTab === "memories" && (
-        <div style={{ marginTop: 22 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <div id="project-tabs-panel-memories" role="tabpanel" aria-labelledby="project-tabs-tab-memories" style={{ marginTop: 22 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <Input
               icon={<I.search />}
               placeholder={searchMode === "semantic" ? "search by meaning..." : "search memories..."}
@@ -722,7 +755,7 @@ export function ProjectDetailPage() {
             </Card>
           )}
 
-          <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)", gap: 12 }}>
             <span>
               {results !== null
                 ? `${displayed.length} ${searchMode} result${displayed.length === 1 ? "" : "s"}`
@@ -741,14 +774,10 @@ export function ProjectDetailPage() {
       {selected && <MemoryDetail memory={selected} onClose={() => setSelected(null)} />}
 
       {activeTab === "graph" && (() => {
-        const predicates = Array.from(new Set(triples.map(t => t.predicate))).sort();
         const gq = graphSearch.trim().toLowerCase();
-        const filteredTriples = triples.filter(t =>
-          (!graphPred || t.predicate === graphPred) &&
-          (!gq || t.subject.toLowerCase().includes(gq) || t.object.toLowerCase().includes(gq))
-        );
+        const filtered = filteredTriples;
         return (
-          <div style={{ marginTop: 22 }}>
+          <div id="project-tabs-panel-graph" role="tabpanel" aria-labelledby="project-tabs-tab-graph" style={{ marginTop: 22 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
               <Input icon={<I.search />} placeholder="filter nodes (subject/object)…" size="sm" style={{ width: 280 }}
                 value={graphSearch} onChange={e => setGraphSearch(e.target.value)} />
@@ -762,28 +791,24 @@ export function ProjectDetailPage() {
               {(graphPred || gq) && <Btn variant="ghost" size="sm" onClick={() => { setGraphPred(""); setGraphSearch(""); }}>Clear</Btn>}
               <div style={{ flex: 1 }} />
               <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)" }}>
-                {filteredTriples.length} of {tripleTotal} edges{tripleTotal > triples.length ? ` (showing first ${triples.length})` : ""}
+                {filtered.length} of {tripleTotal} edges{tripleTotal > triples.length ? ` (showing first ${triples.length})` : ""}
               </span>
             </div>
-            <GraphView triples={filteredTriples} total={tripleTotal} />
+            <GraphView triples={filtered} total={tripleTotal} />
           </div>
         );
       })()}
 
-      {activeTab === "chat" && id && (
-        <div style={{ marginTop: 22 }}>
-          <ChatTab projectId={id} />
-        </div>
-      )}
+      {activeTab === "skills" && id && <ProjectSkillsTab projectId={id} />}
 
-      {activeTab === "connect" && (
-        <div style={{ marginTop: 22 }}>
-          <ConnectTab project={project} onGoToSettings={() => setActiveTab("settings")} />
+      {activeTab === "health" && id && (
+        <div id="project-tabs-panel-health" role="tabpanel" aria-labelledby="project-tabs-tab-health" style={{ marginTop: 22 }}>
+          <HealthPanel projectId={id} />
         </div>
       )}
 
       {activeTab === "settings" && (
-        <div style={{ marginTop: 22 }}>
+        <div id="project-tabs-panel-settings" role="tabpanel" aria-labelledby="project-tabs-tab-settings" style={{ marginTop: 22 }}>
           <SettingsTab project={project} onUpdated={setProject} />
         </div>
       )}

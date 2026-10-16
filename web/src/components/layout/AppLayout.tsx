@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 export function AppLayout() {
   return (
     <div
+      className="app-shell"
       style={{
         display: "grid",
         gridTemplateColumns: "240px 1fr",
@@ -15,6 +16,7 @@ export function AppLayout() {
     >
       <Sidebar />
       <div
+        className="app-workspace"
         style={{
           display: "flex",
           flexDirection: "column",
@@ -23,7 +25,7 @@ export function AppLayout() {
         }}
       >
         <Header />
-        <main style={{ padding: "28px 36px 60px", flex: 1, overflow: "auto" }}>
+        <main className="app-main" style={{ padding: "28px 36px 60px", flex: 1, overflow: "auto" }}>
           <Outlet />
         </main>
       </div>

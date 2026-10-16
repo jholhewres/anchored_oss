@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 
 import { Btn, Input } from "@/ds/components";
@@ -15,6 +15,12 @@ export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("reason") !== "onboarding-session") return;
+    toast.push({ title: "Sign in to open the dashboard", description: "Setup is complete and your CLI key remains available. Use the admin credentials you just created.", variant: "info" });
+    navigate("/login", { replace: true });
+  }, [location.search, navigate, toast]);
 
   if (me) {
     const target = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/projects";

@@ -7,6 +7,8 @@ const routeTitles: Record<string, string> = {
   "/accounts": "Accounts",
   "/teams": "Teams",
   "/api-keys": "API keys",
+  "/my-api-keys": "My API keys",
+  "/skills": "Organization skills",
   "/audit": "Audit log",
   "/health": "Health",
 };
@@ -25,6 +27,7 @@ export function Header() {
 
   return (
     <header
+      className="app-header"
       style={{
         display: "flex",
         alignItems: "center",
@@ -37,6 +40,7 @@ export function Header() {
     >
       <div>
         <h1
+          className="app-header-title"
           style={{
             fontSize: 22,
             fontWeight: 500,
@@ -50,6 +54,7 @@ export function Header() {
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span
+          className="app-header-email"
           style={{
             fontFamily: "var(--font-mono)",
             fontSize: 12,

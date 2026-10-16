@@ -152,6 +152,41 @@ export interface APIKey {
   revoked_at?: string | null;
 }
 
+export type SkillStatus = "draft" | "active" | "deprecated" | "revoked";
+
+export interface SkillHeader {
+  name: string;
+  description: string;
+}
+
+/** A versioned organization instruction, optionally marked as project-attached. */
+export interface Skill {
+  id: string;
+  name: string;
+  slug: string;
+  purpose: string;
+  status: SkillStatus;
+  version: number;
+  content_hash: string;
+  content?: string;
+  body?: string;
+  frontmatter?: SkillHeader | null;
+  project_count?: number;
+  created_at: string;
+  updated_at: string;
+  attached_at?: string | null;
+}
+
+export interface SkillTemplate {
+  id: string;
+  revision: string;
+  name: string;
+  slug: string;
+  purpose: string;
+  frontmatter: SkillHeader;
+  body: string;
+}
+
 export interface APIKeyMintResponse {
   id: string;
   name: string;

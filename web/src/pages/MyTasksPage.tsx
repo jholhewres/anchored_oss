@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, TaskThread } from "@/lib/api";
-import { Badge, Btn, Empty, Input } from "@/ds/components";
+import { Badge, Btn, ClipboardButton, Empty, Input } from "@/ds/components";
 import { I } from "@/ds/icons";
 
 // MyTasksPage is the personal kanban: a READ-MOSTLY view of the caller's own
@@ -85,7 +85,6 @@ const journalPreviewCount = 3;
 
 function TaskCard({ thread, tone }: { thread: TaskThread; tone: Tone }) {
   const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [hover, setHover] = useState(false);
 
   const journal = thread.journal ?? [];
@@ -93,17 +92,6 @@ function TaskCard({ thread, tone }: { thread: TaskThread; tone: Tone }) {
   const hiddenCount = Math.max(0, journal.length - journalPreviewCount);
   const cancelled = thread.status === "cancelled";
   const accent = cancelled ? "var(--err)" : toneColor[tone];
-
-  const copyKey = async () => {
-    try {
-      await navigator.clipboard.writeText(thread.task_key);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
-    } catch {
-      // Clipboard may be unavailable (http, permissions) — the key is visible
-      // and selectable anyway, so failing silently is fine.
-    }
-  };
 
   return (
     <div
@@ -147,25 +135,17 @@ function TaskCard({ thread, tone }: { thread: TaskThread; tone: Tone }) {
         >
           {thread.task_key}
         </span>
-        <button
-          type="button"
-          onClick={copyKey}
-          aria-label={copied ? "Task key copied" : `Copy ${thread.task_key}`}
-          title="Copy task key"
+        <ClipboardButton
+          text={thread.task_key}
+          label="Copy task key"
+          ariaLabel={`Copy ${thread.task_key}`}
+          iconOnly
           style={{
-            border: 0,
-            background: "transparent",
-            color: copied ? "var(--ok)" : "var(--text-dim)",
-            cursor: "pointer",
-            display: "inline-flex",
-            alignItems: "center",
             padding: 2,
-            opacity: hover || copied ? 1 : 0,
+            opacity: hover ? 1 : 0,
             transition: "opacity .12s, color .12s",
           }}
-        >
-          {copied ? <I.check size={12} /> : <I.copy size={12} />}
-        </button>
+        />
         <span style={{ flex: 1 }} />
         {cancelled && <Badge tone="err">cancelled</Badge>}
         <span

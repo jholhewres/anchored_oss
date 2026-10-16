@@ -1,9 +1,10 @@
 import React, { useState, type FormEvent } from "react";
 
-import { Btn, Input, Card } from "@/ds/components";
+import { Btn, ClipboardButton, Input, Card } from "@/ds/components";
 import { I, AnchoredOSSLogo } from "@/ds/icons";
 import { useToast } from "@/components/ui/toast";
-import { api, setToken } from "@/lib/api";
+import { api, clearToken, setToken } from "@/lib/api";
+import { repositoryError } from "@/lib/gitRemote";
 import { PROJECT_CATEGORIES, type ProjectCategory, type OnboardingComplete } from "@/lib/types";
 
 const CATEGORY_LABELS: Record<ProjectCategory, string> = {
@@ -27,11 +28,18 @@ const CATEGORY_ICONS: Record<ProjectCategory, React.ReactNode> = {
 interface ProjectRow {
   name: string;
   category: ProjectCategory;
-  repoUrl?: string;
+  repoUrl: string;
 }
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+
+function projectErrors(project: ProjectRow) {
+  return {
+    name: project.name.trim() ? null : "Project name is required.",
+    repoUrl: repositoryError(project.repoUrl),
+  };
 }
 
 function Label({ children }: { children: React.ReactNode }) {
@@ -165,9 +173,15 @@ export function OnboardingPage() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
 
-  const [projects, setProjects] = useState<ProjectRow[]>([{ name: "", category: "service" }]);
+  const [projects, setProjects] = useState<ProjectRow[]>([{ name: "", category: "service", repoUrl: "" }]);
+  const [showProjectValidation, setShowProjectValidation] = useState(false);
+  const projectsAreValid = projects.length > 0 && projects.every((project) => {
+    const errors = projectErrors(project);
+    return !errors.name && !errors.repoUrl;
+  });
 
   const [result, setResult] = useState<OnboardingComplete | null>(null);
+  const [dashboardSessionReady, setDashboardSessionReady] = useState(false);
 
   function handleOrgNameChange(v: string) {
     setOrgName(v);
@@ -176,7 +190,7 @@ export function OnboardingPage() {
 
   function addProject() {
     if (projects.length >= 10) return;
-    setProjects(ps => [...ps, { name: "", category: "service" }]);
+    setProjects(ps => [...ps, { name: "", category: "service", repoUrl: "" }]);
   }
 
   function removeProject(i: number) {
@@ -190,16 +204,29 @@ export function OnboardingPage() {
   async function submitOnboarding(e: FormEvent) {
     e.preventDefault();
     if (submitting) return;
+    const invalidProjects = projects.map(projectErrors).some((errors) => errors.name || errors.repoUrl);
+    if (invalidProjects) {
+      setShowProjectValidation(true);
+      return;
+    }
     setSubmitting(true);
     try {
-      const validProjects = projects.filter(p => p.name.trim());
       const res = await api.completeOnboarding({
         org: { name: orgName.trim(), slug: orgSlug.trim() || slugify(orgName) },
         admin: { email: adminEmail.trim(), password: adminPassword, display_name: adminName.trim() },
-        projects: validProjects.map(p => ({ name: p.name.trim(), category: p.category, repo_url: p.repoUrl?.trim() || undefined })),
+        projects: projects.map(p => ({ name: p.name.trim(), category: p.category, repo_url: p.repoUrl.trim() })),
       });
-      setToken(res.api_key);
       setResult(res);
+      try {
+        const loginRes = await api.login(adminEmail.trim(), adminPassword);
+        setToken(loginRes.api_key);
+        setDashboardSessionReady(true);
+      } catch (loginError) {
+        clearToken();
+        setDashboardSessionReady(false);
+        const message = loginError instanceof Error ? loginError.message : "Sign in failed after setup.";
+        toast.push({ title: "Setup complete — sign-in required", description: `Your CLI key is ready below. Sign in before opening the dashboard: ${message}`, variant: "info" });
+      }
       setStep(4);
     } catch (err: unknown) {
       const status = (err as { status?: number }).status;
@@ -218,13 +245,17 @@ export function OnboardingPage() {
   // Full page reload — AuthProvider only re-reads localStorage on mount, so
   // a SPA navigate keeps `me=null` and RequireAuth bounces back to /login.
   function finish() {
+    if (!dashboardSessionReady) {
+      window.location.assign("/login?reason=onboarding-session");
+      return;
+    }
     window.location.assign("/dashboard");
   }
 
   // Step 4 is its own centered single-column layout. Steps 1–3 use the
   // split hero/form layout.
   if (step === 4 && result) {
-    return <ConnectStep result={result} onFinish={finish} />;
+    return <ConnectStep result={result} dashboardSessionReady={dashboardSessionReady} onFinish={finish} />;
   }
 
   return (
@@ -316,14 +347,15 @@ export function OnboardingPage() {
                 Add projects
               </h2>
               <p style={{ fontSize: 14, color: "var(--text-muted)", margin: "0 0 20px", lineHeight: 1.55 }}>
-                Optional — you can add more later. Max 10 at setup. Add a repository
-                URL (ssh or https) to auto-link a project: memories synced from that
-                repo land here, no matter the local folder name.
+                Add at least one project and its Git remote. Every project added here needs a valid
+                SSH or HTTPS remote so synced memories always resolve to the right project.
               </p>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-                {projects.map((p, i) => (
-                  <div key={i} style={{
+                {projects.map((p, i) => {
+                  const errors = projectErrors(p);
+                  const showErrors = showProjectValidation || Boolean(p.name || p.repoUrl);
+                  return <div key={i} style={{
                     display: "flex", flexDirection: "column", gap: 8,
                     padding: 12, border: "1px solid var(--border)", borderRadius: "var(--radius)",
                   }}>
@@ -334,6 +366,9 @@ export function OnboardingPage() {
                         placeholder={`Project ${i + 1} name`}
                         value={p.name}
                         onChange={e => updateProject(i, "name", e.target.value)}
+                        error={showErrors && Boolean(errors.name)}
+                        required
+                        aria-describedby={showErrors && errors.name ? `project-${i}-name-error` : undefined}
                       />
                       <CategoryPill
                         value={p.category}
@@ -360,12 +395,19 @@ export function OnboardingPage() {
                       full
                       size="md"
                       mono
-                      placeholder="Repository (optional) — git@github.com:org/repo.git"
-                      value={p.repoUrl ?? ""}
+                      placeholder="Git remote — git@github.com:org/repo.git"
+                      value={p.repoUrl}
                       onChange={e => updateProject(i, "repoUrl", e.target.value)}
+                      error={showErrors && Boolean(errors.repoUrl)}
+                      required
+                      aria-describedby={showErrors && errors.repoUrl ? `project-${i}-repo-error` : undefined}
                     />
-                  </div>
-                ))}
+                    {showErrors && (errors.name || errors.repoUrl) && <div role="alert" style={{ display: "grid", gap: 3, color: "var(--err)", fontSize: 12, lineHeight: 1.4 }}>
+                      {errors.name && <span id={`project-${i}-name-error`}>{errors.name}</span>}
+                      {errors.repoUrl && <span id={`project-${i}-repo-error`}>{errors.repoUrl}</span>}
+                    </div>}
+                  </div>;
+                })}
               </div>
 
               {projects.length < 10 && (
@@ -378,7 +420,7 @@ export function OnboardingPage() {
                 <Btn variant="outline" size="lg" icon={<I.chevL />} onClick={() => setStep(2)} type="button">
                   Back
                 </Btn>
-                <Btn variant="primary" size="lg" full iconR={<I.arrowR />} style={{ opacity: submitting ? 0.7 : 1 }}>
+                <Btn variant="primary" size="lg" full iconR={<I.arrowR />} disabled={submitting || !projectsAreValid} style={{ opacity: submitting || !projectsAreValid ? 0.7 : 1 }}>
                   {submitting ? "Setting up…" : "Complete setup"}
                 </Btn>
               </div>
@@ -447,39 +489,11 @@ function HeroLeft({ step }: { step: number }) {
   );
 }
 
-// Robust clipboard copy that works on both secure and insecure origins.
-// navigator.clipboard.writeText is only available over HTTPS / localhost;
-// HTTP IPs (like the openclaw-gateway) need the document.execCommand fallback.
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through to fallback */ }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
-}
-
 // ConnectStep is shown after a successful onboarding. A scannable, numbered
 // sequence: save the key, then four labeled steps. Project link commands are
 // shown per-project with name/category/slug and a "sync default" badge on the
 // first, so it's always clear which id is which.
-function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinish: () => void }) {
+function ConnectStep({ result, dashboardSessionReady, onFinish }: { result: OnboardingComplete; dashboardSessionReady: boolean; onFinish: () => void }) {
   const [revealKey, setRevealKey] = useState(false);
   const origin = window.location.origin;
   const installCmd = "curl -fsSL https://raw.githubusercontent.com/jholhewres/anchored/main/install/install.sh | bash";
@@ -573,6 +587,10 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
           </div>
         </Card>
 
+        {!dashboardSessionReady && <div role="alert" style={{ marginBottom: 24, padding: "11px 13px", color: "var(--warn)", background: "var(--warn-bg)", border: "1px solid var(--warn)", borderRadius: "var(--radius)", fontSize: 12.5, lineHeight: 1.45 }}>
+          Setup and your CLI key are complete, but the dashboard session could not be created. Select “Sign in to dashboard” when you are ready; this will not run onboarding again.
+        </div>}
+
         {/* Numbered steps */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
           <Step n={1} title="Install the Anchored CLI">
@@ -605,7 +623,7 @@ function ConnectStep({ result, onFinish }: { result: OnboardingComplete; onFinis
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 32 }}>
           <CopyButton text={fullScript} label="copy all commands" inline />
           <Btn variant="primary" size="lg" iconR={<I.arrowR />} onClick={onFinish}>
-            Go to dashboard
+            {dashboardSessionReady ? "Go to dashboard" : "Sign in to dashboard"}
           </Btn>
         </div>
       </div>
@@ -696,31 +714,17 @@ function CommandBox({ cmd }: { cmd: string }) {
   );
 }
 
-// CopyButton: small inline button that uses the robust clipboard helper above.
 function CopyButton({ text, label = "copy", inline = false }: { text: string; label?: string; inline?: boolean }) {
-  const [state, setState] = useState<"idle" | "ok" | "err">("idle");
-  async function onClick() {
-    const ok = await copyToClipboard(text);
-    setState(ok ? "ok" : "err");
-    setTimeout(() => setState("idle"), 1800);
-  }
-  const color = state === "ok" ? "var(--ok)" : state === "err" ? "var(--err)" : "var(--text-dim)";
   return (
-    <button type="button" onClick={onClick} style={{
-      background: inline ? "transparent" : "transparent",
+    <ClipboardButton text={text} label={label} successLabel="copied!" errorLabel="failed" style={{
+      background: "transparent",
       border: inline ? "1px solid var(--border)" : 0,
       borderLeft: inline ? "1px solid var(--border)" : "1px solid var(--border)",
       borderRadius: inline ? "var(--radius)" : 0,
-      color, cursor: "pointer",
       padding: inline ? "4px 10px" : "10px 14px",
-      fontFamily: "var(--font-mono)", fontSize: 11,
-      display: "inline-flex", alignItems: "center", gap: 5,
       alignSelf: "stretch",
       transition: "color .15s, background .15s",
-    }}>
-      {state === "ok" ? <I.check size={12} /> : state === "err" ? <I.x size={12} /> : <I.copy size={12} />}
-      {state === "ok" ? "copied!" : state === "err" ? "failed" : label}
-    </button>
+    }} />
   );
 }
 
