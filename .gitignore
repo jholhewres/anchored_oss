@@ -81,6 +81,7 @@ Anchored OSS.zip
 # Screenshots from dev
 *.png
 !web/public/*.png
+!docs/assets/brand/*.png
 
 # Sisyphus state
 .sisyphus/
