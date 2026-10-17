@@ -30,9 +30,20 @@ type createProjectRequest struct {
 	Slug string `json:"slug"`
 	// RepoURL is the Git remote that identifies this project. The server always
 	// derives remote keys from it, using the same normalization as the CLI.
-	RepoURL  string `json:"repo_url"`
-	Category string `json:"category"`
+	RepoURL string `json:"repo_url"`
+	// RemoteKey is the legacy client path: `anchored remote sync --all` (up to
+	// v0.20.x) creates projects by routing key without a repo URL, including
+	// "local:<slug>" for repositories without a git origin. It is used only
+	// when RepoURL is empty, and stays idempotent on the key.
+	RemoteKey string `json:"remote_key"`
+	Category  string `json:"category"`
 }
+
+// legacyRemoteKeyRe accepts only the routing keys released clients send: a
+// git-origin hash (16 hex), "local:<slug>" (v0.20.2+) or "<slug>-<unix time>"
+// (earlier clients). Anything else, such as the dashboard's old "manual:*"
+// keys, needs a repo_url.
+var legacyRemoteKeyRe = regexp.MustCompile(`^(?:[0-9a-f]{16}|local:[a-z0-9][a-z0-9-]{0,63}|[a-z0-9][a-z0-9-]{0,63}-[0-9]{1,20})$`)
 
 type listMemoriesResponse struct {
 	Memories []*model.Memory `json:"memories"`
@@ -90,6 +101,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Slug = strings.TrimSpace(req.Slug)
 	req.RepoURL = strings.TrimSpace(req.RepoURL)
+	req.RemoteKey = strings.TrimSpace(req.RemoteKey)
 	if req.Name == "" {
 		jsonError(w, http.StatusBadRequest, "name is required")
 		return
@@ -99,6 +111,10 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.RepoURL == "" && req.RemoteKey != "" {
+		h.createByRemoteKey(w, r, orgID, accountID, req)
+		return
+	}
 	if !projectpkg.IsValidGitRemote(req.RepoURL) {
 		jsonError(w, http.StatusBadRequest, "repo_url must be a valid HTTPS or SSH git remote")
 		return
@@ -139,6 +155,47 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("audit project.created failed", "error", err, "project_id", project.ID)
 	}
 
+	jsonResponse(w, http.StatusCreated, project)
+}
+
+// createByRemoteKey keeps the project-creation contract released clients rely
+// on: a project keyed by remote_key alone, returned as is (200) when the org
+// already has one with that key.
+func (h *ProjectHandler) createByRemoteKey(w http.ResponseWriter, r *http.Request, orgID, accountID string, req createProjectRequest) {
+	if !legacyRemoteKeyRe.MatchString(req.RemoteKey) {
+		jsonError(w, http.StatusBadRequest, "repo_url must be a valid HTTPS or SSH git remote")
+		return
+	}
+	if existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, req.RemoteKey); err == nil {
+		if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, existing.ID); err != nil {
+			h.logger.Error("grant creator access failed", "error", err, "project_id", existing.ID)
+		}
+		jsonResponse(w, http.StatusOK, existing)
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		h.logger.Error("project by remote_key lookup failed", "error", err, "org_id", orgID)
+		jsonError(w, http.StatusInternalServerError, "failed to check existing project")
+		return
+	}
+
+	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, req.RemoteKey, "", "", accountID, model.NormalizeCategory(req.Category))
+	if err != nil {
+		h.logger.Error("create project failed", "error", err, "org_id", orgID)
+		jsonError(w, http.StatusInternalServerError, "failed to create project")
+		return
+	}
+	if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, project.ID); err != nil {
+		h.logger.Error("grant creator access failed", "error", err, "project_id", project.ID)
+		jsonError(w, http.StatusInternalServerError, "failed to grant project access")
+		return
+	}
+	if err := h.store.AppendAudit(r.Context(), &model.AuditEntry{
+		OrgID: orgID, ProjectID: project.ID, ActorID: accountID,
+		Action: "project.created", TargetType: "project", TargetID: project.ID,
+		Metadata: map[string]string{"name": project.Name, "slug": project.Slug, "via": "remote_key"},
+	}); err != nil {
+		h.logger.Error("audit project.created failed", "error", err, "project_id", project.ID)
+	}
 	jsonResponse(w, http.StatusCreated, project)
 }
 
