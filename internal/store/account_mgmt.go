@@ -10,8 +10,13 @@ import (
 // UpdateAccount updates display_name and/or role for the given account.
 // An empty string for either field means "no change".
 func (s *PostgresStore) UpdateAccount(ctx context.Context, orgID, id, displayName, role string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin update account: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
 	if displayName != "" {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE accounts SET display_name = $1 WHERE id = $2`,
 			displayName, id,
 		); err != nil {
@@ -19,30 +24,59 @@ func (s *PostgresStore) UpdateAccount(ctx context.Context, orgID, id, displayNam
 		}
 	}
 	if role != "" {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE org_members SET role = $1 WHERE account_id = $2 AND org_id = $3`,
 			role, id, orgID,
 		); err != nil {
 			return fmt.Errorf("update account role: %w", err)
 		}
+		// The new role takes effect now: the login session (re-minted with the
+		// new scope at the next login) and every key above the role go.
+		above := scopesAboveRole(role)
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE api_keys SET revoked_at = now()
+			 WHERE account_id = $1 AND org_id = $2 AND revoked_at IS NULL
+			   AND (name = 'session' OR scope = $3 OR scope = $4)`,
+			id, orgID, above[0], above[1],
+		); err != nil {
+			return fmt.Errorf("revoke keys above the new role: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit update account: %w", err)
 	}
 	return nil
 }
 
-// SoftDeleteAccount marks an account deleted and revokes all its API keys.
+// SoftDeleteAccount removes the account from orgID: its keys there are
+// revoked, it leaves the org's teams and its membership is deleted, so its
+// password no longer opens a session in that org.
 func (s *PostgresStore) SoftDeleteAccount(ctx context.Context, orgID, id string) error {
-	if _, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete account: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE api_keys SET revoked_at = now() WHERE account_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
 		id, orgID,
 	); err != nil {
 		return fmt.Errorf("revoke account keys: %w", err)
 	}
-	// Remove from all teams so they lose project access immediately.
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM team_members WHERE account_id = $1 AND team_id IN (SELECT id FROM teams WHERE org_id = $2)`,
 		id, orgID,
 	); err != nil {
 		return fmt.Errorf("remove team memberships: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM org_members WHERE account_id = $1 AND org_id = $2`,
+		id, orgID,
+	); err != nil {
+		return fmt.Errorf("remove org membership: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete account: %w", err)
 	}
 	return nil
 }
@@ -172,4 +206,19 @@ func (s *PostgresStore) SetAccountProjects(ctx context.Context, orgID, accountID
 	}
 
 	return tx.Commit()
+}
+
+// scopesAboveRole lists the key scopes an org role may no longer hold, padded
+// to two entries for the revocation query. admin keeps every scope; sync (and
+// "member", whose login scope is sync) loses admin; readonly, or any role the
+// store does not know, loses admin and sync.
+func scopesAboveRole(role string) [2]string {
+	switch role {
+	case "admin":
+		return [2]string{"", ""}
+	case "sync", "member":
+		return [2]string{"admin", ""}
+	default:
+		return [2]string{"admin", "sync"}
+	}
 }

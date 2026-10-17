@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -61,6 +62,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orgID, role, err := h.store.GetAccountOrgMembership(r.Context(), account.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		// Removed from every org: the password no longer opens a session.
+		jsonError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
 	if err != nil {
 		h.logger.Error("login: failed to resolve org for account", "account_id", account.ID, "error", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")

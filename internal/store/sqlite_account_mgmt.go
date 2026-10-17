@@ -8,8 +8,13 @@ import (
 )
 
 func (s *SQLiteStore) UpdateAccount(ctx context.Context, orgID, id, displayName, role string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin update account: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
 	if displayName != "" {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE accounts SET display_name = ? WHERE id = ?`,
 			displayName, id,
 		); err != nil {
@@ -17,28 +22,59 @@ func (s *SQLiteStore) UpdateAccount(ctx context.Context, orgID, id, displayName,
 		}
 	}
 	if role != "" {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE org_members SET role = ? WHERE account_id = ? AND org_id = ?`,
 			role, id, orgID,
 		); err != nil {
 			return fmt.Errorf("update account role: %w", err)
 		}
+		// The new role takes effect now: the login session (re-minted with the
+		// new scope at the next login) and every key above the role go.
+		above := scopesAboveRole(role)
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE api_keys SET revoked_at = datetime('now')
+			 WHERE account_id = ? AND org_id = ? AND revoked_at IS NULL
+			   AND (name = 'session' OR scope = ? OR scope = ?)`,
+			id, orgID, above[0], above[1],
+		); err != nil {
+			return fmt.Errorf("revoke keys above the new role: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit update account: %w", err)
 	}
 	return nil
 }
 
+// SoftDeleteAccount removes the account from orgID: its keys there are
+// revoked, it leaves the org's teams and its membership is deleted, so its
+// password no longer opens a session in that org.
 func (s *SQLiteStore) SoftDeleteAccount(ctx context.Context, orgID, id string) error {
-	if _, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete account: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE api_keys SET revoked_at = datetime('now') WHERE account_id = ? AND org_id = ? AND revoked_at IS NULL`,
 		id, orgID,
 	); err != nil {
 		return fmt.Errorf("revoke account keys: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM team_members WHERE account_id = ? AND team_id IN (SELECT id FROM teams WHERE org_id = ?)`,
 		id, orgID,
 	); err != nil {
 		return fmt.Errorf("remove team memberships: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM org_members WHERE account_id = ? AND org_id = ?`,
+		id, orgID,
+	); err != nil {
+		return fmt.Errorf("remove org membership: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete account: %w", err)
 	}
 	return nil
 }
