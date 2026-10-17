@@ -87,3 +87,7 @@ Anchored OSS.zip
 
 # Compiled binary at repo root
 /server
+
+# Python bytecode (docs/assets/brand/render.py)
+__pycache__/
+*.pyc
