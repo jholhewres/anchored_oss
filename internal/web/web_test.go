@@ -11,9 +11,30 @@ import (
 )
 
 var (
-	scriptTag = regexp.MustCompile(`(?is)<script\b[^>]*>`)
-	srcAttr   = regexp.MustCompile(`(?i)\bsrc\s*=`)
+	scriptTag    = regexp.MustCompile(`(?is)<script\b[^>]*>`)
+	srcAttr      = regexp.MustCompile(`(?i)\bsrc\s*=`)
+	deferredAttr = regexp.MustCompile(`(?i)\b(defer|async)\b|type\s*=\s*"module"`)
 )
+
+// assertThemeBootstrapRunsFirst checks that the theme bootstrap is a classic,
+// blocking script placed before the first module script (the bundle), so the
+// saved theme is applied before the app renders.
+func assertThemeBootstrapRunsFirst(t *testing.T, html string) {
+	t.Helper()
+	tags := scriptTag.FindAllString(html, -1)
+	for i, tag := range tags {
+		if strings.Contains(tag, `src="/theme-init.js"`) {
+			if deferredAttr.MatchString(tag) {
+				t.Fatalf("theme bootstrap must block (no defer, async or type=module): %s", tag)
+			}
+			return
+		}
+		if strings.Contains(tag, `type="module"`) {
+			t.Fatalf("script %d (%s) loads before the theme bootstrap", i, tag)
+		}
+	}
+	t.Fatal("index.html must load the theme bootstrap from /theme-init.js")
+}
 
 // inlineScripts returns the <script> tags without a src attribute, which the
 // dashboard CSP (script-src 'self') refuses to run.
@@ -35,11 +56,15 @@ func TestIndexHasNoInlineScript(t *testing.T) {
 	if tags := inlineScripts(string(src)); len(tags) > 0 {
 		t.Fatalf("web/index.html has inline scripts the CSP blocks: %q", tags)
 	}
-	if !strings.Contains(string(src), `src="/theme-init.js"`) {
-		t.Fatal("web/index.html must load the theme bootstrap from /theme-init.js")
-	}
-	if _, err := os.Stat("../../web/public/theme-init.js"); err != nil {
+	assertThemeBootstrapRunsFirst(t, string(src))
+	script, err := os.ReadFile("../../web/public/theme-init.js")
+	if err != nil {
 		t.Fatalf("theme bootstrap file missing: %v", err)
+	}
+	for _, want := range []string{`localStorage.getItem("anchored_theme")`, "dataset.theme"} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("theme-init.js does not apply the saved theme (missing %q)", want)
+		}
 	}
 }
 
@@ -66,6 +91,7 @@ func TestServedIndexLoadsThemeBootstrapUnderCSP(t *testing.T) {
 	if tags := inlineScripts(rec.Body.String()); len(tags) > 0 {
 		t.Fatalf("served index.html has inline scripts the CSP blocks: %q", tags)
 	}
+	assertThemeBootstrapRunsFirst(t, rec.Body.String())
 
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/theme-init.js", nil))
