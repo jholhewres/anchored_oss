@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 
 import { Btn, Input } from "@/ds/components";
-import { I, AnchoredOSSLogo } from "@/ds/icons";
+import { I, AnchoredMarkHero, AnchoredOSSLogo } from "@/ds/icons";
 import { Status } from "@/ds/components";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/components/ui/toast";
@@ -81,23 +81,7 @@ export function RegisterPage() {
             gap: 32,
           }}
         >
-          <svg viewBox="0 0 280 220" style={{ width: 320, height: 240 }}>
-            <defs>
-              <radialGradient id="authGlow" cx="50%" cy="55%" r="50%">
-                <stop offset="0" stopColor="var(--accent)" stopOpacity="0.18" />
-                <stop offset="1" stopColor="var(--accent)" stopOpacity="0" />
-              </radialGradient>
-            </defs>
-            <circle cx="140" cy="125" r="110" fill="url(#authGlow)" />
-            <polygon points="140,50 200,80 200,140 140,170 80,140 80,80" fill="var(--text)" opacity="0.12" />
-            <polygon points="140,50 200,80 140,110 80,80" fill="var(--accent)" opacity="0.8" />
-            <polygon points="80,80 140,110 140,170 80,140" fill="var(--text)" opacity="0.45" />
-            <polygon points="200,80 140,110 140,170 200,140" fill="var(--accent)" opacity="0.55" />
-            <line x1="80" y1="80" x2="140" y2="110" stroke="var(--bg)" strokeWidth="0.6" opacity="0.4" />
-            <line x1="200" y1="80" x2="140" y2="110" stroke="var(--bg)" strokeWidth="0.6" opacity="0.4" />
-            <line x1="140" y1="110" x2="140" y2="170" stroke="var(--bg)" strokeWidth="0.6" opacity="0.4" />
-            <ellipse cx="140" cy="195" rx="56" ry="6" fill="var(--bg)" opacity="0.6" />
-          </svg>
+          <AnchoredMarkHero />
           <div style={{ textAlign: "center", maxWidth: 360 }}>
             <div
               style={{

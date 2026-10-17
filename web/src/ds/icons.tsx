@@ -412,6 +412,30 @@ export const AnchoredLogo: React.FC<AnchoredLogoProps> = ({
   );
 };
 
+// AnchoredMarkHero is the brand mark at hero size, on a soft accent glow,
+// for the sign-in and sign-up panels.
+export const AnchoredMarkHero: React.FC<{ size?: number }> = ({ size = 160 }) => (
+  <div
+    style={{
+      width: size * 2,
+      height: size * 1.5,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background:
+        "radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 18%, transparent) 0, transparent 62%)",
+    }}
+  >
+    <img
+      src="/brand-mark.png"
+      alt=""
+      width={size}
+      height={size}
+      style={{ display: "block", filter: "drop-shadow(0 18px 28px rgba(15, 23, 42, 0.18))" }}
+    />
+  </div>
+);
+
 interface AnchoredOSSLogoProps {
   size?: number;
   mono?: boolean;
