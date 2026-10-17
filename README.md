@@ -1,10 +1,21 @@
-# Anchored OSS
+<p align="center">
+  <img src="docs/assets/brand/mark.png" alt="" width="128">
+</p>
 
-**Self-hosted team memory for AI coding agents.**
+<h1 align="center">Anchored OSS</h1>
 
-[![Latest release](https://img.shields.io/github/v/release/jholhewres/anchored_oss)](https://github.com/jholhewres/anchored_oss/releases/latest)
-[![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](LICENSE)
-[![Go](https://img.shields.io/badge/go-%3E%3D1.22-00ADD8)](go.mod)
+<p align="center">
+  Self-hosted team memory for AI coding agents.
+</p>
+
+<p align="center">
+  <a href="https://github.com/jholhewres/anchored_oss/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jholhewres/anchored_oss/ci.yml?branch=main&style=flat-square&label=ci" alt="CI"></a>
+  <a href="https://github.com/jholhewres/anchored_oss/releases/latest"><img src="https://img.shields.io/github/v/release/jholhewres/anchored_oss?style=flat-square&color=e2795b" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-FSL--1.1--ALv2-blue?style=flat-square" alt="Licence: FSL-1.1-ALv2"></a>
+  <img src="https://img.shields.io/badge/go-1.25+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.25+">
+</p>
+
+---
 
 Anchored OSS is the team layer of the [Anchored](https://github.com/jholhewres/anchored) memory system: a server your organization runs on its own infrastructure so development teams share project knowledge — facts, decisions, learnings, plans, and knowledge-graph relationships — across Claude Code, Cursor, OpenCode, Gemini CLI, and any MCP-compatible tool.
 

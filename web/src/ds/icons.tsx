@@ -367,34 +367,22 @@ interface AnchoredLogoProps {
 export const AnchoredLogo: React.FC<AnchoredLogoProps> = ({
   size = 22,
   color,
-  accent,
   wordmark = true,
   label = "anchored",
   mono = false,
 }) => {
   const fg = color || "currentColor";
-  const ac = accent || "var(--accent)";
 
+  // The brand mark (docs/assets/brand/mark.png, rendered by render.py). It is
+  // a full-colour tile, so `accent` no longer tints it.
   const cube = (
-    <svg
+    <img
+      src="/brand-mark.png"
+      alt=""
       width={size}
       height={size}
-      viewBox="0 0 24 24"
-      style={{ flex: "none" }}
-    >
-      <g>
-        <path d="M12 2 L21 7 L12 12 L3 7 Z" fill={fg} opacity="0.92" />
-        <path d="M3 7 L3 17 L12 22 L12 12 Z" fill={fg} opacity="0.55" />
-        <path d="M21 7 L21 17 L12 22 L12 12 Z" fill={ac} />
-        <path
-          d="M12 2 L12 12 M3 7 L12 12 L21 7"
-          fill="none"
-          stroke="var(--bg)"
-          strokeWidth="0.6"
-          opacity="0.4"
-        />
-      </g>
-    </svg>
+      style={{ flex: "none", display: "block" }}
+    />
   );
 
   if (!wordmark) return cube;
