@@ -88,7 +88,7 @@ func (s *SQLiteStore) ListAPIKeysByOwner(ctx context.Context, orgID, accountID s
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, org_id, account_id, name, key_prefix, key_hash, scope, expires_at, created_at, revoked_at
 		 FROM api_keys
-		 WHERE org_id = ? AND account_id = ? AND scope IN ('sync', 'readonly')
+		 WHERE org_id = ? AND account_id = ? AND scope IN ('sync', 'readonly') AND name <> 'session'
 		 ORDER BY created_at DESC`,
 		orgID, accountID,
 	)
@@ -115,7 +115,7 @@ func (s *SQLiteStore) RevokeAPIKeyByOwner(ctx context.Context, orgID, accountID,
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE api_keys SET revoked_at = datetime('now')
 		 WHERE id = ? AND org_id = ? AND account_id = ?
-		   AND scope IN ('sync', 'readonly') AND revoked_at IS NULL`,
+		   AND scope IN ('sync', 'readonly') AND name <> 'session' AND revoked_at IS NULL`,
 		id, orgID, accountID,
 	)
 	if err != nil {
