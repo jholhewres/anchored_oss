@@ -13,13 +13,13 @@ import (
 const dockerComposeYAML = `version: "3.8"
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: anchored
       POSTGRES_PASSWORD: anchored
       POSTGRES_DB: anchored_oss
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - anchored_pgdata:/var/lib/postgresql/data
 volumes:
