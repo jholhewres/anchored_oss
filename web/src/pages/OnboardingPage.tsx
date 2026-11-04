@@ -4,6 +4,7 @@ import { Btn, Input, Card } from "@/ds/components";
 import { I, AnchoredOSSLogo } from "@/ds/icons";
 import { useToast } from "@/components/ui/toast";
 import { api, setToken } from "@/lib/api";
+import { copyToClipboard } from "@/lib/clipboard";
 import { PROJECT_CATEGORIES, type ProjectCategory, type OnboardingComplete } from "@/lib/types";
 
 const CATEGORY_LABELS: Record<ProjectCategory, string> = {
@@ -447,34 +448,6 @@ function HeroLeft({ step }: { step: number }) {
   );
 }
 
-// Robust clipboard copy that works on both secure and insecure origins.
-// navigator.clipboard.writeText is only available over HTTPS / localhost;
-// HTTP IPs (like the openclaw-gateway) need the document.execCommand fallback.
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through to fallback */ }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
-}
-
 // ConnectStep is shown after a successful onboarding. A scannable, numbered
 // sequence: save the key, then four labeled steps. Project link commands are
 // shown per-project with name/category/slug and a "sync default" badge on the
@@ -696,7 +669,7 @@ function CommandBox({ cmd }: { cmd: string }) {
   );
 }
 
-// CopyButton: small inline button that uses the robust clipboard helper above.
+// CopyButton: small inline button that uses the shared clipboard helper from @/lib/clipboard.
 function CopyButton({ text, label = "copy", inline = false }: { text: string; label?: string; inline?: boolean }) {
   const [state, setState] = useState<"idle" | "ok" | "err">("idle");
   async function onClick() {

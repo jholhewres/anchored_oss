@@ -3,36 +3,12 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Card, Badge, Status, Btn, Input, Tabs } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api, ApiError } from "@/lib/api";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useAuth } from "@/lib/auth";
 import type { Project, Memory, Triple, ChatAnswer, ProjectCategory } from "@/lib/types";
 import { PROJECT_CATEGORIES, PROJECT_CATEGORY_LABELS } from "@/lib/types";
 import { GraphView } from "@/components/GraphView";
 import { HealthPanel } from "@/components/HealthPanel";
-
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through */ }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
-}
 
 function CommandBox({ cmd }: { cmd: string }) {
   return (
