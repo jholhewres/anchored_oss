@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Card, ScopeChip, Status, Btn, Input, Avatar, Table, Badge } from "@/ds/components";
 import { I } from "@/ds/icons";
 import { api } from "@/lib/api";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useToast } from "@/components/ui/toast";
 import type { AccountWithRole, Project, Invite } from "@/lib/types";
 
@@ -354,6 +355,7 @@ export function DevelopersPage() {
 
   // After invite creation: show the invite URL once
   const [freshInviteUrl, setFreshInviteUrl] = useState<string | null>(null);
+  const [inviteUrlCopied, setInviteUrlCopied] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -383,6 +385,18 @@ export function DevelopersPage() {
     setInvites(prev => [invite, ...prev]);
     setShowInviteModal(false);
     setFreshInviteUrl(url);
+    setInviteUrlCopied(false);
+  }
+
+  async function copyInviteUrl() {
+    if (!freshInviteUrl) return;
+    const ok = await copyToClipboard(freshInviteUrl);
+    if (!ok) {
+      toast.push({ title: "Copy failed", description: "Select the link and copy it manually.", variant: "error" });
+      return;
+    }
+    setInviteUrlCopied(true);
+    window.setTimeout(() => setInviteUrlCopied(false), 1800);
   }
 
   async function revokeInvite(id: string) {
@@ -436,9 +450,9 @@ export function DevelopersPage() {
                 wordBreak: "break-all" as const,
               }}>{freshInviteUrl}</div>
             </div>
-            <Btn variant="outline" size="sm" icon={<I.copy />}
-              onClick={() => { navigator.clipboard.writeText(freshInviteUrl); }}>
-              Copy
+            <Btn variant="outline" size="sm" icon={inviteUrlCopied ? <I.check /> : <I.copy />}
+              onClick={copyInviteUrl}>
+              {inviteUrlCopied ? "Copied" : "Copy"}
             </Btn>
             <button type="button" onClick={() => setFreshInviteUrl(null)} style={{
               border: 0, background: "transparent", color: "var(--text-dim)", cursor: "pointer",
