@@ -10,6 +10,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,15 +34,23 @@ func ValidateFrontmatter(frontmatter map[string]any) error {
 	if frontmatter == nil {
 		return fmt.Errorf("frontmatter is required")
 	}
+	// Shape first, size second: the size check encodes the map, which must
+	// already be known to hold two strings.
+	if len(frontmatter) != 2 {
+		return fmt.Errorf("frontmatter must contain only name and description")
+	}
+	if _, ok := frontmatter["name"].(string); !ok {
+		return fmt.Errorf("frontmatter name must match ^[a-z0-9][a-z0-9-]{0,63}$")
+	}
+	if _, ok := frontmatter["description"].(string); !ok {
+		return fmt.Errorf("frontmatter description must be a non-empty string")
+	}
 	encoded, err := json.Marshal(frontmatter)
 	if err != nil {
 		return fmt.Errorf("frontmatter must be JSON-compatible: %w", err)
 	}
 	if len(encoded) > maxFrontmatterBytes {
 		return fmt.Errorf("frontmatter exceeds 32 KiB")
-	}
-	if len(frontmatter) != 2 {
-		return fmt.Errorf("frontmatter must contain only name and description")
 	}
 	name, ok := frontmatter["name"].(string)
 	if !ok || !skillNameRe.MatchString(name) {
@@ -81,6 +90,98 @@ func Render(slug, purpose string, frontmatter map[string]any, body string) (stri
 	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
 	body = strings.TrimRight(body, "\n")
 	return "---\n" + string(encoded) + "---\n" + body + "\n", nil
+}
+
+// SplitHeader separates a SKILL.md document's YAML frontmatter from its body.
+// hasHeader is false when the first non-blank line does not start with "---":
+// the document is all body. Anything an agent's loader might still read as a
+// header is refused rather than stored raw: an opening line that is not
+// exactly "---" once whitespace is trimmed, a header that never closes, and a
+// header that is not a flat mapping of plain scalars (anchors, aliases and
+// merge keys included, so a small header cannot expand into a huge one). The
+// header is returned as parsed, not validated: callers run ValidateFrontmatter.
+func SplitHeader(content string) (header map[string]any, body string, hasHeader bool, err error) {
+	doc := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
+	trimmed := strings.TrimLeftFunc(doc, isSpaceOrBOM)
+	first, rest, _ := strings.Cut(trimmed, "\n")
+	if !strings.HasPrefix(first, "---") {
+		return nil, content, false, nil
+	}
+	if strings.TrimRightFunc(first, isSpaceOrBOM) != "---" {
+		return nil, "", true, fmt.Errorf("frontmatter must open with a line holding only ---")
+	}
+	// Only a --- line closes the header, as agent loaders read it; the scan
+	// stops past the 32 KiB header bound instead of walking the whole body.
+	end := -1
+	for offset := 0; offset <= len(rest) && offset <= maxFrontmatterBytes; {
+		line, _, found := strings.Cut(rest[offset:], "\n")
+		if strings.TrimRightFunc(line, isSpaceOrBOM) == "---" {
+			end = offset
+			break
+		}
+		if !found {
+			break
+		}
+		offset += len(line) + 1
+	}
+	if end < 0 {
+		if len(rest) > maxFrontmatterBytes {
+			return nil, "", true, fmt.Errorf("frontmatter exceeds 32 KiB or is not closed by a --- line")
+		}
+		return nil, "", true, fmt.Errorf("frontmatter is not closed by a --- line")
+	}
+	raw := rest[:end]
+	// A YAML document end (...) or directive (%) would make the parser stop or
+	// read differently from a loader that reads the text up to the closing
+	// ---: whatever follows it would be checked by one and not the other.
+	for _, line := range strings.Split(raw, "\n") {
+		t := strings.TrimRightFunc(line, isSpaceOrBOM)
+		if t == "..." || strings.HasPrefix(t, "%") || strings.HasPrefix(t, "---") {
+			return nil, "", true, fmt.Errorf("frontmatter must not hold YAML document markers or directives")
+		}
+	}
+	after := rest[end:]
+	if i := strings.IndexByte(after, '\n'); i >= 0 {
+		body = after[i+1:]
+	}
+	header, err = flatScalarMapping(raw)
+	if err != nil {
+		return nil, "", true, err
+	}
+	return header, body, true, nil
+}
+
+func isSpaceOrBOM(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' }
+
+// flatScalarMapping reads a YAML header as nodes, never as Go values, and
+// accepts only a mapping of plain string keys to scalar values.
+func flatScalarMapping(raw string) (map[string]any, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(raw), &root); err != nil {
+		return nil, fmt.Errorf("frontmatter is not valid YAML: %w", err)
+	}
+	out := map[string]any{}
+	if root.Kind == 0 {
+		return out, nil
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("frontmatter must be a mapping")
+	}
+	mapping := root.Content[0]
+	if mapping.Anchor != "" {
+		return nil, fmt.Errorf("frontmatter must not use YAML anchors or aliases")
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		key, value := mapping.Content[i], mapping.Content[i+1]
+		if key.Kind != yaml.ScalarNode || value.Kind != yaml.ScalarNode {
+			return nil, fmt.Errorf("frontmatter must hold only plain name and description values")
+		}
+		if key.Anchor != "" || value.Anchor != "" || key.Value == "<<" {
+			return nil, fmt.Errorf("frontmatter must not use YAML anchors, aliases or merge keys")
+		}
+		out[key.Value] = value.Value
+	}
+	return out, nil
 }
 
 func stringNode(value string) *yaml.Node {

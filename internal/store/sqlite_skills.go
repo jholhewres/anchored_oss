@@ -133,6 +133,9 @@ func (s *SQLiteStore) UpdateSkill(ctx context.Context, orgID, id, actorID string
 	}
 	if versioned {
 		body, frontmatter, content, prepareErr := skillVersionForUpdate(&cur, upd)
+		if errors.Is(prepareErr, ErrInvalid) {
+			return nil, ErrInvalid
+		}
 		if prepareErr != nil {
 			return nil, fmt.Errorf("prepare skill version: %w", prepareErr)
 		}

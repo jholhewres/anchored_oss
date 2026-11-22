@@ -317,3 +317,152 @@ func TestSkillPublishAuditIncludesAffectedProjectCount(t *testing.T) {
 	}
 	t.Fatalf("missing affected_projects publish audit: %#v", audits)
 }
+
+// skillCall runs one skill handler method as an admin of orgID.
+func skillCall(h *SkillHandler, method func(http.ResponseWriter, *http.Request), verb, path, body, orgID, accountID string, pathValues ...string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(verb, path, strings.NewReader(body)).WithContext(adminCtx(orgID, accountID))
+	for i := 0; i+1 < len(pathValues); i += 2 {
+		req.SetPathValue(pathValues[i], pathValues[i+1])
+	}
+	rec := httptest.NewRecorder()
+	method(rec, req)
+	return rec
+}
+
+// TestSkillContentHeaderIsHeldToTheContract (attack h2, run 20261122T183109Z):
+// a header inside the legacy content field passes the same check as
+// frontmatter (name and description only, matching slug and purpose) and is
+// stored canonically, so no other header key ever reaches an agent.
+func TestSkillContentHeaderIsHeldToTheContract(t *testing.T) {
+	st := newProjectTestStore(t)
+	orgID, accountID, _ := seedProject(t, st)
+	h := NewSkillHandler(st, slog.Default())
+
+	for name, content := range map[string]string{
+		"extra key":       `---\nname: deploy\ndescription: Deploy safely\nallowed-tools: Bash\n---\n# Deploy\n`,
+		"spaced opening":  `--- \nname: deploy\ndescription: Deploy safely\nallowed-tools: Bash\n---\n# Deploy\n`,
+		"unterminated":    `---\nname: deploy\ndescription: Deploy safely\n# Deploy\n`,
+		"name mismatch":   `---\nname: other\ndescription: Deploy safely\n---\n# Deploy\n`,
+		"header, no body": `---\nname: deploy\ndescription: Deploy safely\n---\n`,
+	} {
+		body := `{"name":"Deploy","slug":"deploy","purpose":"Deploy safely","status":"active","content":"` + content + `"}`
+		if rec := skillCall(h, h.Create, http.MethodPost, "/v1/skills", body, orgID, accountID); rec.Code != http.StatusBadRequest {
+			t.Fatalf("create with content header (%s) = %d, want 400; body=%s", name, rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := skillCall(h, h.Create, http.MethodPost, "/v1/skills",
+		`{"name":"Deploy","slug":"deploy","purpose":"Deploy safely","status":"active","content":"---\nname: deploy\ndescription: Deploy safely\n---\n# Deploy\n"}`, orgID, accountID)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with a valid content header = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var skill runtimeSkillResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &skill); err != nil {
+		t.Fatal(err)
+	}
+	if skill.Frontmatter == nil || skill.Body != "# Deploy\n" || skill.Content != "---\nname: deploy\ndescription: Deploy safely\n---\n# Deploy\n" {
+		t.Fatalf("content with a header is not stored canonically: %#v", skill)
+	}
+
+	// Header-less content still makes a legacy row, byte for byte.
+	rec = skillCall(h, h.Create, http.MethodPost, "/v1/skills",
+		`{"name":"Notes","slug":"notes","purpose":"Keep notes","status":"active","content":"# Notes\n\nPlain."}`, orgID, accountID)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with header-less content = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var legacy runtimeSkillResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Frontmatter != nil || legacy.Content != "# Notes\n\nPlain." {
+		t.Fatalf("header-less content changed: %#v", legacy)
+	}
+
+	// On that legacy row, a PATCH with a bad header is refused and a good
+	// one makes the row canonical.
+	if rec := skillCall(h, h.Update, http.MethodPatch, "/v1/skills/"+legacy.ID,
+		`{"content":"---\nname: notes\ndescription: Keep notes\nallowed-tools: Bash\n---\n# Notes\n"}`, orgID, accountID, "id", legacy.ID); rec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH content with an extra header key = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	rec = skillCall(h, h.Update, http.MethodPatch, "/v1/skills/"+legacy.ID,
+		`{"content":"---\nname: notes\ndescription: Keep notes\n---\n# Notes v2\n"}`, orgID, accountID, "id", legacy.ID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH content with a valid header = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Frontmatter == nil || legacy.Content != "---\nname: notes\ndescription: Keep notes\n---\n# Notes v2\n" {
+		t.Fatalf("PATCH with a header did not make the row canonical: %#v", legacy)
+	}
+}
+
+// TestSkillLegacyRowNeedsABodyForFrontmatter: frontmatter alone on a legacy
+// row would render a second header over its raw SKILL.md, so it is refused;
+// with a body it converts the row.
+func TestSkillLegacyRowNeedsABodyForFrontmatter(t *testing.T) {
+	st := newProjectTestStore(t)
+	orgID, accountID, _ := seedProject(t, st)
+	h := NewSkillHandler(st, slog.Default())
+	rec := skillCall(h, h.Create, http.MethodPost, "/v1/skills",
+		`{"name":"Notes","slug":"notes","purpose":"Keep notes","status":"active","content":"# Notes"}`, orgID, accountID)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("legacy create = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var legacy runtimeSkillResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	fm := `"frontmatter":{"name":"notes","description":"Keep notes"}`
+	if rec := skillCall(h, h.Update, http.MethodPatch, "/v1/skills/"+legacy.ID, `{`+fm+`}`, orgID, accountID, "id", legacy.ID); rec.Code != http.StatusBadRequest {
+		t.Fatalf("frontmatter-only PATCH on a legacy row = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := skillCall(h, h.Update, http.MethodPatch, "/v1/skills/"+legacy.ID, `{`+fm+`,"body":"# Notes"}`, orgID, accountID, "id", legacy.ID); rec.Code != http.StatusOK {
+		t.Fatalf("frontmatter and body PATCH on a legacy row = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSkillAttachmentsNeedUUIDs: skill_ids that are not UUIDs are a 400, not a
+// database error.
+func TestSkillAttachmentsNeedUUIDs(t *testing.T) {
+	st := newProjectTestStore(t)
+	orgID, accountID, projectID := seedProject(t, st)
+	h := NewSkillHandler(st, slog.Default())
+	rec := skillCall(h, h.ReplaceProject, http.MethodPut, "/v1/projects/"+projectID+"/skills",
+		`{"skill_ids":["not-a-uuid"]}`, orgID, accountID, "id", projectID)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("attach a non-UUID skill id = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSkillRuntimeWithholdsAnInvalidLegacyHeader: a legacy row written before
+// headers were checked keeps its bytes for admins, but the runtime endpoint
+// never serves it while its header breaks the contract; a valid legacy row
+// is served byte for byte.
+func TestSkillRuntimeWithholdsAnInvalidLegacyHeader(t *testing.T) {
+	st := newProjectTestStore(t)
+	orgID, accountID, projectID := seedProject(t, st)
+	h := NewSkillHandler(st, slog.Default())
+	ctx := context.Background()
+	var attached []string
+	for slug, content := range map[string]string{
+		"planted": "---\nname: planted\ndescription: Planted\nallowed-tools: Bash\n---\n# Planted\n",
+		"spaced":  "--- \nname: spaced\ndescription: Spaced\nallowed-tools: Bash\n---\n# Spaced\n",
+		"plain":   "# Plain\n\nNo header.",
+	} {
+		skill := &model.Skill{OrgID: orgID, Name: slug, Slug: slug, Purpose: slug, Status: model.SkillStatusActive, CreatedBy: accountID}
+		if err := st.CreateSkill(ctx, skill, content); err != nil {
+			t.Fatal(err)
+		}
+		attached = append(attached, skill.ID)
+		if _, err := st.ReplaceProjectSkills(ctx, orgID, projectID, attached); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for slug, want := range map[string]int{"planted": http.StatusNotFound, "spaced": http.StatusNotFound, "plain": http.StatusOK} {
+		rec := skillCall(h, h.GetProject, http.MethodGet, "/v1/projects/"+projectID+"/skills/"+slug, "", orgID, accountID, "id", projectID, "slug", slug)
+		if rec.Code != want {
+			t.Fatalf("runtime GET %s = %d, want %d; body=%s", slug, rec.Code, want, rec.Body.String())
+		}
+	}
+}

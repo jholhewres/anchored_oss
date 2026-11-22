@@ -91,6 +91,11 @@ func skillVersionForCreate(skill *model.Skill, legacyContent string) (body strin
 }
 
 func skillVersionForUpdate(current *model.Skill, upd model.SkillUpdate) (body string, frontmatter any, content string, err error) {
+	// A legacy row's body is its raw SKILL.md, header included. Frontmatter
+	// without a new body would render a second header on top of it.
+	if upd.Frontmatter != nil && upd.Body == nil && current.CurrentVersion.Frontmatter == nil {
+		return "", nil, "", ErrInvalid
+	}
 	body = current.CurrentVersion.Body
 	fm := current.CurrentVersion.Frontmatter
 	if upd.Content != nil {
@@ -218,6 +223,9 @@ func (s *PostgresStore) UpdateSkill(ctx context.Context, orgID, id, actorID stri
 	}
 	if versioned {
 		body, frontmatter, content, prepareErr := skillVersionForUpdate(&cur, upd)
+		if errors.Is(prepareErr, ErrInvalid) {
+			return nil, ErrInvalid
+		}
 		if prepareErr != nil {
 			return nil, fmt.Errorf("prepare skill version: %w", prepareErr)
 		}

@@ -132,6 +132,37 @@ func validateSkillBody(body string) string {
 	return ""
 }
 
+// legacyHeaderViolation reports why a legacy (raw SKILL.md) row's header breaks
+// the frontmatter contract, or "" when it has no header or a valid one.
+func legacyHeaderViolation(skill *model.Skill) string {
+	v := skill.CurrentVersion
+	if v == nil || v.Frontmatter != nil {
+		return ""
+	}
+	_, _, msg := splitContentHeader(&v.Content)
+	return msg
+}
+
+// splitContentHeader reads the header of a legacy content field. It returns a
+// nil header when content is absent or has none, and a message for a header
+// that does not hold to the frontmatter contract (name and description only).
+func splitContentHeader(content *string) (*map[string]any, string, string) {
+	if content == nil {
+		return nil, "", ""
+	}
+	header, body, hasHeader, err := anchoredskill.SplitHeader(*content)
+	if err != nil {
+		return nil, "", "content: " + err.Error()
+	}
+	if !hasHeader {
+		return nil, "", ""
+	}
+	if err := anchoredskill.ValidateFrontmatter(header); err != nil {
+		return nil, "", "content header: " + err.Error()
+	}
+	return &header, body, ""
+}
+
 func chooseSkillBody(body, content *string) (*string, string) {
 	if body != nil && content != nil && *body != *content {
 		return nil, "body and content must match when both are provided"
@@ -233,7 +264,23 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	canonical := req.Body != nil || req.Frontmatter != nil || req.TemplateID != ""
+	header, rest, msg := splitContentHeader(req.Content)
+	if msg != "" {
+		jsonError(w, http.StatusBadRequest, msg)
+		return
+	}
+	if header != nil {
+		if frontmatter != nil {
+			jsonError(w, http.StatusBadRequest, "send frontmatter or a header in content, not both")
+			return
+		}
+		if msg := validateSkillBody(rest); msg != "" {
+			jsonError(w, http.StatusBadRequest, msg)
+			return
+		}
+		frontmatter, body = header, &rest
+	}
+	canonical := req.Body != nil || frontmatter != nil || req.TemplateID != ""
 	if canonical && frontmatter == nil {
 		header := anchoredskill.Header(req.Slug, req.Purpose)
 		frontmatter = &header
@@ -319,9 +366,22 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, msg)
 		return
 	}
-	// content is the old opaque-SKILL.md alias. Once a row is canonical its
-	// content includes generated frontmatter, so accepting it as a body would
-	// nest a second document header. New clients must send body instead.
+	// content is the old opaque-SKILL.md alias. A header in it is held to the
+	// frontmatter contract and the document is stored canonically, as body and
+	// frontmatter. Header-less content still updates a legacy row as raw bytes;
+	// on a canonical row it would lose the header, so body is required there.
+	contentHeader, contentBody, msg := splitContentHeader(req.Content)
+	if msg != "" {
+		jsonError(w, http.StatusBadRequest, msg)
+		return
+	}
+	if contentHeader != nil {
+		if req.Frontmatter != nil || (req.Body != nil && *req.Body != *req.Content) {
+			jsonError(w, http.StatusBadRequest, "send frontmatter or a header in content, not both")
+			return
+		}
+		req.Body, req.Content, body = &contentBody, nil, &contentBody
+	}
 	if req.Content != nil && req.Body == nil && req.Frontmatter == nil {
 		current, getErr := h.store.GetSkill(r.Context(), orgID, id)
 		if errors.Is(getErr, store.ErrNotFound) {
@@ -356,6 +416,9 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if contentHeader != nil {
+		frontmatter = contentHeader
+	}
 	if frontmatter != nil {
 		current, getErr := h.store.GetSkill(r.Context(), orgID, id)
 		if errors.Is(getErr, store.ErrNotFound) {
@@ -375,10 +438,20 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusBadRequest, "frontmatter name and description must match slug and purpose")
 			return
 		}
+		// A legacy row's body is its raw SKILL.md, header and all: giving it
+		// frontmatter without a new body would serve two headers.
+		if current.CurrentVersion != nil && current.CurrentVersion.Frontmatter == nil && req.Body == nil {
+			jsonError(w, http.StatusBadRequest, "body is required to give a legacy skill frontmatter")
+			return
+		}
 	}
 	skill, err := h.store.UpdateSkill(r.Context(), orgID, id, actorID, model.SkillUpdate{Name: req.Name, Purpose: req.Purpose, Frontmatter: frontmatter, Body: req.Body, Content: req.Content, Status: req.Status})
 	if errors.Is(err, store.ErrNotFound) {
 		jsonError(w, http.StatusNotFound, "skill not found")
+		return
+	}
+	if errors.Is(err, store.ErrInvalid) {
+		jsonError(w, http.StatusBadRequest, "body is required to give a legacy skill frontmatter")
 		return
 	}
 	if err != nil {
@@ -458,6 +531,14 @@ func (h *SkillHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "get project skill failed")
 		return
 	}
+	// A legacy row written before headers were checked keeps its bytes, but
+	// one whose header breaks the contract is never handed to an agent. An
+	// admin fixes it by saving the skill again.
+	if msg := legacyHeaderViolation(skill); msg != "" {
+		h.logger.Warn("withholding legacy skill with an invalid header", "skill_id", skill.ID, "slug", skill.Slug, "reason", msg)
+		jsonError(w, http.StatusNotFound, "skill not found")
+		return
+	}
 	jsonResponse(w, http.StatusOK, runtimeSkill(skill, true))
 }
 
@@ -506,6 +587,12 @@ func (h *SkillHandler) ReplaceProject(w http.ResponseWriter, r *http.Request) {
 	if len(req.SkillIDs) > 100 {
 		jsonError(w, http.StatusBadRequest, "at most 100 skills may be attached")
 		return
+	}
+	for _, skillID := range req.SkillIDs {
+		if !uuidRe.MatchString(skillID) {
+			jsonError(w, http.StatusBadRequest, "skill_ids must be UUIDs")
+			return
+		}
 	}
 	oldIDs, err := h.store.ReplaceProjectSkills(r.Context(), orgID, projectID, req.SkillIDs)
 	if errors.Is(err, store.ErrNotFound) {

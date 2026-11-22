@@ -151,3 +151,18 @@ func TestReplaceProjectSkills_PostgresSerializesAgainstRevocation(t *testing.T) 
 		t.Fatalf("concurrently revoked skill was newly attached: count=%d", attachments)
 	}
 }
+
+// TestUpdateSkill_LegacyRowNeedsABodyForFrontmatter_Postgres is the Postgres
+// twin of TestUpdateSkill_LegacyRowNeedsABodyForFrontmatter.
+func TestUpdateSkill_LegacyRowNeedsABodyForFrontmatter_Postgres(t *testing.T) {
+	dsn := os.Getenv("ANCHORED_TEST_DSN")
+	if dsn == "" {
+		t.Skip("ANCHORED_TEST_DSN not set; skipping Postgres legacy skill test")
+	}
+	st, err := NewPostgresStore(PoolConfig{DSN: dsn})
+	if err != nil {
+		t.Fatalf("open postgres store: %v", err)
+	}
+	defer st.Close()
+	checkLegacySkillNeedsBody(t, st, "-"+uniq())
+}
