@@ -7,6 +7,9 @@ redesign are provisional until then).
 Compatibility rule: every item is additive. A v0.21 client against a 0.5.7 /
 0.6.x server, and a 0.19.x / 0.20.x client against a v0.7 server, keep today's
 behaviour.
+Changes on the way from 0.6.x to v0.7 that narrow access or alter an answer
+(org isolation, key and session rules, onboarding, skills headers, rate
+limiting) are listed in [docs/migration-v0.7.md](../migration-v0.7.md).
 
 ## 1. Shared module (C8)
 

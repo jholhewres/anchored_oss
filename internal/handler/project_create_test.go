@@ -39,7 +39,9 @@ func TestProjectCreate_RequiresValidGitRemote(t *testing.T) {
 	}
 }
 
-func TestProjectCreate_DerivesRemoteAndRejectsEquivalentDuplicate(t *testing.T) {
+// TestProjectCreate_DerivesRemoteAndReturnsEquivalentDuplicate: an equivalent
+// remote answers 200 with the existing project, as v0.6.x did.
+func TestProjectCreate_DerivesRemoteAndReturnsEquivalentDuplicate(t *testing.T) {
 	st := newProjectTestStore(t)
 	orgID, accountID, _ := seedProject(t, st)
 	h := NewProjectHandler(st, slog.Default())
@@ -72,8 +74,15 @@ func TestProjectCreate_DerivesRemoteAndRejectsEquivalentDuplicate(t *testing.T) 
 		duplicate := httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{"name":"Duplicate","slug":"duplicate","repo_url":"`+remote+`"}`)).WithContext(adminCtx(orgID, accountID))
 		duplicateRec := httptest.NewRecorder()
 		h.Create(duplicateRec, duplicate)
-		if duplicateRec.Code != http.StatusConflict {
-			t.Fatalf("equivalent remote %q status = %d, want 409; body=%s", remote, duplicateRec.Code, duplicateRec.Body.String())
+		if duplicateRec.Code != http.StatusOK {
+			t.Fatalf("equivalent remote %q status = %d, want 200; body=%s", remote, duplicateRec.Code, duplicateRec.Body.String())
+		}
+		var existing model.Project
+		if err := json.Unmarshal(duplicateRec.Body.Bytes(), &existing); err != nil {
+			t.Fatalf("decode existing project: %v", err)
+		}
+		if existing.ID != created.ID || existing.Slug != "anchored" {
+			t.Fatalf("equivalent remote %q returned %+v, want the existing project %s", remote, existing, created.ID)
 		}
 	}
 }

@@ -125,8 +125,14 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	remoteKey := projectpkg.DeriveRemoteKey(req.RepoURL)
 	remoteKeyV1 := projectpkg.DeriveLegacyRemoteKey(req.RepoURL)
 
-	if _, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, remoteKey); err == nil {
-		jsonError(w, http.StatusConflict, "a project with this git remote already exists")
+	// The contract released clients rely on (v0.6.x): creating a project
+	// whose remote the org already has answers 200 with that project, and the
+	// caller gets access to it, the same as on the remote_key path.
+	if existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, remoteKey); err == nil {
+		if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, existing.ID); err != nil {
+			h.logger.Error("grant creator access failed", "error", err, "project_id", existing.ID)
+		}
+		jsonResponse(w, http.StatusOK, existing)
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
 		h.logger.Error("project by remote_key lookup failed", "error", err, "org_id", orgID)
