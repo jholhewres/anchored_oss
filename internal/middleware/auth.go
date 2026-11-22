@@ -90,6 +90,27 @@ func Auth(st store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
 				return
 			}
 
+			// A key never outranks its account. Role changes revoke the keys
+			// above the new role, and minting refuses them, but a key minted
+			// in a race with a demotion, or kept from before those rules, is
+			// refused here, as is a key whose account left the org.
+			role, err := st.GetOrgMemberRole(r.Context(), apiKey.OrgID, apiKey.AccountID)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				logger.Error("auth: role lookup failed", "error", err)
+				writeUnauthorized(w)
+				return
+			}
+			if err != nil || !auth.ScopeAllowedForRole(role, apiKey.Scope) {
+				// Revoked as well as refused, so a later promotion does not
+				// bring the key back.
+				logger.Warn("auth: key above its account's role, revoking", "key_id", apiKey.ID, "scope", apiKey.Scope, "role", role)
+				if rerr := st.RevokeAPIKey(r.Context(), apiKey.OrgID, apiKey.ID); rerr != nil && !errors.Is(rerr, store.ErrNotFound) {
+					logger.Error("auth: revoke over-scoped key failed", "key_id", apiKey.ID, "error", rerr)
+				}
+				writeUnauthorized(w)
+				return
+			}
+
 			ctx := context.WithValue(r.Context(), AccountIDKey, apiKey.AccountID)
 			ctx = context.WithValue(ctx, OrgIDKey, apiKey.OrgID)
 			ctx = context.WithValue(ctx, ScopeKey, apiKey.Scope)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jholhewres/anchored_oss/internal/auth"
+
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
 
@@ -22,22 +24,32 @@ func (s *SQLiteStore) UpdateAccount(ctx context.Context, orgID, id, displayName,
 		}
 	}
 	if role != "" {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE org_members SET role = ? WHERE account_id = ? AND org_id = ?`,
-			role, id, orgID,
-		); err != nil {
+		// Only a real change revokes anything: a PATCH that resends the
+		// current role (a rename from the dashboard does) updates no row and
+		// keeps every key.
+		res, err := tx.ExecContext(ctx,
+			`UPDATE org_members SET role = ? WHERE account_id = ? AND org_id = ? AND role <> ?`,
+			role, id, orgID, role,
+		)
+		if err != nil {
 			return fmt.Errorf("update account role: %w", err)
 		}
-		// The new role takes effect now: the login session (re-minted with the
-		// new scope at the next login) and every key above the role go.
-		above := scopesAboveRole(role)
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE api_keys SET revoked_at = datetime('now')
-			 WHERE account_id = ? AND org_id = ? AND revoked_at IS NULL
-			   AND (name = 'session' OR scope = ? OR scope = ?)`,
-			id, orgID, above[0], above[1],
-		); err != nil {
-			return fmt.Errorf("revoke keys above the new role: %w", err)
+		changed, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("update account role rows affected: %w", err)
+		}
+		if changed > 0 {
+			// The new role takes effect now: the login session (re-minted with the
+			// new scope at the next login) and every key above the role go.
+			above := auth.ScopesAboveRole(role)
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE api_keys SET revoked_at = datetime('now')
+				 WHERE account_id = ? AND org_id = ? AND revoked_at IS NULL
+				   AND (name = 'session' OR scope = ? OR scope = ?)`,
+				id, orgID, above[0], above[1],
+			); err != nil {
+				return fmt.Errorf("revoke keys above the new role: %w", err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

@@ -78,3 +78,18 @@ func TestAccountRoleChangeAndDelete_Postgres(t *testing.T) {
 		t.Fatalf("readonly key after delete: err = %v, want revoked", err)
 	}
 }
+
+// TestUpdateAccount_SameRoleKeepsKeys_Postgres is the Postgres twin of
+// TestUpdateAccount_SameRoleKeepsKeys.
+func TestUpdateAccount_SameRoleKeepsKeys_Postgres(t *testing.T) {
+	dsn := os.Getenv("ANCHORED_TEST_DSN")
+	if dsn == "" {
+		t.Skip("ANCHORED_TEST_DSN not set; skipping Postgres rename test")
+	}
+	st, err := NewPostgresStore(PoolConfig{DSN: dsn})
+	if err != nil {
+		t.Fatalf("open postgres store: %v", err)
+	}
+	defer st.Close()
+	checkSameRoleKeepsKeys(t, st, "-"+uniq())
+}

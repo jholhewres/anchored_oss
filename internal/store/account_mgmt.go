@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jholhewres/anchored_oss/internal/auth"
+
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
 
 // UpdateAccount updates display_name and/or role for the given account.
-// An empty string for either field means "no change".
+// An empty string for either field means "no change", and so does a role equal
+// to the current one: only a real role change revokes the login session and
+// the keys above the new role.
 func (s *PostgresStore) UpdateAccount(ctx context.Context, orgID, id, displayName, role string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -24,22 +28,33 @@ func (s *PostgresStore) UpdateAccount(ctx context.Context, orgID, id, displayNam
 		}
 	}
 	if role != "" {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE org_members SET role = $1 WHERE account_id = $2 AND org_id = $3`,
+		// Only a real change revokes anything: a PATCH that resends the
+		// current role (a rename from the dashboard does) updates no row and
+		// keeps every key. One conditional statement, so a concurrent role
+		// change cannot slip between a read and the write.
+		res, err := tx.ExecContext(ctx,
+			`UPDATE org_members SET role = $1 WHERE account_id = $2 AND org_id = $3 AND role <> $1`,
 			role, id, orgID,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("update account role: %w", err)
 		}
-		// The new role takes effect now: the login session (re-minted with the
-		// new scope at the next login) and every key above the role go.
-		above := scopesAboveRole(role)
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE api_keys SET revoked_at = now()
-			 WHERE account_id = $1 AND org_id = $2 AND revoked_at IS NULL
-			   AND (name = 'session' OR scope = $3 OR scope = $4)`,
-			id, orgID, above[0], above[1],
-		); err != nil {
-			return fmt.Errorf("revoke keys above the new role: %w", err)
+		changed, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("update account role rows affected: %w", err)
+		}
+		if changed > 0 {
+			// The new role takes effect now: the login session (re-minted with the
+			// new scope at the next login) and every key above the role go.
+			above := auth.ScopesAboveRole(role)
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE api_keys SET revoked_at = now()
+				 WHERE account_id = $1 AND org_id = $2 AND revoked_at IS NULL
+				   AND (name = 'session' OR scope = $3 OR scope = $4)`,
+				id, orgID, above[0], above[1],
+			); err != nil {
+				return fmt.Errorf("revoke keys above the new role: %w", err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -214,19 +229,4 @@ func (s *PostgresStore) SetAccountProjects(ctx context.Context, orgID, accountID
 	}
 
 	return tx.Commit()
-}
-
-// scopesAboveRole lists the key scopes an org role may no longer hold, padded
-// to two entries for the revocation query. admin keeps every scope; sync (and
-// "member", whose login scope is sync) loses admin; readonly, or any role the
-// store does not know, loses admin and sync.
-func scopesAboveRole(role string) [2]string {
-	switch role {
-	case "admin":
-		return [2]string{"", ""}
-	case "sync", "member":
-		return [2]string{"admin", ""}
-	default:
-		return [2]string{"admin", "sync"}
-	}
 }

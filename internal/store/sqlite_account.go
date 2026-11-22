@@ -171,3 +171,20 @@ func (s *SQLiteStore) ListAccountsByOrg(ctx context.Context, orgID string) ([]*m
 	}
 	return out, nil
 }
+
+// GetOrgMemberRole returns accountID's role in orgID, or ErrNotFound when it is
+// not a member.
+func (s *SQLiteStore) GetOrgMemberRole(ctx context.Context, orgID, accountID string) (string, error) {
+	var role string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT role FROM org_members WHERE org_id = ? AND account_id = ?`,
+		orgID, accountID,
+	).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get organization member role: %w", err)
+	}
+	return role, nil
+}

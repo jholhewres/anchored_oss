@@ -22,6 +22,9 @@ type Store interface {
 	GetAccountOrgID(ctx context.Context, accountID string) (string, error)
 	GetAccountOrgMembership(ctx context.Context, accountID string) (orgID, role string, err error)
 	IsOrgMember(ctx context.Context, orgID, accountID string) (bool, error)
+	// GetOrgMemberRole returns accountID's role in orgID; ErrNotFound when
+	// it is not a member.
+	GetOrgMemberRole(ctx context.Context, orgID, accountID string) (string, error)
 	SetAccountPassword(ctx context.Context, accountID, passwordHash string) error
 	GetOrCreateAccountByEmail(ctx context.Context, orgID, email, displayName string) (account *model.Account, created bool, err error)
 	ListAccountsByOrg(ctx context.Context, orgID string) ([]*model.AccountWithRole, error)

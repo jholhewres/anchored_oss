@@ -83,14 +83,20 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	member, err := h.store.IsOrgMember(r.Context(), orgID, req.AccountID)
+	role, err := h.store.GetOrgMemberRole(r.Context(), orgID, req.AccountID)
+	if errors.Is(err, store.ErrNotFound) {
+		jsonError(w, http.StatusNotFound, "account not found")
+		return
+	}
 	if err != nil {
 		h.logger.Error("check api key account membership failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if !member {
-		jsonError(w, http.StatusNotFound, "account not found")
+	// A key never outranks its account: a role change revokes the keys above
+	// the new role, and minting one above the current role would undo that.
+	if !auth.ScopeAllowedForRole(role, req.Scope) {
+		jsonError(w, http.StatusBadRequest, "scope exceeds the account's role")
 		return
 	}
 
@@ -112,6 +118,19 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to store API key", "error", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	// An admin minting a key in another account's name leaves a trace. Only
+	// metadata: never the secret or its hash.
+	if err := h.store.AppendAudit(r.Context(), &model.AuditEntry{
+		OrgID:      orgID,
+		ActorID:    middleware.GetAccountID(r.Context()),
+		Action:     "api_key.created",
+		TargetType: "api_key",
+		TargetID:   apiKey.ID,
+		Metadata:   map[string]string{"account_id": req.AccountID, "scope": apiKey.Scope, "name": apiKey.Name},
+	}); err != nil {
+		h.logger.Error("audit api key create failed", "error", err)
 	}
 
 	resp := createKeyResponse{
