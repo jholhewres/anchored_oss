@@ -10,7 +10,11 @@ import (
 )
 
 func TestSkillsVersioningAttachmentsAndRuntimeFiltering(t *testing.T) {
-	st := newSQLiteTestStore(t)
+	checkSkillsVersioningAttachmentsAndRuntimeFiltering(t, newSQLiteTestStore(t))
+}
+
+func checkSkillsVersioningAttachmentsAndRuntimeFiltering(t *testing.T, st Store) {
+	t.Helper()
 	ctx := context.Background()
 	orgID, accountID := projectTestOrg(t, st)
 	project, err := st.CreateProject(ctx, orgID, "Repo", "repo", "repo-key", "", "", accountID, "other")
@@ -57,7 +61,11 @@ func TestSkillsVersioningAttachmentsAndRuntimeFiltering(t *testing.T) {
 }
 
 func TestSkillsAttachmentRejectsCrossOrgSkillAndRevokeHidesIt(t *testing.T) {
-	st := newSQLiteTestStore(t)
+	checkSkillsAttachmentRejectsCrossOrgSkillAndRevokeHidesIt(t, newSQLiteTestStore(t))
+}
+
+func checkSkillsAttachmentRejectsCrossOrgSkillAndRevokeHidesIt(t *testing.T, st Store) {
+	t.Helper()
 	ctx := context.Background()
 	orgID, accountID := projectTestOrg(t, st)
 	project, err := st.CreateProject(ctx, orgID, "Repo", "repo", "repo-key", "", "", accountID, "other")
@@ -91,7 +99,11 @@ func TestSkillsAttachmentRejectsCrossOrgSkillAndRevokeHidesIt(t *testing.T) {
 }
 
 func TestProjectSkillAttachmentsIncludeInactiveAndRevokedButStayOrgScoped(t *testing.T) {
-	st := newSQLiteTestStore(t)
+	checkProjectSkillAttachmentsIncludeInactiveAndRevokedButStayOrgScoped(t, newSQLiteTestStore(t))
+}
+
+func checkProjectSkillAttachmentsIncludeInactiveAndRevokedButStayOrgScoped(t *testing.T, st Store) {
+	t.Helper()
 	ctx := context.Background()
 	orgID, accountID := projectTestOrg(t, st)
 	project, err := st.CreateProject(ctx, orgID, "Repo", "repo", "repo-key", "", "", accountID, "other")
@@ -142,7 +154,11 @@ func TestProjectSkillAttachmentsIncludeInactiveAndRevokedButStayOrgScoped(t *tes
 }
 
 func TestReplaceProjectSkillsPreservesExistingRevokedButRejectsNewRevoked(t *testing.T) {
-	st := newSQLiteTestStore(t)
+	checkReplaceProjectSkillsPreservesExistingRevokedButRejectsNewRevoked(t, newSQLiteTestStore(t))
+}
+
+func checkReplaceProjectSkillsPreservesExistingRevokedButRejectsNewRevoked(t *testing.T, st Store) {
+	t.Helper()
 	ctx := context.Background()
 	orgID, accountID := projectTestOrg(t, st)
 	project, err := st.CreateProject(ctx, orgID, "Repo", "repo", "repo-key", "", "", accountID, "other")
@@ -189,7 +205,11 @@ func TestReplaceProjectSkillsPreservesExistingRevokedButRejectsNewRevoked(t *tes
 }
 
 func TestSkillStoreRejectsTerminalStatusOutsideRevoke(t *testing.T) {
-	st := newSQLiteTestStore(t)
+	checkSkillStoreRejectsTerminalStatusOutsideRevoke(t, newSQLiteTestStore(t))
+}
+
+func checkSkillStoreRejectsTerminalStatusOutsideRevoke(t *testing.T, st Store) {
+	t.Helper()
 	ctx := context.Background()
 	orgID, accountID := projectTestOrg(t, st)
 	revoked := &model.Skill{OrgID: orgID, Name: "Invalid", Slug: "invalid", Purpose: "invalid", Status: model.SkillStatusRevoked, CreatedBy: accountID}
@@ -207,7 +227,11 @@ func TestSkillStoreRejectsTerminalStatusOutsideRevoke(t *testing.T) {
 }
 
 func TestReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp(t *testing.T) {
-	st := newSQLiteTestStore(t)
+	checkReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp(t, newSQLiteTestStore(t))
+}
+
+func checkReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp(t *testing.T, st Store) {
+	t.Helper()
 	ctx := context.Background()
 	orgID, accountID := projectTestOrg(t, st)
 	project, err := st.CreateProject(ctx, orgID, "Repo", "repo", "repo-key", "", "", accountID, "other")
@@ -222,9 +246,10 @@ func TestReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp(t *testing.T)
 		t.Fatal(err)
 	}
 	const attachedAt = "2001-02-03 04:05:06"
-	if _, err := st.db.ExecContext(ctx, `UPDATE project_skills SET created_at = ? WHERE project_id = ? AND skill_id = ?`, attachedAt, project.ID, skill.ID); err != nil {
-		t.Fatalf("set attachment timestamp: %v", err)
-	}
+	execRaw(t, st,
+		`UPDATE project_skills SET created_at = ? WHERE project_id = ? AND skill_id = ?`,
+		`UPDATE project_skills SET created_at = $1 WHERE project_id = $2 AND skill_id = $3`,
+		attachedAt, project.ID, skill.ID)
 	if _, err := st.ReplaceProjectSkills(ctx, orgID, project.ID, []string{skill.ID}); err != nil {
 		t.Fatalf("keep unchanged attachment: %v", err)
 	}
@@ -238,5 +263,23 @@ func TestReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp(t *testing.T)
 	}
 	if !attachments[0].AttachedAt.Equal(want) {
 		t.Fatalf("attached_at = %s, want %s", attachments[0].AttachedAt, want)
+	}
+}
+
+// execRaw runs one statement directly on either backend, for test setup no
+// store method offers.
+func execRaw(t *testing.T, st Store, sqliteQuery, pgQuery string, args ...any) {
+	t.Helper()
+	var err error
+	switch s := st.(type) {
+	case *SQLiteStore:
+		_, err = s.db.Exec(sqliteQuery, args...)
+	case *PostgresStore:
+		_, err = s.db.Exec(pgQuery, args...)
+	default:
+		t.Fatalf("execRaw: unsupported store %T", st)
+	}
+	if err != nil {
+		t.Fatalf("exec raw: %v", err)
 	}
 }

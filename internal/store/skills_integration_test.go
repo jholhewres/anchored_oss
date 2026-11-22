@@ -166,3 +166,30 @@ func TestUpdateSkill_LegacyRowNeedsABodyForFrontmatter_Postgres(t *testing.T) {
 	defer st.Close()
 	checkLegacySkillNeedsBody(t, st, "-"+uniq())
 }
+
+// Postgres twins of the SQLite skill store tests, each on a database of its
+// own (the checks use fixed slugs).
+
+func TestSkillsVersioningAttachmentsAndRuntimeFiltering_Postgres(t *testing.T) {
+	checkSkillsVersioningAttachmentsAndRuntimeFiltering(t, freshPostgresStore(t))
+}
+
+func TestSkillsAttachmentRejectsCrossOrgSkillAndRevokeHidesIt_Postgres(t *testing.T) {
+	checkSkillsAttachmentRejectsCrossOrgSkillAndRevokeHidesIt(t, freshPostgresStore(t))
+}
+
+func TestProjectSkillAttachmentsIncludeInactiveAndRevokedButStayOrgScoped_Postgres(t *testing.T) {
+	checkProjectSkillAttachmentsIncludeInactiveAndRevokedButStayOrgScoped(t, freshPostgresStore(t))
+}
+
+func TestReplaceProjectSkillsPreservesExistingRevokedButRejectsNewRevoked_Postgres(t *testing.T) {
+	checkReplaceProjectSkillsPreservesExistingRevokedButRejectsNewRevoked(t, freshPostgresStore(t))
+}
+
+func TestSkillStoreRejectsTerminalStatusOutsideRevoke_Postgres(t *testing.T) {
+	checkSkillStoreRejectsTerminalStatusOutsideRevoke(t, freshPostgresStore(t))
+}
+
+func TestReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp_Postgres(t *testing.T) {
+	checkReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp(t, freshPostgresStore(t))
+}

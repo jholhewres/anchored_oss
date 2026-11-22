@@ -23,17 +23,32 @@ func onboardingBootstrapInput() OnboardingBootstrapInput {
 	}
 }
 
-func onboardingTableCount(t *testing.T, st *SQLiteStore, table string) int {
+func onboardingTableCount(t *testing.T, st Store, table string) int {
 	t.Helper()
 	var count int
-	if err := st.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+	var err error
+	switch s := st.(type) {
+	case *SQLiteStore:
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count)
+	case *PostgresStore:
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count)
+	default:
+		t.Fatalf("onboardingTableCount: unsupported store %T", st)
+	}
+	if err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return count
 }
 
 func TestSQLiteBootstrapOnboardingCreatesAllResources(t *testing.T) {
-	st := newSQLiteTestStore(t)
+	checkBootstrapOnboardingCreatesAllResources(t, newSQLiteTestStore(t))
+}
+
+// checkBootstrapOnboardingCreatesAllResources needs a store with no
+// organization yet (a first run).
+func checkBootstrapOnboardingCreatesAllResources(t *testing.T, st Store) {
+	t.Helper()
 	result, err := st.BootstrapOnboarding(context.Background(), onboardingBootstrapInput())
 	if err != nil {
 		t.Fatalf("bootstrap onboarding: %v", err)
@@ -68,6 +83,13 @@ func TestSQLiteBootstrapOnboardingRollsBackInjectedProjectFailure(t *testing.T) 
 		BEFORE INSERT ON projects BEGIN SELECT RAISE(ABORT, 'injected project failure'); END`); err != nil {
 		t.Fatalf("create failure trigger: %v", err)
 	}
+	checkBootstrapOnboardingRollsBack(t, st)
+}
+
+// checkBootstrapOnboardingRollsBack expects a store whose project inserts fail
+// (a trigger the caller installed) and no organization yet.
+func checkBootstrapOnboardingRollsBack(t *testing.T, st Store) {
+	t.Helper()
 
 	if _, err := st.BootstrapOnboarding(context.Background(), onboardingBootstrapInput()); err == nil {
 		t.Fatal("bootstrap unexpectedly succeeded")

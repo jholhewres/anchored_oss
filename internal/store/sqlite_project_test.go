@@ -12,7 +12,7 @@ import (
 )
 
 // projectTestOrg creates an org + account and returns their IDs.
-func projectTestOrg(t *testing.T, st *SQLiteStore) (orgID, acctID string) {
+func projectTestOrg(t *testing.T, st Store) (orgID, acctID string) {
 	t.Helper()
 	ctx := context.Background()
 	org, err := st.CreateOrganization(ctx, "Acme", "acme")

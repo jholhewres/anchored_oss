@@ -27,16 +27,9 @@ func uniq() string {
 // KNN ranking. Requires a pgvector-enabled Postgres; set ANCHORED_TEST_DSN,
 // e.g. ANCHORED_TEST_DSN=postgres://anchored:anchored@localhost:55433/anchored_oss?sslmode=disable
 func TestVectorSearch_Postgres(t *testing.T) {
-	dsn := os.Getenv("ANCHORED_TEST_DSN")
-	if dsn == "" {
-		t.Skip("ANCHORED_TEST_DSN not set; skipping pgvector integration test")
-	}
-
-	st, err := NewPostgresStore(PoolConfig{DSN: dsn})
-	if err != nil {
-		t.Fatalf("open postgres store (migrations include pgvector 011): %v", err)
-	}
-	defer st.Close()
+	// A database of its own: the memory ids below are fixed, so a shared
+	// database would refuse them on a second run.
+	st := freshPostgresStore(t)
 
 	ctx := context.Background()
 	u := uniq()
