@@ -33,15 +33,24 @@ quota:
   max_storage_bytes: 0
 
 rate_limit:
-  # Per-client token-bucket limiter (client = first X-Forwarded-For hop, else
-  # RemoteAddr). The global bucket guards every endpoint; the auth bucket is a
-  # stricter limit on /v1/auth/login and /v1/auth/register against brute force.
-  # Override with RATE_LIMIT_ENABLED and RATE_LIMIT_RPM.
+  # Per-client token-bucket limiter. The client is the connection's IP, or,
+  # when the connection comes from one of trusted_proxies, the nearest
+  # untrusted X-Forwarded-For hop. The global bucket guards every endpoint; the
+  # auth bucket is a stricter limit on login, register and onboarding against
+  # brute force. Override with RATE_LIMIT_ENABLED, RATE_LIMIT_RPM and
+  # RATE_LIMIT_TRUSTED_PROXIES (comma-separated; empty trusts none).
   enabled: true
   requests_per_minute: 600
   burst: 120
   auth_requests_per_minute: 10
   auth_burst: 5
+  # None by default: the server is reached directly and X-Forwarded-For is
+  # ignored. Behind a reverse proxy, list the address it connects from, or
+  # every client shares the proxy's bucket. List the proxy's own address, as
+  # narrowly as you can: ["127.0.0.1"] for one on the same host, its container
+  # IP or user-defined network subnet for one on Docker. Avoid a whole private
+  # range: the Docker gateway relays direct clients from such an address too.
+  trusted_proxies: []
 
 audit:
   # Audit retention sweep. Entries older than retention_days are deleted every

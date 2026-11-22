@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -38,6 +39,10 @@ type RateLimitConfig struct {
 	Burst                 int  `yaml:"burst"`
 	AuthRequestsPerMinute int  `yaml:"auth_requests_per_minute"`
 	AuthBurst             int  `yaml:"auth_burst"`
+	// TrustedProxies are the networks (CIDRs or IPs) whose X-Forwarded-For
+	// names the client. Requests from anywhere else are limited by their
+	// connection's IP, whatever the header says.
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 // AuditConfig bounds audit_log growth. A purge sweep deletes entries older than
@@ -127,6 +132,10 @@ func DefaultConfig() *Config {
 			Burst:                 120,
 			AuthRequestsPerMinute: 10,
 			AuthBurst:             5,
+			// No proxy is trusted by default: the installer and the Compose
+			// file expose the server directly, so X-Forwarded-For is whatever
+			// the client wrote. Behind a reverse proxy, list its address.
+			TrustedProxies: nil,
 		},
 		Audit: AuditConfig{
 			RetentionDays: 90,
@@ -177,6 +186,9 @@ func Load(path string) (*Config, error) {
 
 	applyEnvOverrides(cfg)
 
+	if _, err := cfg.RateLimit.TrustedNets(); err != nil {
+		return nil, err
+	}
 	if cfg.Database.DSN == "" {
 		return nil, fmt.Errorf("database dsn is required: set database.dsn in %s or DATABASE_URL", path)
 	}
@@ -207,6 +219,9 @@ func applyEnvOverrides(cfg *Config) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.RateLimit.RequestsPerMinute = n
 		}
+	}
+	if v, ok := os.LookupEnv("RATE_LIMIT_TRUSTED_PROXIES"); ok {
+		cfg.RateLimit.TrustedProxies = parseCSV(v)
 	}
 	if v := os.Getenv("AUDIT_RETENTION_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -240,4 +255,35 @@ func parseCSV(s string) []string {
 		}
 	}
 	return result
+}
+
+// TrustedNets parses TrustedProxies (CIDRs or single IPs) into networks.
+// Load calls it, so a typo stops startup instead of quietly changing who is
+// trusted.
+func (c RateLimitConfig) TrustedNets() ([]*net.IPNet, error) {
+	nets := make([]*net.IPNet, 0, len(c.TrustedProxies))
+	for _, e := range c.TrustedProxies {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if strings.Contains(e, "/") {
+			_, n, err := net.ParseCIDR(e)
+			if err != nil {
+				return nil, fmt.Errorf("rate_limit.trusted_proxies: %q is not a CIDR: %w", e, err)
+			}
+			nets = append(nets, n)
+			continue
+		}
+		ip := net.ParseIP(e)
+		if ip == nil {
+			return nil, fmt.Errorf("rate_limit.trusted_proxies: %q is not an IP or CIDR", e)
+		}
+		bits := 128
+		if v4 := ip.To4(); v4 != nil {
+			ip, bits = v4, 32
+		}
+		nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+	return nets, nil
 }

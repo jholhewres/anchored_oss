@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -92,16 +94,89 @@ func TestRateLimiter_Middleware429(t *testing.T) {
 }
 
 func TestClientKey_ForwardedFor(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "10.0.0.9:1234"
-	req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.9")
-	if got := clientKey(req); got != "203.0.113.7" {
-		t.Fatalf("expected first XFF hop 203.0.113.7, got %q", got)
+	rl := NewRateLimiter(context.Background(), 0, 0)
+	rl.TrustProxies(nets(t, "10.0.0.0/8", "192.168.0.0/16", "127.0.0.1/32"))
+	for _, tc := range []struct {
+		name, remote, xff, want string
+	}{
+		{"proxy appends the client", "10.0.0.9:1234", "203.0.113.7, 10.0.0.9", "203.0.113.7"},
+		{"a client's own hops sit left of the real one", "10.0.0.9:1234", "198.51.100.1, 203.0.113.7", "203.0.113.7"},
+		{"no header from a proxy", "192.168.1.5:9999", "", "192.168.1.5"},
+		{"untrusted connection ignores the header", "203.0.113.50:4000", "198.51.100.1", "203.0.113.50"},
+		{"malformed hop stops the walk", "127.0.0.1:80", "not-an-ip", "127.0.0.1"},
+		{"all hops trusted", "127.0.0.1:80", "192.168.1.7, 10.0.0.2", "192.168.1.7"},
+		{"IPv6 clients share their /64", "[2001:db8:1:2:aaaa::1]:443", "", "2001:db8:1:2::/64"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = tc.remote
+		if tc.xff != "" {
+			req.Header.Set("X-Forwarded-For", tc.xff)
+		}
+		if got := rl.clientKey(req); got != tc.want {
+			t.Errorf("%s: clientKey = %q, want %q", tc.name, got, tc.want)
+		}
 	}
+}
 
-	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
-	req2.RemoteAddr = "192.168.1.5:9999"
-	if got := clientKey(req2); got != "192.168.1.5" {
-		t.Fatalf("expected RemoteAddr host 192.168.1.5, got %q", got)
+// TestRateLimit_SpoofedForwardedForDoesNotEscape: a client that is not a
+// trusted proxy gets one bucket, whatever X-Forwarded-For it sends.
+func TestRateLimit_SpoofedForwardedForDoesNotEscape(t *testing.T) {
+	rl := NewRateLimiter(context.Background(), 60, 2)
+	rl.TrustProxies(nets(t, "10.0.0.0/8"))
+	h := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	limited := false
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/onboarding/complete", nil)
+		req.RemoteAddr = "203.0.113.50:4000"
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Fatal("a rotating X-Forwarded-For from an untrusted client escaped the limit")
+	}
+}
+
+// nets parses CIDRs for the tests.
+func nets(t *testing.T, cidrs ...string) []*net.IPNet {
+	t.Helper()
+	out := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// TestRateLimit_WarnsOnceAboutAnUntrustedProxy: forwarded requests from a
+// private address that is not trusted are keyed on that address, and the
+// operator is told once.
+func TestRateLimit_WarnsOnceAboutAnUntrustedProxy(t *testing.T) {
+	rl := NewRateLimiter(context.Background(), 0, 0)
+	var warned []string
+	rl.WarnUntrustedProxy(func(remote string) { warned = append(warned, remote) })
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "172.18.0.5:5000"
+		req.Header.Set("X-Forwarded-For", "203.0.113.7")
+		if got := rl.clientKey(req); got != "172.18.0.5" {
+			t.Fatalf("clientKey = %q, want the untrusted peer 172.18.0.5", got)
+		}
+	}
+	public := httptest.NewRequest(http.MethodGet, "/", nil)
+	public.RemoteAddr = "203.0.113.50:5000"
+	public.Header.Set("X-Forwarded-For", "198.51.100.1")
+	rl.clientKey(public)
+	if len(warned) != 1 || warned[0] != "172.18.0.5" {
+		t.Fatalf("warnings = %v, want one about 172.18.0.5", warned)
 	}
 }

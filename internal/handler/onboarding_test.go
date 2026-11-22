@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -111,5 +112,78 @@ func TestOnboarding_CreatesOnlyRemoteBackedProjects(t *testing.T) {
 	h.Complete(secondRec, second)
 	if secondRec.Code != http.StatusConflict {
 		t.Errorf("second onboarding status = %d, want 409; body=%s", secondRec.Code, secondRec.Body.String())
+	}
+}
+
+// bootstrapCountingStore counts the bootstrap calls that reach the store, each
+// one a request on which the handler already decoded the body and ran bcrypt.
+type bootstrapCountingStore struct {
+	*store.SQLiteStore
+	bootstraps int
+}
+
+func (s *bootstrapCountingStore) BootstrapOnboarding(ctx context.Context, in store.OnboardingBootstrapInput) (*store.OnboardingBootstrapResult, error) {
+	s.bootstraps++
+	return s.SQLiteStore.BootstrapOnboarding(ctx, in)
+}
+
+// TestOnboarding_SetUpInstanceAnswersBeforeAnyWork (attack h1 of run
+// 20261122T183109Z, h5 of 20261122T194933Z): once an org exists, the
+// unauthenticated onboarding call answers 409 before decoding the body or
+// hashing the password, however large or valid the body is.
+func TestOnboarding_SetUpInstanceAnswersBeforeAnyWork(t *testing.T) {
+	sqlite, _ := newOnboardingTestStore(t)
+	if _, err := sqlite.CreateOrganization(context.Background(), "Existing", "existing"); err != nil {
+		t.Fatal(err)
+	}
+	st := &bootstrapCountingStore{SQLiteStore: sqlite}
+	h := NewOnboardingHandler(st, slog.Default())
+	valid := `{"org":{"name":"Intruder","slug":"intruder"},"admin":{"email":"intruder@example.test","password":"password123","display_name":"Intruder"},"projects":[{"name":"P","category":"service","repo_url":"https://git.example.test/team/p.git"}]}`
+	for _, body := range []string{valid, strings.Repeat("x", 1<<20)} {
+		rec := httptest.NewRecorder()
+		h.Complete(rec, httptest.NewRequest(http.MethodPost, "/v1/onboarding/complete", strings.NewReader(body)))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("onboarding on a set-up instance = %d, want 409; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	if st.bootstraps != 0 {
+		t.Fatalf("a set-up instance reached BootstrapOnboarding %d times; the first-run check must come first", st.bootstraps)
+	}
+}
+
+// TestOnboarding_CapsTheBody: on a fresh instance the body is capped, so an
+// unauthenticated caller cannot make the server decode megabytes.
+func TestOnboarding_CapsTheBody(t *testing.T) {
+	st, _ := newOnboardingTestStore(t)
+	h := NewOnboardingHandler(st, slog.Default())
+	huge := `{"org":{"name":"` + strings.Repeat("a", maxOnboardingBodyBytes) + `"}}`
+	rec := httptest.NewRecorder()
+	h.Complete(rec, httptest.NewRequest(http.MethodPost, "/v1/onboarding/complete", strings.NewReader(huge)))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized onboarding body = %d, want 413; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestOnboarding_RejectsNULBeforeHashing: a NUL that Postgres would refuse is a
+// 400 before bcrypt runs, not a 500 after it (attack h4, run 20261122T211908Z).
+func TestOnboarding_RejectsNULBeforeHashing(t *testing.T) {
+	sqlite, _ := newOnboardingTestStore(t)
+	st := &bootstrapCountingStore{SQLiteStore: sqlite}
+	h := NewOnboardingHandler(st, slog.Default())
+	for _, body := range []string{
+		`{"org":{"name":"Acme"},"admin":{"email":"a@example.test","password":"password123","display_name":"A\u0000"},"projects":[{"name":"P","category":"service","repo_url":"https://git.example.test/team/p.git"}]}`,
+		`{"org":{"name":"Acme\u0000"},"admin":{"email":"a@example.test","password":"password123","display_name":"A"},"projects":[{"name":"P","category":"service","repo_url":"https://git.example.test/team/p.git"}]}`,
+		`{"org":{"name":"Acme"},"admin":{"email":"a@example.test","password":"password123","display_name":"A"},"projects":[{"name":"P\u0000","category":"service","repo_url":"https://git.example.test/team/p.git"}]}`,
+		`{"org":{"name":"Acme"},"admin":{"email":"a@example.test","password":"password123","display_name":"A"},"projects":[{"name":"P","category":"service","repo_url":"https://git.example.test/team/p.git\u0000"}]}`,
+		`{"org":{"name":"Acme"},"admin":{"email":"a@example.test","password":"password123","display_name":"A"},"projects":[{"name":"P","category":"service","repo_url":"git@git.example.test:team/p\u0000.git"}]}`,
+	} {
+		rec := httptest.NewRecorder()
+		h.Complete(rec, httptest.NewRequest(http.MethodPost, "/v1/onboarding/complete", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("onboarding with a NUL = %d, want 400; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	if st.bootstraps != 0 {
+		t.Fatalf("a NUL body reached BootstrapOnboarding %d times", st.bootstraps)
 	}
 }

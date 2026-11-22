@@ -62,6 +62,7 @@ Configuration can be supplied via `config.yaml` (see
 | `MODE` | `mode.type` | `selfhosted` (default) or `cloud`. |
 | `CORS_ALLOWED_ORIGINS` | `cors.allowed_origins` | Comma-separated explicit origins. |
 | `RATE_LIMIT_ENABLED` / `RATE_LIMIT_RPM` | `rate_limit.*` | Token-bucket limiter. |
+| `RATE_LIMIT_TRUSTED_PROXIES` | `rate_limit.trusted_proxies` | Networks whose `X-Forwarded-For` names the client (comma-separated CIDRs or IPs). Default: none, so `X-Forwarded-For` is ignored. Behind a reverse proxy, set the address it connects from (e.g. `127.0.0.1`), or every client shares the proxy's bucket. |
 
 ### Storage backends
 

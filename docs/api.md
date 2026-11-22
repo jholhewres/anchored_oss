@@ -600,12 +600,12 @@ The `always_on` guardrails (`secret_detection`, `local_path_redaction`,
 #### Unauthenticated setup & auth
 
 These support first-run bootstrap and the dashboard login/registration flow.
-The auth routes are rate-limited.
+The setup and auth routes share a stricter rate limit.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | `GET` | `/v1/bootstrap-status` | none | `{bootstrapped: bool}` — whether any account exists yet. |
-| `POST` | `/v1/onboarding/complete` | none | First-run admin/org creation. |
+| `POST` | `/v1/onboarding/complete` | none | First-run admin/org creation. `409` once an organization exists, before the body is read; body capped at 16 KiB (`413`). |
 | `POST` | `/v1/auth/login` | none | Email+password → mints an `admin` session token `{api_key, account_id, org_id, scope}`. |
 | `POST` | `/v1/auth/register` | none | Self-service registration (when enabled). |
 | `GET` | `/install`, `/install-oss` | none | Serve the install shell scripts. |

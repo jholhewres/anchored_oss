@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -259,5 +260,60 @@ func TestAuthRefusesAKeyAboveItsAccountsRole(t *testing.T) {
 	readonly := plant("readonly")
 	if code, _ := call(t, ts, http.MethodGet, "/v1/me", readonly, ""); code != http.StatusOK {
 		t.Fatalf("readonly key of a readonly account = %d, want 200", code)
+	}
+}
+
+// TestOnboardingIsBehindTheAuthRateLimit: the unauthenticated onboarding route
+// shares the stricter auth bucket with login and register.
+func TestOnboardingIsBehindTheAuthRateLimit(t *testing.T) {
+	ts, _, _ := accountLifecycleServer(t, "owner@example.test")
+	burst := config.DefaultConfig().RateLimit.AuthBurst
+	limited := false
+	for i := 0; i <= burst+1; i++ {
+		code, _ := call(t, ts, http.MethodPost, "/v1/onboarding/complete", "", `{}`)
+		if code == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+		if code != http.StatusConflict {
+			t.Fatalf("onboarding call %d on a set-up instance = %d, want 409 until limited", i, code)
+		}
+	}
+	if !limited {
+		t.Fatalf("%d onboarding calls never hit the auth rate limit (burst %d)", burst+2, burst)
+	}
+}
+
+// TestAuthBucketIgnoresSpoofedForwardedFor (attack h1, run 20261122T211908Z):
+// with no trusted proxy configured (the default), a caller rotating
+// X-Forwarded-For still runs out of its one auth bucket.
+func TestAuthBucketIgnoresSpoofedForwardedFor(t *testing.T) {
+	ts, _, _ := accountLifecycleServer(t, "owner@example.test")
+	burst := config.DefaultConfig().RateLimit.AuthBurst
+	attempts := burst * 4
+	allowed := 0
+	for i := 0; i < attempts; i++ {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/onboarding/complete", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i+1))
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusTooManyRequests:
+		case http.StatusConflict:
+			allowed++
+		default:
+			t.Fatalf("onboarding call %d = %d, want 409 or 429", i, resp.StatusCode)
+		}
+	}
+	// One token of slack for refill while the loop runs.
+	if allowed > burst+1 {
+		t.Fatalf("%d of %d calls from one peer passed the auth bucket (burst %d) by rotating X-Forwarded-For", allowed, attempts, burst)
 	}
 }

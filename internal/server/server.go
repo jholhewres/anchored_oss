@@ -48,6 +48,18 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	}
 	globalRL := middleware.NewRateLimiter(ctx, globalRPM, cfg.RateLimit.Burst)
 	authRL := middleware.NewRateLimiter(ctx, authRPM, cfg.RateLimit.AuthBurst)
+	// config.Load refuses a list that does not parse; one built in code
+	// that does trusts no proxy.
+	trusted, err := cfg.RateLimit.TrustedNets()
+	if err != nil {
+		logger.Error("rate limit: invalid trusted_proxies, trusting none", "error", err)
+		trusted = nil
+	}
+	globalRL.TrustProxies(trusted)
+	authRL.TrustProxies(trusted)
+	globalRL.WarnUntrustedProxy(func(remote string) {
+		logger.Warn("rate limit: X-Forwarded-For from an untrusted private address is ignored, so every client behind it shares one bucket; list the proxy in rate_limit.trusted_proxies (RATE_LIMIT_TRUSTED_PROXIES)", "remote", remote)
+	})
 
 	healthHandler := handler.NewHealthHandler(version.Version, st)
 	mux.HandleFunc("GET /v1/health", healthHandler.ServeHTTP)
@@ -56,7 +68,8 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	mux.HandleFunc("GET /v1/bootstrap-status", bootstrapStatusHandler.Get)
 
 	onboardingHandler := handler.NewOnboardingHandler(st, logger)
-	mux.HandleFunc("POST /v1/onboarding/complete", onboardingHandler.Complete)
+	// Unauthenticated and runs bcrypt on first run: the stricter auth bucket.
+	mux.Handle("POST /v1/onboarding/complete", authRL.Middleware(http.HandlerFunc(onboardingHandler.Complete)))
 
 	mux.Handle("GET /install", web.InstallHandler("anchored.sh"))
 	mux.Handle("GET /install-oss", web.InstallHandler("anchored-oss.sh"))

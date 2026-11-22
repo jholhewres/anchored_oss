@@ -64,11 +64,35 @@ type onboardingResponse struct {
 	Projects []*model.Project    `json:"projects"`
 }
 
+// maxOnboardingBodyBytes caps the unauthenticated onboarding body: an org,
+// an admin and at most 10 projects fit in a few KiB.
+const maxOnboardingBodyBytes = 16 << 10
+
 // Complete is a single-shot endpoint that bootstraps an org, admin, and
 // projects in one call. 409 if any org already exists.
 func (h *OnboardingHandler) Complete(w http.ResponseWriter, r *http.Request) {
+	// The route is unauthenticated: an instance that is already set up
+	// answers 409 before decoding the body or hashing the password.
+	// BootstrapOnboarding checks again inside its transaction, for the race
+	// between two first-run calls.
+	count, err := h.store.CountOrganizations(r.Context())
+	if err != nil {
+		h.logger.Error("onboarding: count orgs failed", "error", err)
+		jsonError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if count > 0 {
+		jsonError(w, http.StatusConflict, "organization already exists; onboarding is a first-run-only endpoint")
+		return
+	}
+
 	var req onboardingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOnboardingBodyBytes)).Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			jsonError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -83,6 +107,16 @@ func (h *OnboardingHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Admin.Password) < 8 {
 		jsonError(w, http.StatusBadRequest, "admin.password must be at least 8 characters")
+		return
+	}
+	// Postgres TEXT refuses NUL. Caught here, before bcrypt, such a body is a
+	// 400 rather than a 500 that leaves the first-run window open for the
+	// next try.
+	if field, found := firstNUL(
+		[2]string{"org.name", req.Org.Name}, [2]string{"org.slug", req.Org.Slug},
+		[2]string{"admin.email", req.Admin.Email}, [2]string{"admin.display_name", req.Admin.DisplayName},
+	); found {
+		jsonError(w, http.StatusBadRequest, field+" must not contain NUL characters")
 		return
 	}
 	if len(req.Projects) == 0 {
@@ -140,11 +174,15 @@ func (h *OnboardingHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		AdminEmail:        req.Admin.Email,
 		AdminDisplayName:  req.Admin.DisplayName,
 		AdminPasswordHash: string(passwordHash),
-		APIKeyName:        "default",
-		APIKeyPrefix:      prefix,
-		APIKeyHash:        hash,
-		APIKeyScope:       "admin",
-		Projects:          bootstrapProjects,
+		// Still an admin key with no expiry: released CLIs create projects
+		// through admin-only POST /v1/projects with it. Handing developers
+		// expiring personal keys instead belongs to the v0.7 auth redesign
+		// (see docs/migration-v0.7.md).
+		APIKeyName:   "default",
+		APIKeyPrefix: prefix,
+		APIKeyHash:   hash,
+		APIKeyScope:  "admin",
+		Projects:     bootstrapProjects,
 	})
 	if err != nil {
 		h.logger.Error("onboarding bootstrap failed", "error", err)
@@ -170,6 +208,13 @@ func prepareOnboardingProjects(inputs []onboardingProjectInput) ([]preparedOnboa
 	seenSlugs := make(map[string]int, len(inputs))
 	for i, input := range inputs {
 		name := strings.TrimSpace(input.Name)
+		prefix := "projects[" + strconv.Itoa(i) + "]."
+		if field, found := firstNUL(
+			[2]string{prefix + "name", input.Name}, [2]string{prefix + "category", input.Category},
+			[2]string{prefix + "repo_url", input.RepoURL},
+		); found {
+			return nil, http.StatusBadRequest, field + " must not contain NUL characters"
+		}
 		if name == "" {
 			return nil, http.StatusBadRequest, "projects[" + strconv.Itoa(i) + "].name is required"
 		}
@@ -200,4 +245,15 @@ func prepareOnboardingProjects(inputs []onboardingProjectInput) ([]preparedOnboa
 		})
 	}
 	return projects, 0, ""
+}
+
+// firstNUL names the first of the given (name, value) fields whose value holds
+// a NUL, which Postgres TEXT refuses.
+func firstNUL(fields ...[2]string) (string, bool) {
+	for _, f := range fields {
+		if strings.ContainsRune(f[1], 0) {
+			return f[0], true
+		}
+	}
+	return "", false
 }
