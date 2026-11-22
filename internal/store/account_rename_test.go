@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jholhewres/anchored_oss/internal/auth"
 )
 
 // TestUpdateAccount_SameRoleKeepsKeys: UpdateAccount revokes keys only on a
@@ -78,7 +80,7 @@ func checkSameRoleKeepsKeys(t *testing.T, st Store, u string) {
 			t.Fatal(err)
 		}
 		session := role + "-session" + u
-		if _, err := st.CreateAPIKey(ctx, org.ID, other.ID, "session", "anc_live_tst", session, sessionScope(role), &expires); err != nil {
+		if _, err := st.CreateAPIKey(ctx, org.ID, other.ID, "session", "anc_live_tst", session, auth.SessionScopeForRole(role), &expires); err != nil {
 			t.Fatalf("seed %s session: %v", role, err)
 		}
 		if err := st.UpdateAccount(ctx, org.ID, other.ID, "Renamed", role); err != nil {
@@ -114,13 +116,4 @@ func TestGetOrgMemberRole_NotAMember(t *testing.T) {
 	if _, err := st.GetOrgMemberRole(ctx, org.ID, acc.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetOrgMemberRole for a non-member = %v, want ErrNotFound", err)
 	}
-}
-
-// sessionScope is the key scope a login of that role gets (see
-// handler.sessionScopeForRole).
-func sessionScope(role string) string {
-	if role == "admin" || role == "readonly" {
-		return role
-	}
-	return "sync"
 }

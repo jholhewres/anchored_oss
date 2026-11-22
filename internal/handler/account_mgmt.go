@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/model"
 	"github.com/jholhewres/anchored_oss/internal/store"
@@ -14,10 +15,6 @@ type updateAccountRequest struct {
 	DisplayName string `json:"display_name"`
 	Role        string `json:"role"`
 }
-
-// accountRoles are the org roles an admin may assign. "member" is what
-// POST /v1/accounts gives new accounts; its login session gets key scope sync.
-var accountRoles = map[string]bool{"admin": true, "sync": true, "readonly": true, "member": true}
 
 type setAccountProjectsRequest struct {
 	ProjectIDs []string `json:"project_ids"`
@@ -39,7 +36,7 @@ func (h *AccountHandler) Update(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "at least one of display_name or role is required")
 		return
 	}
-	if req.Role != "" && !accountRoles[req.Role] {
+	if req.Role != "" && !auth.KnownRole(req.Role) {
 		jsonError(w, http.StatusBadRequest, "role must be one of: admin, sync, readonly, member")
 		return
 	}

@@ -49,6 +49,8 @@ client what an instance supports.
 
 **Web session** — a dashboard login, held in a cookie.
 
+**Session key** — the bearer key a password sign-in mints today (named `session`), scoped to the account's role. It is not a web session: the dashboard keeps it until the cookie session replaces it.
+
 **Grant** — the authorization an account gives an OAuth client for one org, a
 set of projects and a set of OAuth scopes. The *Connections* screen lists and
 revokes grants.

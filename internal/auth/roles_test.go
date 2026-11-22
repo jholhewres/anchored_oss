@@ -20,3 +20,25 @@ func TestScopeAllowedForRole(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionScopeAgreesWithTheRoleCeiling: a login session never holds a
+// scope its role may not, unknown roles included.
+func TestSessionScopeAgreesWithTheRoleCeiling(t *testing.T) {
+	for role, want := range map[string]string{"admin": "admin", "sync": "sync", "member": "sync", "readonly": "readonly", "owner": "readonly", "": "readonly"} {
+		got := SessionScopeForRole(role)
+		if got != want {
+			t.Errorf("SessionScopeForRole(%q) = %q, want %q", role, got, want)
+		}
+		if !ScopeAllowedForRole(role, got) {
+			t.Errorf("session scope %q is above role %q", got, role)
+		}
+	}
+	for _, role := range []string{"admin", "sync", "readonly", "member"} {
+		if !KnownRole(role) {
+			t.Errorf("KnownRole(%q) = false", role)
+		}
+	}
+	if KnownRole("owner") {
+		t.Error("KnownRole(owner) = true")
+	}
+}

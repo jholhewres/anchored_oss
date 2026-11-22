@@ -94,7 +94,7 @@ func assertSessionCredential(t *testing.T, st *store.SQLiteStore, rawKey, wantSc
 		t.Fatalf("session credential = name=%q scope=%q", key.Name, key.Scope)
 	}
 	personal := NewPersonalAPIKeyHandler(st, slog.Default())
-	protected := middleware.Auth(st, slog.Default())(middleware.RequireSession(http.HandlerFunc(personal.List)))
+	protected := middleware.Auth(st, slog.Default())(middleware.RequireSessionKey(http.HandlerFunc(personal.List)))
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/api-keys", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec := httptest.NewRecorder()

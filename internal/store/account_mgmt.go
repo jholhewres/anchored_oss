@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/jholhewres/anchored_oss/internal/auth"
-
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
 
@@ -50,8 +49,8 @@ func (s *PostgresStore) UpdateAccount(ctx context.Context, orgID, id, displayNam
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE api_keys SET revoked_at = now()
 				 WHERE account_id = $1 AND org_id = $2 AND revoked_at IS NULL
-				   AND (name = 'session' OR scope = $3 OR scope = $4)`,
-				id, orgID, above[0], above[1],
+				   AND (name = $5 OR scope = $3 OR scope = $4)`,
+				id, orgID, above[0], above[1], auth.SessionKeyName,
 			); err != nil {
 				return fmt.Errorf("revoke keys above the new role: %w", err)
 			}

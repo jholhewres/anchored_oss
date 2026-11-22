@@ -1,9 +1,37 @@
 package auth
 
-// Key scopes an org role may hold. A role's login session and every key minted
-// for the account stay at or below it: admin holds every scope; sync, and
-// "member" (whose login scope is sync), hold sync and readonly; readonly, or
-// any role this table does not know, holds readonly only.
+// Org roles and the key scopes each may hold, in one place. A role's login
+// session and every key minted for the account stay at or below it: admin
+// holds every scope; sync, and "member" (what POST /v1/accounts gives new
+// accounts), hold sync and readonly; readonly, or any role this table does not
+// know, holds readonly only. Unknown roles fail closed everywhere.
+
+// SessionKeyName names the bearer key a password sign-in mints (the
+// dashboard's "session key", not the cookie-based web session). It is
+// reserved: no API route creates a key with this name.
+const SessionKeyName = "session"
+
+// KnownRole reports whether role is one an admin may assign.
+func KnownRole(role string) bool {
+	switch role {
+	case "admin", "sync", "readonly", "member":
+		return true
+	default:
+		return false
+	}
+}
+
+// SessionScopeForRole is the key scope of a login session for role.
+func SessionScopeForRole(role string) string {
+	switch role {
+	case "admin":
+		return "admin"
+	case "sync", "member":
+		return "sync"
+	default:
+		return "readonly"
+	}
+}
 
 // ScopesAboveRole lists the key scopes role may not hold, padded to two
 // entries so callers can bind them as query parameters.

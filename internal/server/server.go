@@ -79,7 +79,7 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 
 	authMW := middleware.Auth(st, logger)
 	requireAdmin := middleware.RequireScope("admin")
-	requireSession := middleware.RequireSession
+	requireSession := middleware.RequireSessionKey
 
 	meHandler := handler.NewMeHandler(st, logger)
 	mux.HandleFunc("GET /v1/me", authMW(http.HandlerFunc(meHandler.Get)).ServeHTTP)

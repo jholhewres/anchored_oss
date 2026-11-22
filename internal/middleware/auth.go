@@ -15,10 +15,10 @@ import (
 
 type contextKey string
 
-// SessionAPIKeyName is reserved for the per-account session credential issued
-// by a password-authenticated dashboard entry flow; a new login revokes the
-// prior credential with this name.
-const SessionAPIKeyName = "session"
+// SessionAPIKeyName is the session key's name (auth.SessionKeyName): the
+// per-account bearer credential a password sign-in mints; a new login revokes
+// the prior one.
+const SessionAPIKeyName = auth.SessionKeyName
 
 const (
 	AccountIDKey  contextKey = "account_id"
@@ -121,11 +121,11 @@ func Auth(st store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireSession restricts a route to the credential minted by a
+// RequireSessionKey restricts a route to the session key minted by a
 // password-authenticated dashboard entry flow. It deliberately does not
 // require an admin scope: a session retains its member role while still being
 // allowed to manage that account's own API keys.
-func RequireSession(next http.Handler) http.Handler {
+func RequireSessionKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if GetAPIKeyName(r.Context()) != SessionAPIKeyName {
 			writeForbidden(w)

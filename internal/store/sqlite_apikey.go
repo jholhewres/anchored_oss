@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/model"
 )
 
@@ -88,9 +89,9 @@ func (s *SQLiteStore) ListAPIKeysByOwner(ctx context.Context, orgID, accountID s
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, org_id, account_id, name, key_prefix, key_hash, scope, expires_at, created_at, revoked_at
 		 FROM api_keys
-		 WHERE org_id = ? AND account_id = ? AND scope IN ('sync', 'readonly') AND name <> 'session'
+		 WHERE org_id = ? AND account_id = ? AND scope IN ('sync', 'readonly') AND name <> ?
 		 ORDER BY created_at DESC`,
-		orgID, accountID,
+		orgID, accountID, auth.SessionKeyName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list api keys by owner: %w", err)
@@ -115,8 +116,8 @@ func (s *SQLiteStore) RevokeAPIKeyByOwner(ctx context.Context, orgID, accountID,
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE api_keys SET revoked_at = datetime('now')
 		 WHERE id = ? AND org_id = ? AND account_id = ?
-		   AND scope IN ('sync', 'readonly') AND name <> 'session' AND revoked_at IS NULL`,
-		id, orgID, accountID,
+		   AND scope IN ('sync', 'readonly') AND name <> ? AND revoked_at IS NULL`,
+		id, orgID, accountID, auth.SessionKeyName,
 	)
 	if err != nil {
 		return fmt.Errorf("revoke api key by owner: %w", err)
@@ -133,8 +134,8 @@ func (s *SQLiteStore) RevokeAPIKeyByOwner(ctx context.Context, orgID, accountID,
 
 func (s *SQLiteStore) RevokeSessionKeys(ctx context.Context, accountID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE api_keys SET revoked_at = datetime('now') WHERE account_id = ? AND name = 'session' AND revoked_at IS NULL`,
-		accountID,
+		`UPDATE api_keys SET revoked_at = datetime('now') WHERE account_id = ? AND name = ? AND revoked_at IS NULL`,
+		accountID, auth.SessionKeyName,
 	)
 	if err != nil {
 		return fmt.Errorf("revoke session keys: %w", err)
