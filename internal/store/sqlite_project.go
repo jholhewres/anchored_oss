@@ -155,15 +155,16 @@ func (s *SQLiteStore) UpdateProject(ctx context.Context, orgID, id string, upd m
 	return &cur, nil
 }
 
-func (s *SQLiteStore) ListProjectsByTeamAccess(ctx context.Context, accountID string) ([]*model.Project, error) {
+func (s *SQLiteStore) ListProjectsByTeamAccess(ctx context.Context, orgID, accountID string) ([]*model.Project, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.category, p.remote_key, p.remote_key_v1, p.repo_url, p.created_by, p.created_at
 		 FROM projects p
 		 JOIN team_project_access tpa ON tpa.project_id = p.id
 		 JOIN team_members tm ON tm.team_id = tpa.team_id
-		 WHERE tm.account_id = ? AND p.deleted_at IS NULL
+		 JOIN teams t ON t.id = tpa.team_id
+		 WHERE tm.account_id = ? AND p.org_id = ? AND t.org_id = ? AND p.deleted_at IS NULL
 		 ORDER BY p.name`,
-		accountID,
+		accountID, orgID, orgID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list projects by team access: %w", err)
@@ -184,16 +185,19 @@ func (s *SQLiteStore) ListProjectsByTeamAccess(ctx context.Context, accountID st
 	return projects, nil
 }
 
-func (s *SQLiteStore) HasProjectAccess(ctx context.Context, accountID, projectID string) (bool, error) {
+func (s *SQLiteStore) HasProjectAccess(ctx context.Context, orgID, accountID, projectID string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx,
 		`SELECT EXISTS (
 		   SELECT 1
 		   FROM team_project_access tpa
 		   JOIN team_members tm ON tm.team_id = tpa.team_id
+		   JOIN teams t ON t.id = tpa.team_id
+		   JOIN projects p ON p.id = tpa.project_id
 		   WHERE tm.account_id = ? AND tpa.project_id = ?
+		     AND t.org_id = ? AND p.org_id = ? AND p.deleted_at IS NULL
 		 )`,
-		accountID, projectID,
+		accountID, projectID, orgID, orgID,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check project access: %w", err)
@@ -205,8 +209,9 @@ func (s *SQLiteStore) HasProjectAccess(ctx context.Context, accountID, projectID
 // the slug and both remote keys are freed for reuse: a new project can take the
 // same slug/repo immediately. The original values survive only in the audit
 // log. Mangling values are computed in Go (slug + "-deleted-" + id[:8]), not in
-// SQL, to keep the statement backend-agnostic.
-func (s *SQLiteStore) SoftDeleteProject(ctx context.Context, id string) error {
+// SQL, to keep the statement backend-agnostic. A project of another org counts
+// as absent (ErrNotFound).
+func (s *SQLiteStore) SoftDeleteProject(ctx context.Context, orgID, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin soft delete project: %w", err)
@@ -215,13 +220,13 @@ func (s *SQLiteStore) SoftDeleteProject(ctx context.Context, id string) error {
 
 	var slug string
 	err = tx.QueryRowContext(ctx,
-		`SELECT slug FROM projects WHERE id = ? AND deleted_at IS NULL`, id,
+		`SELECT slug FROM projects WHERE id = ? AND org_id = ? AND deleted_at IS NULL`, id, orgID,
 	).Scan(&slug)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Either never existed or already deleted: distinguish for ErrNotFound.
 		var exists bool
 		if qerr := tx.QueryRowContext(ctx,
-			`SELECT EXISTS (SELECT 1 FROM projects WHERE id = ?)`, id,
+			`SELECT EXISTS (SELECT 1 FROM projects WHERE id = ? AND org_id = ?)`, id, orgID,
 		).Scan(&exists); qerr != nil {
 			return fmt.Errorf("verify project existence: %w", qerr)
 		}
@@ -259,8 +264,8 @@ func (s *SQLiteStore) SoftDeleteProject(ctx context.Context, id string) error {
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE projects SET deleted_at = datetime('now'), slug = ?, remote_key = ?, remote_key_v1 = NULL, repo_url = NULL
-		 WHERE id = ? AND deleted_at IS NULL`,
-		mangledSlug, deletedRemoteKey(id), id,
+		 WHERE id = ? AND org_id = ? AND deleted_at IS NULL`,
+		mangledSlug, deletedRemoteKey(id), id, orgID,
 	); err != nil {
 		return fmt.Errorf("soft delete project: %w", err)
 	}
@@ -282,19 +287,12 @@ func (s *SQLiteStore) EnsureCreatorProjectAccess(ctx context.Context, orgID, acc
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO team_members (team_id, account_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
-		teamID, accountID,
-	); err != nil {
-		return fmt.Errorf("add team member: %w", err)
+	if err := sqliteJoinTeamIfOrgMember(ctx, tx, orgID, teamID, accountID); err != nil {
+		return err
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO team_project_access (team_id, project_id, role) VALUES (?, ?, 'writer')
-		 ON CONFLICT (team_id, project_id) DO NOTHING`,
-		teamID, projectID,
-	); err != nil {
-		return fmt.Errorf("grant project access: %w", err)
+	if err := sqliteGrantIfOrgProject(ctx, tx, orgID, teamID, projectID); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -315,13 +313,77 @@ func (s *SQLiteStore) EnsureDefaultTeamMembership(ctx context.Context, orgID, ac
 		return err
 	}
 
+	if err := sqliteJoinTeamIfOrgMember(ctx, tx, orgID, teamID, accountID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
+}
+
+// sqliteJoinTeamIfOrgMember puts accountID on teamID only when it is a member
+// of orgID: a team never takes an account of another org, whoever calls.
+func sqliteJoinTeamIfOrgMember(ctx context.Context, tx *sql.Tx, orgID, teamID, accountID string) error {
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO team_members (team_id, account_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
-		teamID, accountID,
+		`INSERT INTO team_members (team_id, account_id)
+		 SELECT ?, ?
+		 WHERE EXISTS (SELECT 1 FROM org_members WHERE org_id = ? AND account_id = ?)
+		 ON CONFLICT DO NOTHING`,
+		teamID, accountID, orgID, accountID,
 	); err != nil {
 		return fmt.Errorf("add team member: %w", err)
 	}
+	return nil
+}
 
+// IsDefaultTeamMember reports whether accountID is on orgID's default team.
+func (s *SQLiteStore) IsDefaultTeamMember(ctx context.Context, orgID, accountID string) (bool, error) {
+	var ok bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
+		   WHERE t.org_id = ? AND t.slug = ? AND tm.account_id = ?
+		 )`,
+		orgID, defaultTeamSlug, accountID,
+	).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check default team membership: %w", err)
+	}
+	return ok, nil
+}
+
+// sqliteGrantIfOrgProject grants teamID write access to projectID only when
+// the project belongs to orgID: a team never holds another org's project.
+func sqliteGrantIfOrgProject(ctx context.Context, tx *sql.Tx, orgID, teamID, projectID string) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO team_project_access (team_id, project_id, role)
+		 SELECT ?, ?, 'writer'
+		 WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND org_id = ?)
+		 ON CONFLICT (team_id, project_id) DO NOTHING`,
+		teamID, projectID, projectID, orgID,
+	); err != nil {
+		return fmt.Errorf("grant project access: %w", err)
+	}
+	return nil
+}
+
+// GrantProjectToDefaultTeam grants orgID's default team access to a project of
+// orgID, creating the team if needed, without adding any member.
+func (s *SQLiteStore) GrantProjectToDefaultTeam(ctx context.Context, orgID, projectID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	teamID, err := sqliteEnsureDefaultTeamTx(ctx, tx, orgID)
+	if err != nil {
+		return err
+	}
+	if err := sqliteGrantIfOrgProject(ctx, tx, orgID, teamID, projectID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit tx: %w", err)
 	}

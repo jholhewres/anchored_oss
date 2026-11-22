@@ -127,11 +127,19 @@ func (s *PostgresStore) SetAccountProjects(ctx context.Context, orgID, accountID
 	}
 
 	// Ensure the account is in the default team.
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO team_members (team_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-		teamID, accountID,
-	); err != nil {
-		return fmt.Errorf("ensure team member: %w", err)
+	// Only a member of orgID joins its default team (ErrNotFound otherwise).
+	var member bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM org_members WHERE org_id = $1 AND account_id = $2)`,
+		orgID, accountID,
+	).Scan(&member); err != nil {
+		return fmt.Errorf("check org membership: %w", err)
+	}
+	if !member {
+		return ErrNotFound
+	}
+	if err := pgJoinTeamIfOrgMember(ctx, tx, orgID, teamID, accountID); err != nil {
+		return err
 	}
 
 	// Build a set of desired project IDs (validated against org ownership).

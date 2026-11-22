@@ -141,17 +141,22 @@ func (s *PostgresStore) UpdateProject(ctx context.Context, orgID, id string, upd
 }
 
 // HasProjectAccess reports whether accountID has team-based access to
-// projectID. Used to authorize project read endpoints for non-admin scopes.
-func (s *PostgresStore) HasProjectAccess(ctx context.Context, accountID, projectID string) (bool, error) {
+// projectID inside orgID: the project is active and both it and the granting
+// team belong to orgID. Used to authorize project endpoints and sync for
+// non-admin scopes.
+func (s *PostgresStore) HasProjectAccess(ctx context.Context, orgID, accountID, projectID string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx,
 		`SELECT EXISTS (
 		   SELECT 1
 		   FROM team_project_access tpa
 		   JOIN team_members tm ON tm.team_id = tpa.team_id
+		   JOIN teams t ON t.id = tpa.team_id
+		   JOIN projects p ON p.id = tpa.project_id
 		   WHERE tm.account_id = $1 AND tpa.project_id = $2
+		     AND t.org_id = $3 AND p.org_id = $3 AND p.deleted_at IS NULL
 		 )`,
-		accountID, projectID,
+		accountID, projectID, orgID,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check project access: %w", err)
@@ -163,8 +168,9 @@ func (s *PostgresStore) HasProjectAccess(ctx context.Context, accountID, project
 // so the slug and both remote keys are freed for reuse (a new project can take
 // the same slug/repo immediately). Mangling values are computed in Go, not SQL,
 // so the statement stays backend-agnostic. Idempotent: returns ErrNotFound only
-// when the project never existed; double-deletes are a no-op.
-func (s *PostgresStore) SoftDeleteProject(ctx context.Context, id string) error {
+// when the project never existed in orgID (another org's project counts as
+// absent); double-deletes are a no-op.
+func (s *PostgresStore) SoftDeleteProject(ctx context.Context, orgID, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin soft delete project: %w", err)
@@ -173,12 +179,12 @@ func (s *PostgresStore) SoftDeleteProject(ctx context.Context, id string) error 
 
 	var slug string
 	err = tx.QueryRowContext(ctx,
-		`SELECT slug FROM projects WHERE id = $1 AND deleted_at IS NULL`, id,
+		`SELECT slug FROM projects WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`, id, orgID,
 	).Scan(&slug)
 	if errors.Is(err, sql.ErrNoRows) {
 		var exists bool
 		if qerr := tx.QueryRowContext(ctx,
-			`SELECT EXISTS (SELECT 1 FROM projects WHERE id = $1)`, id,
+			`SELECT EXISTS (SELECT 1 FROM projects WHERE id = $1 AND org_id = $2)`, id, orgID,
 		).Scan(&exists); qerr != nil {
 			return fmt.Errorf("verify project existence: %w", qerr)
 		}
@@ -215,8 +221,8 @@ func (s *PostgresStore) SoftDeleteProject(ctx context.Context, id string) error 
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE projects SET deleted_at = now(), slug = $1, remote_key = $2, remote_key_v1 = NULL, repo_url = NULL
-		 WHERE id = $3 AND deleted_at IS NULL`,
-		mangleDeletedSlug(slug, id), deletedRemoteKey(id), id,
+		 WHERE id = $3 AND org_id = $4 AND deleted_at IS NULL`,
+		mangleDeletedSlug(slug, id), deletedRemoteKey(id), id, orgID,
 	); err != nil {
 		return fmt.Errorf("soft delete project: %w", err)
 	}
@@ -244,15 +250,16 @@ func (s *PostgresStore) GetProjectByRemoteKey(ctx context.Context, orgID, remote
 	return &p, nil
 }
 
-func (s *PostgresStore) ListProjectsByTeamAccess(ctx context.Context, accountID string) ([]*model.Project, error) {
+func (s *PostgresStore) ListProjectsByTeamAccess(ctx context.Context, orgID, accountID string) ([]*model.Project, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT DISTINCT p.id, p.org_id, p.name, p.slug, p.category, p.remote_key, p.remote_key_v1, p.repo_url, p.created_by, p.created_at
 		 FROM projects p
 		 JOIN team_project_access tpa ON tpa.project_id = p.id
 		 JOIN team_members tm ON tm.team_id = tpa.team_id
-		 WHERE tm.account_id = $1 AND p.deleted_at IS NULL
+		 JOIN teams t ON t.id = tpa.team_id
+		 WHERE tm.account_id = $1 AND p.org_id = $2 AND t.org_id = $2 AND p.deleted_at IS NULL
 		 ORDER BY p.name`,
-		accountID,
+		accountID, orgID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list projects by team access: %w", err)
@@ -288,19 +295,12 @@ func (s *PostgresStore) EnsureCreatorProjectAccess(ctx context.Context, orgID, a
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO team_members (team_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-		teamID, accountID,
-	); err != nil {
-		return fmt.Errorf("add team member: %w", err)
+	if err := pgJoinTeamIfOrgMember(ctx, tx, orgID, teamID, accountID); err != nil {
+		return err
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO team_project_access (team_id, project_id, role) VALUES ($1, $2, 'writer')
-		 ON CONFLICT (team_id, project_id) DO NOTHING`,
-		teamID, projectID,
-	); err != nil {
-		return fmt.Errorf("grant project access: %w", err)
+	if err := pgGrantIfOrgProject(ctx, tx, orgID, teamID, projectID); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -324,11 +324,8 @@ func (s *PostgresStore) EnsureDefaultTeamMembership(ctx context.Context, orgID, 
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO team_members (team_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-		teamID, accountID,
-	); err != nil {
-		return fmt.Errorf("add team member: %w", err)
+	if err := pgJoinTeamIfOrgMember(ctx, tx, orgID, teamID, accountID); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -359,4 +356,71 @@ func ensureDefaultTeamTx(ctx context.Context, tx *sql.Tx, orgID string) (string,
 		return "", fmt.Errorf("create default team: %w", err)
 	}
 	return teamID, nil
+}
+
+// pgJoinTeamIfOrgMember puts accountID on teamID only when it is a member of
+// orgID: a team never takes an account of another org, whoever calls.
+func pgJoinTeamIfOrgMember(ctx context.Context, tx *sql.Tx, orgID, teamID, accountID string) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO team_members (team_id, account_id)
+		 SELECT $1::uuid, $2::uuid
+		 WHERE EXISTS (SELECT 1 FROM org_members WHERE org_id = $3 AND account_id = $2)
+		 ON CONFLICT DO NOTHING`,
+		teamID, accountID, orgID,
+	); err != nil {
+		return fmt.Errorf("add team member: %w", err)
+	}
+	return nil
+}
+
+// IsDefaultTeamMember reports whether accountID is on orgID's default team.
+func (s *PostgresStore) IsDefaultTeamMember(ctx context.Context, orgID, accountID string) (bool, error) {
+	var ok bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
+		   WHERE t.org_id = $1 AND t.slug = $2 AND tm.account_id = $3
+		 )`,
+		orgID, defaultTeamSlug, accountID,
+	).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check default team membership: %w", err)
+	}
+	return ok, nil
+}
+
+// pgGrantIfOrgProject grants teamID write access to projectID only when the
+// project belongs to orgID: a team never holds another org's project.
+func pgGrantIfOrgProject(ctx context.Context, tx *sql.Tx, orgID, teamID, projectID string) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO team_project_access (team_id, project_id, role)
+		 SELECT $1::uuid, $2::uuid, 'writer'
+		 WHERE EXISTS (SELECT 1 FROM projects WHERE id = $2 AND org_id = $3)
+		 ON CONFLICT (team_id, project_id) DO NOTHING`,
+		teamID, projectID, orgID,
+	); err != nil {
+		return fmt.Errorf("grant project access: %w", err)
+	}
+	return nil
+}
+
+// GrantProjectToDefaultTeam grants orgID's default team access to a project of
+// orgID, creating the team if needed, without adding any member.
+func (s *PostgresStore) GrantProjectToDefaultTeam(ctx context.Context, orgID, projectID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	teamID, err := ensureDefaultTeamTx(ctx, tx, orgID)
+	if err != nil {
+		return err
+	}
+	if err := pgGrantIfOrgProject(ctx, tx, orgID, teamID, projectID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
 }

@@ -15,6 +15,11 @@ import (
 	"github.com/jholhewres/anchored_oss/internal/store"
 )
 
+const (
+	searchTestOrgID     = "org-1"
+	searchTestProjectID = "project-1"
+)
+
 type searchTestStore struct {
 	store.Store
 
@@ -45,6 +50,15 @@ func (s *searchTestStore) SearchMemoriesByVectorSpace(_ context.Context, _ strin
 	s.vectorModel = model
 	s.vectorDims = dims
 	return s.vectorResults, s.vectorErr
+}
+
+// GetActiveProjectByID serves the one project the search tests query, in the
+// org their admin key belongs to, so requireProjectAccess lets them through.
+func (s *searchTestStore) GetActiveProjectByID(_ context.Context, id string) (*model.Project, error) {
+	if id != searchTestProjectID {
+		return nil, store.ErrNotFound
+	}
+	return &model.Project{ID: searchTestProjectID, OrgID: searchTestOrgID}, nil
 }
 
 func (s *searchTestStore) MemoriesStaleEmbeddingSpace(context.Context, string, int, string, int) ([]*model.Memory, error) {
@@ -335,6 +349,7 @@ func performMemorySearch(handler *MemoryHandler, mode string) *httptest.Response
 		target += "&mode=" + mode
 	}
 	ctx := context.WithValue(context.Background(), middleware.ScopeKey, "admin")
+	ctx = context.WithValue(ctx, middleware.OrgIDKey, searchTestOrgID)
 	req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	handler.Search(rec, req)

@@ -55,7 +55,7 @@ func TestSQLiteBootstrapOnboardingCreatesAllResources(t *testing.T) {
 		}
 	}
 	for _, project := range result.Projects {
-		ok, err := st.HasProjectAccess(context.Background(), result.Admin.ID, project.ID)
+		ok, err := st.HasProjectAccess(context.Background(), result.Organization.ID, result.Admin.ID, project.ID)
 		if err != nil || !ok {
 			t.Errorf("admin access to %s = %t, %v", project.ID, ok, err)
 		}

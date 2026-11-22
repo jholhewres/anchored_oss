@@ -94,8 +94,11 @@ derived from the token:
 
 - The **organization is always taken from the token**, never from a request
   body or query parameter. A token can only ever act within its own org.
-- Targeting a project that belongs to a **different org** returns `403`
-  (`project belongs to a different organization`).
+- Targeting a project that belongs to a **different org** answers `404`
+  (`project not found`, or `PROJECT_NOT_FOUND` on sync), the same as a project
+  that does not exist, so other orgs' project ids cannot be probed. This holds
+  on every route that names a project by id: `/v1/projects/{id}/…`,
+  `POST /v1/memories`, `GET /v1/memories/search`, `/v1/chat*` and sync.
 - **Team access**: a non-admin account sees and can act on only the projects
   granted to a team it belongs to. Requests for other projects return `403`
   (`no team access to this project`).
@@ -401,8 +404,9 @@ the batch still returns `200`:
 #### `GET /v1/projects/{id}/memory-health` — bearer
 
 Anti context-poisoning health view for one project (lifecycle counts, noisy
-sources, rejection pressure, volume anomalies). Any token with team access
-(admin bypasses). Results are cached ~60s server-side.
+sources, rejection pressure, volume anomalies). Any token of the project's org
+with team access to it (admin skips the team check, never the org check).
+Results are cached ~60s server-side.
 
 ---
 

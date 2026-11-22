@@ -595,40 +595,8 @@ func (h *SkillHandler) projectReadAccess(w http.ResponseWriter, r *http.Request,
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
 		return false
 	}
-	orgID := middleware.GetOrgID(r.Context())
-	if orgID == "" {
-		jsonError(w, http.StatusUnauthorized, "missing org context")
-		return false
-	}
-	project, err := h.store.GetActiveProjectByID(r.Context(), projectID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && project.OrgID != orgID) {
-		jsonError(w, http.StatusNotFound, "project not found")
-		return false
-	}
-	if err != nil {
-		h.logger.Error("project lookup failed", "error", err)
-		jsonError(w, http.StatusInternalServerError, "project lookup failed")
-		return false
-	}
-	if middleware.GetScope(r.Context()) == "admin" {
-		return true
-	}
-	accountID := middleware.GetAccountID(r.Context())
-	if accountID == "" {
-		jsonError(w, http.StatusUnauthorized, "missing account context")
-		return false
-	}
-	ok, err := h.store.HasProjectAccess(r.Context(), accountID, projectID)
-	if err != nil {
-		h.logger.Error("project access check failed", "error", err)
-		jsonError(w, http.StatusInternalServerError, "access check failed")
-		return false
-	}
-	if !ok {
-		jsonError(w, http.StatusForbidden, "no team access to this project")
-		return false
-	}
-	return true
+	_, ok := requireProjectAccess(w, r, h.store, h.logger, projectID)
+	return ok
 }
 
 func (h *SkillHandler) audit(r *http.Request, action, targetID string, metadata any) {

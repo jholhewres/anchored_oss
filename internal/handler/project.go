@@ -201,12 +201,13 @@ func (h *ProjectHandler) createByRemoteKey(w http.ResponseWriter, r *http.Reques
 
 func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	accountID := middleware.GetAccountID(r.Context())
-	if accountID == "" {
+	orgID := middleware.GetOrgID(r.Context())
+	if accountID == "" || orgID == "" {
 		jsonError(w, http.StatusUnauthorized, "missing account context")
 		return
 	}
 
-	projects, err := h.store.ListProjectsByTeamAccess(r.Context(), accountID)
+	projects, err := h.store.ListProjectsByTeamAccess(r.Context(), orgID, accountID)
 	if err != nil {
 		h.logger.Error("list projects failed", "error", err, "account_id", accountID)
 		jsonError(w, http.StatusInternalServerError, "failed to list projects")
@@ -227,17 +228,8 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
-	if !h.checkAccess(w, r, id) {
-		return
-	}
-	project, err := h.store.GetActiveProjectByID(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		jsonError(w, http.StatusNotFound, "project not found")
-		return
-	}
-	if err != nil {
-		h.logger.Error("get project failed", "error", err, "project_id", id)
-		jsonError(w, http.StatusInternalServerError, "get project failed")
+	project, ok := requireProjectAccess(w, r, h.store, h.logger, id)
+	if !ok {
 		return
 	}
 	jsonResponse(w, http.StatusOK, project)
@@ -250,7 +242,7 @@ func (h *ProjectHandler) ListMemories(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
-	if !h.checkAccess(w, r, id) {
+	if _, ok := requireProjectAccess(w, r, h.store, h.logger, id); !ok {
 		return
 	}
 
@@ -394,14 +386,20 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, project)
 }
 
-// SoftDelete marks a project as deleted. Admin only.
+// SoftDelete marks a project of the caller's org as deleted. Admin only; a
+// project of another org answers 404, like one that does not exist.
 func (h *ProjectHandler) SoftDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !uuidRe.MatchString(id) {
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
-	if err := h.store.SoftDeleteProject(r.Context(), id); err != nil {
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "missing org context")
+		return
+	}
+	if err := h.store.SoftDeleteProject(r.Context(), orgID, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			jsonError(w, http.StatusNotFound, "project not found")
 			return
@@ -412,7 +410,7 @@ func (h *ProjectHandler) SoftDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.AppendAudit(r.Context(), &model.AuditEntry{
-		OrgID: middleware.GetOrgID(r.Context()), ProjectID: id,
+		OrgID: orgID, ProjectID: id,
 		ActorID: middleware.GetAccountID(r.Context()),
 		Action:  "project.deleted", TargetType: "project", TargetID: id,
 	}); err != nil {
@@ -422,39 +420,13 @@ func (h *ProjectHandler) SoftDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// checkAccess enforces team-based access for non-admin callers. Returns true
-// when the request should continue. On failure it writes the response and
-// returns false.
-func (h *ProjectHandler) checkAccess(w http.ResponseWriter, r *http.Request, projectID string) bool {
-	scope := middleware.GetScope(r.Context())
-	if scope == "admin" {
-		return true
-	}
-	accountID := middleware.GetAccountID(r.Context())
-	if accountID == "" {
-		jsonError(w, http.StatusUnauthorized, "missing account context")
-		return false
-	}
-	ok, err := h.store.HasProjectAccess(r.Context(), accountID, projectID)
-	if err != nil {
-		h.logger.Error("project access check failed", "error", err, "project_id", projectID)
-		jsonError(w, http.StatusInternalServerError, "access check failed")
-		return false
-	}
-	if !ok {
-		jsonError(w, http.StatusForbidden, "no team access to this project")
-		return false
-	}
-	return true
-}
-
 func (h *ProjectHandler) ListGraph(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !uuidRe.MatchString(id) {
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
-	if !h.checkAccess(w, r, id) {
+	if _, ok := requireProjectAccess(w, r, h.store, h.logger, id); !ok {
 		return
 	}
 
@@ -512,7 +484,7 @@ func (h *ProjectHandler) IngestTriples(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusForbidden, "readonly scope cannot ingest triples")
 		return
 	}
-	if !h.checkAccess(w, r, id) {
+	if _, ok := requireProjectAccess(w, r, h.store, h.logger, id); !ok {
 		return
 	}
 
@@ -579,19 +551,7 @@ func (h *ProjectHandler) DeleteMemories(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
-	orgID := middleware.GetOrgID(r.Context())
-	if orgID == "" {
-		jsonError(w, http.StatusUnauthorized, "missing org context")
-		return
-	}
-	project, err := h.store.GetActiveProjectByID(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && project.OrgID != orgID) {
-		jsonError(w, http.StatusNotFound, "project not found")
-		return
-	}
-	if err != nil {
-		h.logger.Error("delete memories project lookup failed", "error", err, "project_id", id)
-		jsonError(w, http.StatusInternalServerError, "delete memories failed")
+	if _, ok := projectInCallerOrg(w, r, h.store, h.logger, id); !ok {
 		return
 	}
 

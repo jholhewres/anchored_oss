@@ -10,7 +10,6 @@ import (
 	"github.com/jholhewres/anchored_oss/internal/ai/chat"
 	"github.com/jholhewres/anchored_oss/internal/ai/embeddings"
 	"github.com/jholhewres/anchored_oss/internal/config"
-	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/store"
 )
 
@@ -74,7 +73,7 @@ func (h *ChatHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "project_id and query are required")
 		return
 	}
-	if !h.checkAccess(w, r, req.ProjectID) {
+	if _, ok := requireProjectAccess(w, r, h.store, h.logger, req.ProjectID); !ok {
 		return
 	}
 
@@ -160,7 +159,7 @@ func (h *ChatHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if enabled {
 		indexState = "project_required"
 		if projectID != "" {
-			if !h.checkAccess(w, r, projectID) {
+			if _, ok := requireProjectAccess(w, r, h.store, h.logger, projectID); !ok {
 				return
 			}
 			stale, err := store.ProjectHasStaleCompleteSpace(
@@ -184,28 +183,6 @@ func (h *ChatHandler) Status(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"enabled": enabled, "model": model, "index_state": indexState,
 	})
-}
-
-func (h *ChatHandler) checkAccess(w http.ResponseWriter, r *http.Request, projectID string) bool {
-	if middleware.GetScope(r.Context()) == "admin" {
-		return true
-	}
-	accountID := middleware.GetAccountID(r.Context())
-	if accountID == "" {
-		jsonError(w, http.StatusUnauthorized, "missing account context")
-		return false
-	}
-	ok, err := h.store.HasProjectAccess(r.Context(), accountID, projectID)
-	if err != nil {
-		h.logger.Error("chat: access check failed", "error", err)
-		jsonError(w, http.StatusInternalServerError, "access check failed")
-		return false
-	}
-	if !ok {
-		jsonError(w, http.StatusForbidden, "no team access to this project")
-		return false
-	}
-	return true
 }
 
 func truncateRunes(s string, n int) string {

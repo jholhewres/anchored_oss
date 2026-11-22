@@ -43,9 +43,15 @@ type Store interface {
 	// Teams.
 	CreateTeam(ctx context.Context, orgID, name, slug string) (*model.Team, error)
 	ListTeamsByOrg(ctx context.Context, orgID string) ([]*model.Team, error)
-	GetTeamDetail(ctx context.Context, teamID string) (*model.TeamDetail, error)
-	AddTeamMember(ctx context.Context, teamID, accountID string) error
-	RemoveTeamMember(ctx context.Context, teamID, accountID string) error
+	// GetTeamDetail returns a team of orgID with its members and grants;
+	// ErrNotFound when the team is missing or belongs to another org.
+	GetTeamDetail(ctx context.Context, orgID, teamID string) (*model.TeamDetail, error)
+	// AddTeamMember puts a member of orgID on a team of orgID (idempotent);
+	// ErrNotFound when the team or the account is outside orgID.
+	AddTeamMember(ctx context.Context, orgID, teamID, accountID string) error
+	// RemoveTeamMember takes accountID off a team of orgID; ErrNotFound when
+	// there is no such membership in orgID.
+	RemoveTeamMember(ctx context.Context, orgID, teamID, accountID string) error
 
 	// Projects + team access.
 	CreateProject(ctx context.Context, orgID, name, slug, remoteKey, remoteKeyV1, repoURL, createdBy, category string) (*model.Project, error)
@@ -59,15 +65,29 @@ type Store interface {
 	// remote keys from RepoURL when it is set. Returns ErrNotFound when the
 	// project is absent or belongs to another org.
 	UpdateProject(ctx context.Context, orgID, id string, upd model.ProjectUpdate) (*model.Project, error)
-	ListProjectsByTeamAccess(ctx context.Context, accountID string) ([]*model.Project, error)
-	HasProjectAccess(ctx context.Context, accountID, projectID string) (bool, error)
-	SoftDeleteProject(ctx context.Context, id string) error
+	// ListProjectsByTeamAccess lists the active projects of orgID that
+	// accountID reaches through a team of that org.
+	ListProjectsByTeamAccess(ctx context.Context, orgID, accountID string) ([]*model.Project, error)
+	// HasProjectAccess reports whether accountID reaches projectID through a
+	// team of orgID, the project itself active and belonging to orgID.
+	HasProjectAccess(ctx context.Context, orgID, accountID, projectID string) (bool, error)
+	// SoftDeleteProject deletes a project of orgID. Returns ErrNotFound when
+	// the project never existed or belongs to another org.
+	SoftDeleteProject(ctx context.Context, orgID, id string) error
 	// EnsureCreatorProjectAccess wires accountID into the org's default
-	// team and grants that team write access to projectID. Idempotent.
+	// team and grants that team write access to projectID. Idempotent. An
+	// account that is not a member of orgID never joins the team.
 	EnsureCreatorProjectAccess(ctx context.Context, orgID, accountID, projectID string) error
 	// EnsureDefaultTeamMembership ensures accountID is a member of the
-	// org's default team (creating the team if needed). Idempotent.
+	// org's default team (creating the team if needed). Idempotent. An
+	// account that is not a member of orgID never joins the team.
 	EnsureDefaultTeamMembership(ctx context.Context, orgID, accountID string) error
+	// IsDefaultTeamMember reports whether accountID is on orgID's default
+	// team.
+	IsDefaultTeamMember(ctx context.Context, orgID, accountID string) (bool, error)
+	// GrantProjectToDefaultTeam grants orgID's default team write access to
+	// a project of orgID, without adding anyone to the team. Idempotent.
+	GrantProjectToDefaultTeam(ctx context.Context, orgID, projectID string) error
 
 	// Skills are org-scoped, versioned Markdown instructions. Runtime project
 	// reads only return currently active, explicitly attached skills.
@@ -203,7 +223,9 @@ type Store interface {
 	CreateInvite(ctx context.Context, orgID, email, displayName, role, tokenHash string, expiresAt time.Time, createdBy string) (*model.Invite, error)
 	GetInviteByTokenHash(ctx context.Context, tokenHash string) (*model.Invite, error)
 	ListInvitesByOrg(ctx context.Context, orgID string) ([]*model.Invite, error)
-	DeleteInvite(ctx context.Context, id string) error
+	// DeleteInvite removes an invite of orgID; ErrNotFound when it is missing
+	// or belongs to another org.
+	DeleteInvite(ctx context.Context, orgID, id string) error
 	MarkInviteAccepted(ctx context.Context, id string) error
 
 	// Curation queue.

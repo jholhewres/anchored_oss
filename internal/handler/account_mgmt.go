@@ -119,12 +119,6 @@ func (h *AccountHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AccountHandler) SetProjects(w http.ResponseWriter, r *http.Request) {
-	orgID := middleware.GetOrgID(r.Context())
-	if orgID == "" {
-		jsonError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
 	id := r.PathValue("id")
 	if !uuidRe.MatchString(id) {
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
@@ -136,11 +130,20 @@ func (h *AccountHandler) SetProjects(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// Only a member of the caller's org can be put on its default team: an
+	// account of another org answers 404 and is never touched.
+	orgID, ok := h.requireOrgMember(w, r, id)
+	if !ok {
+		return
+	}
 	if req.ProjectIDs == nil {
 		req.ProjectIDs = []string{}
 	}
 
-	if err := h.store.SetAccountProjects(r.Context(), orgID, id, req.ProjectIDs); err != nil {
+	if err := h.store.SetAccountProjects(r.Context(), orgID, id, req.ProjectIDs); errors.Is(err, store.ErrNotFound) {
+		jsonError(w, http.StatusNotFound, "account not found")
+		return
+	} else if err != nil {
 		h.logger.Error("set account projects failed", "error", err, "account_id", id)
 		jsonError(w, http.StatusInternalServerError, "set account projects failed")
 		return

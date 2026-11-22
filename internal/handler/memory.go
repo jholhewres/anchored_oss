@@ -375,7 +375,14 @@ func (h *MemoryHandler) idempotentReplayStillVisible(
 		return false
 	}
 	if project.OrgID != orgID {
-		jsonError(w, http.StatusForbidden, "project belongs to a different organization")
+		// Idempotency rows are keyed by org, so this is defensive: answer as
+		// for a deleted project rather than confirm another org's project.
+		jsonCodedError(
+			w,
+			http.StatusGone,
+			"idempotency_replay_unavailable",
+			"the original project was deleted",
+		)
 		return false
 	}
 	return true
@@ -411,7 +418,7 @@ func (h *MemoryHandler) Search(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	if !h.checkProjectAccess(w, r, projectID) {
+	if _, ok := requireProjectAccess(w, r, h.store, h.logger, projectID); !ok {
 		return
 	}
 
@@ -574,21 +581,12 @@ func validIdempotencyKey(key string) bool {
 
 func (h *MemoryHandler) resolveProject(w http.ResponseWriter, r *http.Request, orgID, accountID string, req *createMemoryRequest) (string, bool) {
 	if req.ProjectID != "" {
-		p, err := h.store.GetActiveProjectByID(r.Context(), req.ProjectID)
-		if errors.Is(err, store.ErrNotFound) {
-			jsonError(w, http.StatusNotFound, "project not found")
+		// The same gate as every other project route: another org's project
+		// is 404, and a key without team access is 403.
+		if _, ok := requireProjectAccess(w, r, h.store, h.logger, req.ProjectID); !ok {
 			return "", false
 		}
-		if err != nil {
-			h.logger.Error("project lookup failed", "project_id", req.ProjectID, "error", err)
-			jsonError(w, http.StatusInternalServerError, "project lookup failed")
-			return "", false
-		}
-		if p.OrgID != orgID {
-			jsonError(w, http.StatusForbidden, "project belongs to a different organization")
-			return "", false
-		}
-		return p.ID, true
+		return req.ProjectID, true
 	}
 
 	claim := req.ProjectClaim
@@ -604,6 +602,11 @@ func (h *MemoryHandler) resolveProject(w http.ResponseWriter, r *http.Request, o
 
 	existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, claim.RemoteKey)
 	if err == nil {
+		// A claim naming an existing project needs team access to it, as in
+		// /v1/sync.
+		if _, ok := requireProjectAccess(w, r, h.store, h.logger, existing.ID); !ok {
+			return "", false
+		}
 		return existing.ID, true
 	}
 	if !errors.Is(err, store.ErrNotFound) {
@@ -618,6 +621,26 @@ func (h *MemoryHandler) resolveProject(w http.ResponseWriter, r *http.Request, o
 		return "", false
 	}
 
+	// A new project is granted to the org's default team. An admin creator
+	// joins that team as before. A non-admin key must already be on it: one
+	// an admin kept off would otherwise reach every project of that team.
+	// Its project is only granted, never followed by a join, so a removal
+	// racing this request is never undone. The 403 is the one an existing
+	// project without access gets, so remote keys cannot be probed.
+	admin := middleware.GetScope(r.Context()) == "admin"
+	if !admin {
+		onDefault, err := h.store.IsDefaultTeamMember(r.Context(), orgID, accountID)
+		if err != nil {
+			h.logger.Error("default team membership check failed", "error", err)
+			jsonError(w, http.StatusInternalServerError, "project lookup failed")
+			return "", false
+		}
+		if !onDefault {
+			jsonError(w, http.StatusForbidden, "no team access to this project")
+			return "", false
+		}
+	}
+
 	proj, err := h.store.CreateProject(r.Context(), orgID, claim.Name, slug, claim.RemoteKey, "", "", accountID, "other")
 	if err != nil {
 		h.logger.Error("project creation from claim failed", "remote_key", claim.RemoteKey, "error", err)
@@ -625,36 +648,18 @@ func (h *MemoryHandler) resolveProject(w http.ResponseWriter, r *http.Request, o
 		return "", false
 	}
 
-	if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, proj.ID); err != nil {
+	if admin {
+		err = h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, proj.ID)
+	} else {
+		err = h.store.GrantProjectToDefaultTeam(r.Context(), orgID, proj.ID)
+	}
+	if err != nil {
 		h.logger.Error("grant creator access failed", "project_id", proj.ID, "error", err)
 		jsonError(w, http.StatusInternalServerError, "failed to grant project access")
 		return "", false
 	}
 
 	return proj.ID, true
-}
-
-func (h *MemoryHandler) checkProjectAccess(w http.ResponseWriter, r *http.Request, projectID string) bool {
-	scope := middleware.GetScope(r.Context())
-	if scope == "admin" {
-		return true
-	}
-	accountID := middleware.GetAccountID(r.Context())
-	if accountID == "" {
-		jsonError(w, http.StatusUnauthorized, "missing account context")
-		return false
-	}
-	ok, err := h.store.HasProjectAccess(r.Context(), accountID, projectID)
-	if err != nil {
-		h.logger.Error("project access check failed", "error", err, "project_id", projectID)
-		jsonError(w, http.StatusInternalServerError, "access check failed")
-		return false
-	}
-	if !ok {
-		jsonError(w, http.StatusForbidden, "no team access to this project")
-		return false
-	}
-	return true
 }
 
 func toSlug(name string) string {

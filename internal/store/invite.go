@@ -84,8 +84,8 @@ func (s *PostgresStore) ListInvitesByOrg(ctx context.Context, orgID string) ([]*
 	return out, nil
 }
 
-func (s *PostgresStore) DeleteInvite(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM invites WHERE id = $1`, id)
+func (s *PostgresStore) DeleteInvite(ctx context.Context, orgID, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM invites WHERE id = $1 AND org_id = $2`, id, orgID)
 	if err != nil {
 		return fmt.Errorf("delete invite: %w", err)
 	}

@@ -49,7 +49,11 @@ func TestMemoryHealth_ProjectAccessMatrix(t *testing.T) {
 		t.Fatalf("outsider status = %d, want 403", rec.Code)
 	}
 
-	// Member with project access (creator) passes.
+	// Member with project access (creator) passes. Only org members join a
+	// team, so the creator joins the org first.
+	if err := st.AddOrgMember(ctx, orgID, acctID, "member"); err != nil {
+		t.Fatalf("add org member: %v", err)
+	}
 	if err := st.EnsureCreatorProjectAccess(ctx, orgID, acctID, projectID); err != nil {
 		t.Fatalf("grant access: %v", err)
 	}

@@ -110,13 +110,16 @@ func TestSQLiteTeamDetail_ScansMemberAddedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create team: %v", err)
 	}
-	if err := st.AddTeamMember(ctx, team.ID, acct.ID); err != nil {
+	if err := st.AddOrgMember(ctx, org.ID, acct.ID, "member"); err != nil {
+		t.Fatalf("add org member: %v", err)
+	}
+	if err := st.AddTeamMember(ctx, org.ID, team.ID, acct.ID); err != nil {
 		t.Fatalf("add team member: %v", err)
 	}
 
 	// GetTeamDetail scans tm.created_at into TeamMember.AddedAt; this is the
 	// member-row path that List does not exercise.
-	detail, err := st.GetTeamDetail(ctx, team.ID)
+	detail, err := st.GetTeamDetail(ctx, org.ID, team.ID)
 	if err != nil {
 		t.Fatalf("GetTeamDetail must not fail scanning member added_at: %v", err)
 	}

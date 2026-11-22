@@ -144,3 +144,29 @@ func performChatComplete(
 	handler.Complete(response, request)
 	return response
 }
+
+// TestChatRoutesHideOtherOrgsProjects: chat status and chat completion take a
+// project id from the caller, so an admin key of another org gets 404 there
+// too, before any retrieval or provider call.
+func TestChatRoutesHideOtherOrgsProjects(t *testing.T) {
+	st := newProjectTestStore(t)
+	_, actorID, projectID := seedProject(t, st)
+	provider := &readinessChatProvider{}
+	handler := &ChatHandler{
+		store:    st,
+		embedder: embeddings.NewLocalEmbedder(8),
+		provider: provider,
+		logger:   slog.Default(),
+	}
+	foreign := adminCtx("00000000-0000-0000-0000-000000000000", actorID)
+
+	if rec := performChatStatus(handler, foreign, projectID); rec.Code != http.StatusNotFound {
+		t.Fatalf("foreign admin chat status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := performChatComplete(handler, foreign, projectID, "What is planned?"); rec.Code != http.StatusNotFound {
+		t.Fatalf("foreign admin chat = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if provider.calls != 0 {
+		t.Fatalf("chat provider calls for a foreign project = %d, want 0", provider.calls)
+	}
+}

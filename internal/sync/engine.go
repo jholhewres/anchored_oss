@@ -38,7 +38,7 @@ func (e *SyncEngine) Sync(ctx context.Context, accountID, orgID string, req *mod
 		return nil, err
 	}
 
-	if err := e.authorize(ctx, accountID, projectID); err != nil {
+	if err := e.authorize(ctx, orgID, accountID, projectID); err != nil {
 		return nil, err
 	}
 
@@ -137,7 +137,9 @@ func (e *SyncEngine) effectiveBlockedCategories(ctx context.Context, orgID strin
 
 func (e *SyncEngine) resolveProject(ctx context.Context, orgID, accountID string, req *model.SyncRequest) (string, error) {
 	if req.ProjectID != "" {
-		p, err := e.store.GetProjectByID(ctx, req.ProjectID)
+		// Active projects only: a deleted project is PROJECT_NOT_FOUND for
+		// every scope, as on the HTTP project routes.
+		p, err := e.store.GetActiveProjectByID(ctx, req.ProjectID)
 		if errors.Is(err, store.ErrNotFound) {
 			return "", &SyncError{Code: "PROJECT_NOT_FOUND", Status: 404, Msg: "project not found"}
 		}
@@ -146,7 +148,9 @@ func (e *SyncEngine) resolveProject(ctx context.Context, orgID, accountID string
 			return "", &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "project lookup failed"}
 		}
 		if p.OrgID != orgID {
-			return "", &SyncError{Code: "FORBIDDEN", Status: 403, Msg: "project belongs to a different organization"}
+			// Same answer as a missing project, so other orgs' project ids
+			// cannot be probed.
+			return "", &SyncError{Code: "PROJECT_NOT_FOUND", Status: 404, Msg: "project not found"}
 		}
 		return p.ID, nil
 	}
@@ -179,23 +183,21 @@ func (e *SyncEngine) resolveProject(ctx context.Context, orgID, accountID string
 	}
 }
 
-func (e *SyncEngine) authorize(ctx context.Context, accountID, projectID string) error {
+func (e *SyncEngine) authorize(ctx context.Context, orgID, accountID, projectID string) error {
 	// Admin keys bypass team-access checks but are still bounded by the
 	// org match in resolveProject.
 	if middleware.GetScope(ctx) == "admin" {
 		return nil
 	}
-	projects, err := e.store.ListProjectsByTeamAccess(ctx, accountID)
+	ok, err := e.store.HasProjectAccess(ctx, orgID, accountID, projectID)
 	if err != nil {
-		e.logger.Error("authorize: list projects failed", "account_id", accountID, "error", err)
+		e.logger.Error("authorize: project access check failed", "account_id", accountID, "error", err)
 		return &SyncError{Code: "INTERNAL_ERROR", Status: 500, Msg: "authorization check failed"}
 	}
-	for _, p := range projects {
-		if p.ID == projectID {
-			return nil
-		}
+	if !ok {
+		return &SyncError{Code: "FORBIDDEN", Status: 403, Msg: "no team access to this project"}
 	}
-	return &SyncError{Code: "FORBIDDEN", Status: 403, Msg: "no team access to this project"}
+	return nil
 }
 
 // filterForOrg builds the per-org content filter from its guardrail set. An org

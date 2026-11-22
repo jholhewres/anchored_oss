@@ -285,7 +285,7 @@ func countProjectMemories(t *testing.T, st *store.SQLiteStore, projectID string)
 // allMemoryCount counts live memories across every project in the org.
 func allMemoryCount(t *testing.T, e *env) int {
 	t.Helper()
-	projects, err := e.store.ListProjectsByTeamAccess(context.Background(), e.acctID)
+	projects, err := e.store.ListProjectsByTeamAccess(context.Background(), e.orgID, e.acctID)
 	if err != nil {
 		t.Fatalf("list projects: %v", err)
 	}

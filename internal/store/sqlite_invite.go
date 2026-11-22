@@ -86,8 +86,8 @@ func (s *SQLiteStore) ListInvitesByOrg(ctx context.Context, orgID string) ([]*mo
 	return out, nil
 }
 
-func (s *SQLiteStore) DeleteInvite(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM invites WHERE id = ?`, id)
+func (s *SQLiteStore) DeleteInvite(ctx context.Context, orgID, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM invites WHERE id = ? AND org_id = ?`, id, orgID)
 	if err != nil {
 		return fmt.Errorf("delete invite: %w", err)
 	}

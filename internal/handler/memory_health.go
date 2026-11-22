@@ -64,8 +64,9 @@ func (h *MemoryHealthHandler) cached(key string, compute func() (*model.MemoryHe
 	return val, nil
 }
 
-// Project handles GET /v1/projects/{id}/memory-health. Any authenticated key
-// with team access to the project (admin bypasses) can read it.
+// Project handles GET /v1/projects/{id}/memory-health. Any key of the
+// project's org with team access to it (admin bypasses the team check) can
+// read it.
 func (h *MemoryHealthHandler) Project(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !uuidRe.MatchString(id) {
@@ -73,23 +74,8 @@ func (h *MemoryHealthHandler) Project(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scope := middleware.GetScope(r.Context())
-	if scope != "admin" {
-		accountID := middleware.GetAccountID(r.Context())
-		if accountID == "" {
-			jsonError(w, http.StatusUnauthorized, "missing account context")
-			return
-		}
-		ok, err := h.store.HasProjectAccess(r.Context(), accountID, id)
-		if err != nil {
-			h.logger.Error("health access check failed", "error", err, "project_id", id)
-			jsonError(w, http.StatusInternalServerError, "access check failed")
-			return
-		}
-		if !ok {
-			jsonError(w, http.StatusForbidden, "no team access to this project")
-			return
-		}
+	if _, ok := requireProjectAccess(w, r, h.store, h.logger, id); !ok {
+		return
 	}
 
 	health, err := h.cached("p:"+id, func() (*model.MemoryHealth, error) {

@@ -134,7 +134,7 @@ func TestMemoryCreate_DeletedProjectRedactsReplaySnapshot(t *testing.T) {
 	if first.Code != http.StatusCreated {
 		t.Fatalf("initial status = %d, body=%s", first.Code, first.Body.String())
 	}
-	if err := st.SoftDeleteProject(adminCtx(orgID, actorID), projectID); err != nil {
+	if err := st.SoftDeleteProject(adminCtx(orgID, actorID), orgID, projectID); err != nil {
 		t.Fatalf("soft delete project: %v", err)
 	}
 

@@ -155,10 +155,10 @@ func TestSoftDelete_TwoInSameOrg(t *testing.T) {
 		t.Fatalf("create b: %v", err)
 	}
 
-	if err := st.SoftDeleteProject(ctx, a.ID); err != nil {
+	if err := st.SoftDeleteProject(ctx, orgID, a.ID); err != nil {
 		t.Fatalf("soft delete a: %v", err)
 	}
-	if err := st.SoftDeleteProject(ctx, b.ID); err != nil {
+	if err := st.SoftDeleteProject(ctx, orgID, b.ID); err != nil {
 		t.Fatalf("soft delete b must also succeed: %v", err)
 	}
 }
@@ -214,7 +214,7 @@ func TestSoftDelete_FreesSlugForReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create first: %v", err)
 	}
-	if err := st.SoftDeleteProject(ctx, first.ID); err != nil {
+	if err := st.SoftDeleteProject(ctx, orgID, first.ID); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
@@ -257,7 +257,7 @@ func TestMigration015_FreesLegacyDeletedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if err := st.SoftDeleteProject(ctx, created.ID); err != nil {
+	if err := st.SoftDeleteProject(ctx, orgID, created.ID); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
@@ -417,5 +417,146 @@ func TestSearchMemories_MultiWordQuery(t *testing.T) {
 	}
 	if len(got) == 0 || got[0].ID != "s2" {
 		t.Fatalf("want s2 (phrase hit) first, got %+v", got)
+	}
+}
+
+// TestProjectAccess_ScopedToOrg: team access and soft delete only act inside
+// the org given. Its Postgres twin is TestProjectAccess_ScopedToOrg_Postgres.
+func TestProjectAccess_ScopedToOrg(t *testing.T) {
+	checkProjectAccessScopedToOrg(t, newSQLiteTestStore(t), "")
+}
+
+// checkProjectAccessScopedToOrg runs the org-scope assertions on any backend.
+// An account put on another org's team (the cross-org SetProjects path) still
+// sees nothing when its own org's key asks, and a delete naming another org's
+// project is ErrNotFound and leaves it alone. u keeps names unique on a shared
+// database.
+func checkProjectAccessScopedToOrg(t *testing.T, st Store, u string) {
+	t.Helper()
+	ctx := context.Background()
+	orgA, err := st.CreateOrganization(ctx, "Acme", "acme"+u)
+	if err != nil {
+		t.Fatalf("create org a: %v", err)
+	}
+	ownerA, err := st.CreateAccount(ctx, "owner"+u+"@acme.test", "Owner", "hash")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	orgB, err := st.CreateOrganization(ctx, "Other", "other"+u)
+	if err != nil {
+		t.Fatalf("create org b: %v", err)
+	}
+	outsider, err := st.CreateAccount(ctx, "x"+u+"@other.test", "X", "hash")
+	if err != nil {
+		t.Fatalf("create outsider: %v", err)
+	}
+
+	project, err := st.CreateProject(ctx, orgA.ID, "Secret", "secret"+u, "key-secret"+u, "", "", ownerA.ID, "other")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	// The outsider sits on org A's default team, which grants the project:
+	// the row the pre-v0.7 cross-org SetProjects path could write.
+	if err := st.EnsureCreatorProjectAccess(ctx, orgA.ID, ownerA.ID, project.ID); err != nil {
+		t.Fatalf("grant project to the default team: %v", err)
+	}
+	plantTeamMember(t, st, defaultTeamID(t, st, orgA.ID), outsider.ID)
+
+	if ok, err := st.HasProjectAccess(ctx, orgB.ID, outsider.ID, project.ID); err != nil || ok {
+		t.Fatalf("HasProjectAccess with org b = %t, %v; want false", ok, err)
+	}
+	if ok, err := st.HasProjectAccess(ctx, orgA.ID, outsider.ID, project.ID); err != nil || !ok {
+		t.Fatalf("HasProjectAccess with org a = %t, %v; want true", ok, err)
+	}
+	if got, err := st.ListProjectsByTeamAccess(ctx, orgB.ID, outsider.ID); err != nil || len(got) != 0 {
+		t.Fatalf("ListProjectsByTeamAccess with org b = %d projects, %v; want none", len(got), err)
+	}
+	if got, err := st.ListProjectsByTeamAccess(ctx, orgA.ID, outsider.ID); err != nil || len(got) != 1 {
+		t.Fatalf("ListProjectsByTeamAccess with org a = %d projects, %v; want 1", len(got), err)
+	}
+
+	if err := st.SoftDeleteProject(ctx, orgB.ID, project.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SoftDeleteProject from org b = %v, want ErrNotFound", err)
+	}
+	if _, err := st.GetActiveProjectByID(ctx, project.ID); err != nil {
+		t.Fatalf("project must survive a foreign delete: %v", err)
+	}
+	if err := st.SoftDeleteProject(ctx, orgA.ID, project.ID); err != nil {
+		t.Fatalf("SoftDeleteProject from its own org: %v", err)
+	}
+	if _, err := st.GetActiveProjectByID(ctx, project.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("project after delete = %v, want ErrNotFound", err)
+	}
+	// A grant that crosses orgs (a team of org B on a project of org A) opens
+	// nothing for either org: the team's org and the project's org are each
+	// checked.
+	crossed, err := st.CreateProject(ctx, orgA.ID, "Crossed", "crossed"+u, "key-crossed"+u, "", "", ownerA.ID, "other")
+	if err != nil {
+		t.Fatalf("create crossed project: %v", err)
+	}
+	stray, err := st.CreateAccount(ctx, "stray"+u+"@other.test", "Stray", "hash")
+	if err != nil {
+		t.Fatalf("create stray account: %v", err)
+	}
+	// The store no longer writes such a grant (the project must be in the
+	// org), so it is planted the way a pre-v0.7 row would sit.
+	if err := st.EnsureCreatorProjectAccess(ctx, orgB.ID, stray.ID, crossed.ID); err != nil {
+		t.Fatalf("EnsureCreatorProjectAccess across orgs: %v", err)
+	}
+	teamB := defaultTeamID(t, st, orgB.ID)
+	if detail, err := st.GetTeamDetail(ctx, orgB.ID, teamB); err != nil || len(detail.ProjectGrants) != 0 {
+		t.Fatalf("org b's team holds a grant on org a's project: %+v, %v", detail, err)
+	}
+	plantGrant(t, st, teamB, crossed.ID)
+	plantTeamMember(t, st, teamB, stray.ID)
+	if detail, err := st.GetTeamDetail(ctx, orgB.ID, teamB); err != nil || len(detail.ProjectGrants) != 0 {
+		t.Fatalf("org b's team detail lists org a's project: %+v, %v", detail, err)
+	}
+	for _, org := range []string{orgA.ID, orgB.ID} {
+		if ok, err := st.HasProjectAccess(ctx, org, stray.ID, crossed.ID); err != nil || ok {
+			t.Fatalf("HasProjectAccess through a crossed grant (org %s) = %t, %v; want false", org, ok, err)
+		}
+		if got, err := st.ListProjectsByTeamAccess(ctx, org, stray.ID); err != nil || len(got) != 0 {
+			t.Fatalf("ListProjectsByTeamAccess through a crossed grant (org %s) = %d, %v; want none", org, len(got), err)
+		}
+	}
+
+	// The team grant outlives the delete; the access check must not.
+	if ok, err := st.HasProjectAccess(ctx, orgA.ID, outsider.ID, project.ID); err != nil || ok {
+		t.Fatalf("HasProjectAccess on a deleted project = %t, %v; want false", ok, err)
+	}
+}
+
+// defaultTeamID returns the id of orgID's default team, which must exist.
+func defaultTeamID(t *testing.T, st Store, orgID string) string {
+	t.Helper()
+	teams, err := st.ListTeamsByOrg(context.Background(), orgID)
+	if err != nil {
+		t.Fatalf("list teams: %v", err)
+	}
+	for _, team := range teams {
+		if team.Slug == defaultTeamSlug {
+			return team.ID
+		}
+	}
+	t.Fatalf("org %s has no default team", orgID)
+	return ""
+}
+
+// plantGrant writes a team_project_access row directly, the way a crossed
+// grant could sit in a pre-v0.7 database; no store method writes one now.
+func plantGrant(t *testing.T, st Store, teamID, projectID string) {
+	t.Helper()
+	var err error
+	switch s := st.(type) {
+	case *SQLiteStore:
+		_, err = s.db.Exec(`INSERT INTO team_project_access (team_id, project_id, role) VALUES (?, ?, 'writer')`, teamID, projectID)
+	case *PostgresStore:
+		_, err = s.db.Exec(`INSERT INTO team_project_access (team_id, project_id, role) VALUES ($1, $2, 'writer')`, teamID, projectID)
+	default:
+		t.Fatalf("plantGrant: unsupported store %T", st)
+	}
+	if err != nil {
+		t.Fatalf("plant grant: %v", err)
 	}
 }

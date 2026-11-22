@@ -82,7 +82,13 @@ func (h *TeamHandler) GetDetail(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
-	detail, err := h.store.GetTeamDetail(r.Context(), id)
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	// A team of another org answers 404, the same as a missing one.
+	detail, err := h.store.GetTeamDetail(r.Context(), orgID, id)
 	if errors.Is(err, store.ErrNotFound) {
 		jsonError(w, http.StatusNotFound, "team not found")
 		return
@@ -110,7 +116,16 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "account_id must be a UUID")
 		return
 	}
-	if err := h.store.AddTeamMember(r.Context(), id, req.AccountID); err != nil {
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.store.AddTeamMember(r.Context(), orgID, id, req.AccountID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			jsonError(w, http.StatusNotFound, "team or account not found")
+			return
+		}
 		h.logger.Error("add team member failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "add team member failed")
 		return
@@ -125,7 +140,12 @@ func (h *TeamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "id and account_id must be UUIDs")
 		return
 	}
-	if err := h.store.RemoveTeamMember(r.Context(), id, accountID); err != nil {
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.store.RemoveTeamMember(r.Context(), orgID, id, accountID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			jsonError(w, http.StatusNotFound, "membership not found")
 			return

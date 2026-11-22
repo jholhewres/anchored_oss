@@ -148,7 +148,13 @@ func (h *InviteHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
-	if err := h.store.DeleteInvite(r.Context(), id); err != nil {
+	orgID := middleware.GetOrgID(r.Context())
+	if orgID == "" {
+		jsonError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	// Another org's invite answers 404, the same as a missing one.
+	if err := h.store.DeleteInvite(r.Context(), orgID, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			jsonError(w, http.StatusNotFound, "invite not found")
 			return

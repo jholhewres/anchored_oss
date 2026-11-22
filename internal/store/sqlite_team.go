@@ -47,11 +47,11 @@ func (s *SQLiteStore) ListTeamsByOrg(ctx context.Context, orgID string) ([]*mode
 	return teams, nil
 }
 
-func (s *SQLiteStore) GetTeamDetail(ctx context.Context, teamID string) (*model.TeamDetail, error) {
+func (s *SQLiteStore) GetTeamDetail(ctx context.Context, orgID, teamID string) (*model.TeamDetail, error) {
 	var d model.TeamDetail
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, org_id, name, slug, created_at FROM teams WHERE id = ?`,
-		teamID,
+		`SELECT id, org_id, name, slug, created_at FROM teams WHERE id = ? AND org_id = ?`,
+		teamID, orgID,
 	).Scan(&d.ID, &d.OrgID, &d.Name, &d.Slug, scanTime(&d.CreatedAt))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -60,10 +60,14 @@ func (s *SQLiteStore) GetTeamDetail(ctx context.Context, teamID string) (*model.
 		return nil, fmt.Errorf("get team: %w", err)
 	}
 
+	// Only members of the team's org are listed: rows planted on a team by
+	// another org's admin before v0.7 stay invisible.
 	memberRows, err := s.db.QueryContext(ctx,
 		`SELECT a.id, a.email, a.display_name, tm.created_at
 		 FROM team_members tm
 		 JOIN accounts a ON a.id = tm.account_id
+		 JOIN teams t ON t.id = tm.team_id
+		 JOIN org_members om ON om.org_id = t.org_id AND om.account_id = tm.account_id
 		 WHERE tm.team_id = ?
 		 ORDER BY a.display_name`,
 		teamID,
@@ -88,7 +92,8 @@ func (s *SQLiteStore) GetTeamDetail(ctx context.Context, teamID string) (*model.
 	grantRows, err := s.db.QueryContext(ctx,
 		`SELECT p.id, p.name, p.slug, tpa.role
 		 FROM team_project_access tpa
-		 JOIN projects p ON p.id = tpa.project_id
+		 JOIN teams t ON t.id = tpa.team_id
+		 JOIN projects p ON p.id = tpa.project_id AND p.org_id = t.org_id
 		 WHERE tpa.team_id = ? AND p.deleted_at IS NULL
 		 ORDER BY p.name`,
 		teamID,
@@ -113,21 +118,49 @@ func (s *SQLiteStore) GetTeamDetail(ctx context.Context, teamID string) (*model.
 	return &d, nil
 }
 
-func (s *SQLiteStore) AddTeamMember(ctx context.Context, teamID, accountID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO team_members (team_id, account_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
-		teamID, accountID,
+func (s *SQLiteStore) AddTeamMember(ctx context.Context, orgID, teamID, accountID string) error {
+	// Only a team of orgID and a member of orgID: the SELECT yields no row
+	// otherwise. When nothing was inserted, the membership check tells a
+	// repeat add (nil) from an account or team outside orgID (ErrNotFound).
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO team_members (team_id, account_id)
+		 SELECT t.id, om.account_id FROM teams t JOIN org_members om ON om.org_id = t.org_id
+		 WHERE t.id = ? AND t.org_id = ? AND om.account_id = ?
+		 ON CONFLICT DO NOTHING`,
+		teamID, orgID, accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("add team member: %w", err)
 	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("add team member rows affected: %w", err)
+	} else if n > 0 {
+		return nil
+	}
+	var already bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM team_members tm
+		   JOIN teams t ON t.id = tm.team_id
+		   JOIN org_members om ON om.org_id = t.org_id AND om.account_id = tm.account_id
+		   WHERE tm.team_id = ? AND t.org_id = ? AND tm.account_id = ?
+		 )`,
+		teamID, orgID, accountID,
+	).Scan(&already); err != nil {
+		return fmt.Errorf("check team membership: %w", err)
+	}
+	if !already {
+		return ErrNotFound
+	}
 	return nil
 }
 
-func (s *SQLiteStore) RemoveTeamMember(ctx context.Context, teamID, accountID string) error {
+func (s *SQLiteStore) RemoveTeamMember(ctx context.Context, orgID, teamID, accountID string) error {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM team_members WHERE team_id = ? AND account_id = ?`,
-		teamID, accountID,
+		`DELETE FROM team_members
+		 WHERE team_id = ? AND account_id = ?
+		   AND team_id IN (SELECT id FROM teams WHERE org_id = ?)`,
+		teamID, accountID, orgID,
 	)
 	if err != nil {
 		return fmt.Errorf("remove team member: %w", err)

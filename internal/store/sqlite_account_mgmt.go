@@ -120,11 +120,19 @@ func (s *SQLiteStore) SetAccountProjects(ctx context.Context, orgID, accountID s
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO team_members (team_id, account_id) VALUES (?, ?) ON CONFLICT DO NOTHING`,
-		teamID, accountID,
-	); err != nil {
-		return fmt.Errorf("ensure team member: %w", err)
+	// Only a member of orgID joins its default team (ErrNotFound otherwise).
+	var member bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM org_members WHERE org_id = ? AND account_id = ?)`,
+		orgID, accountID,
+	).Scan(&member); err != nil {
+		return fmt.Errorf("check org membership: %w", err)
+	}
+	if !member {
+		return ErrNotFound
+	}
+	if err := sqliteJoinTeamIfOrgMember(ctx, tx, orgID, teamID, accountID); err != nil {
+		return err
 	}
 
 	desired := make(map[string]bool, len(projectIDs))

@@ -92,7 +92,9 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	teamHandler := handler.NewTeamHandler(st, logger)
 	mux.HandleFunc("GET /v1/teams", authMW(http.HandlerFunc(teamHandler.List)).ServeHTTP)
 	mux.HandleFunc("POST /v1/teams", authMW(requireAdmin(http.HandlerFunc(teamHandler.Create))).ServeHTTP)
-	mux.HandleFunc("GET /v1/teams/{id}", authMW(http.HandlerFunc(teamHandler.GetDetail)).ServeHTTP)
+	// Team detail lists members' emails and every project the team grants, so
+	// it is admin-only like GET /v1/accounts.
+	mux.HandleFunc("GET /v1/teams/{id}", authMW(requireAdmin(http.HandlerFunc(teamHandler.GetDetail))).ServeHTTP)
 	mux.HandleFunc("POST /v1/teams/{id}/members", authMW(requireAdmin(http.HandlerFunc(teamHandler.AddMember))).ServeHTTP)
 	mux.HandleFunc("DELETE /v1/teams/{id}/members/{account_id}", authMW(requireAdmin(http.HandlerFunc(teamHandler.RemoveMember))).ServeHTTP)
 

@@ -26,11 +26,12 @@ The `Authorization` header is missing, malformed, or contains an invalid or revo
 
 **HTTP 403**
 
-The authenticated account does not have the required access. This covers three distinct scenarios:
+The authenticated account does not have the required access. This covers two distinct scenarios:
 
 1. **Insufficient scope**: the API key has `readonly` scope but the request includes `pushes` or `tombstones`.
 2. **No team access**: the account is not a member of any team with access to the target project.
-3. **Cross-org project**: the project belongs to a different organization than the one associated with the API key.
+
+A project of another organization is never `FORBIDDEN`: it answers `PROJECT_NOT_FOUND`, so its id cannot be probed.
 
 ```json
 {"error": "FORBIDDEN"}
@@ -62,7 +63,7 @@ The request body is malformed JSON, missing required fields, or structurally inv
 
 **HTTP 404**
 
-The `project_id` does not match any existing project, or auto-creation from a `project_claim` is not supported yet.
+The `project_id` does not match an active project of the key's organization: it does not exist, it was deleted, or it belongs to another organization (all three answer the same, so other organizations' project ids cannot be probed). Also returned when auto-creation from a `project_claim` is not supported yet.
 
 ```json
 {"error": "PROJECT_NOT_FOUND"}
@@ -183,7 +184,7 @@ An unexpected server-side failure. The client should log the error, keep its loc
 | `UNAUTHORIZED` | 401 | request | Invalid or missing API key |
 | `FORBIDDEN` | 403 | request | Insufficient scope or no team access |
 | `INVALID_REQUEST` | 400 | request | Malformed JSON or missing fields |
-| `PROJECT_NOT_FOUND` | 404 | request | Project ID does not exist |
+| `PROJECT_NOT_FOUND` | 404 | request | No active project with this ID in the key's org |
 | `AUTO_CREATE_DISABLED` | 403 | request | Org does not allow auto-creation |
 | `CONFLICT` | 409 | request | Hash mismatch on existing memory |
 | `INTERNAL_ERROR` | 500 | request | Unexpected server failure |
