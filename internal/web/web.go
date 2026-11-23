@@ -11,9 +11,10 @@ import (
 	"strings"
 )
 
-// DistFS holds the compiled SPA. A stub index.html is tracked in git so
-// `go build` works without a Node.js toolchain; `make web-build` overwrites
-// it with the real Vite output.
+// DistFS holds the compiled SPA. Only dist/.keep is tracked, so `go build`
+// works from a fresh clone without Node.js (the dashboard route then has no
+// page to serve); `make web-build` fills dist with the real Vite output and
+// web/public/.keep puts .keep back.
 //
 //go:embed all:dist
 var DistFS embed.FS

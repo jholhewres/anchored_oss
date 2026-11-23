@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/jholhewres/anchored_oss/internal/auth"
 	"github.com/jholhewres/anchored_oss/internal/config"
 	"github.com/jholhewres/anchored_oss/internal/store"
+	"github.com/jholhewres/anchored_oss/internal/web"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -436,6 +438,11 @@ func TestSessionRolesManagePersonalKeysWithoutAdminEscalation(t *testing.T) {
 // returns HTML, /v1/* falls through to the API 404 JSON, and unknown
 // non-API paths fall back to index.html.
 func TestSPARoutes(t *testing.T) {
+	// A checkout without `make web-build` embeds only dist/.keep, and the
+	// server then serves no dashboard. CI builds the bundle first.
+	if _, err := fs.Stat(web.DistFS, "dist/index.html"); err != nil {
+		t.Skip("dashboard bundle not built (make web-build)")
+	}
 	ts := newTestServer(t)
 	defer ts.Close()
 

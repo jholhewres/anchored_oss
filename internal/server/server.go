@@ -193,9 +193,10 @@ func New(ctx context.Context, cfg *config.Config, st store.Store, embedder embed
 	// /api/* paths so the dashboard never masks an API typo.
 	spa, err := web.NewSPAHandler()
 	if err != nil {
-		// Compile-time embed ensures dist/index.html exists; fall back to
-		// a tiny inline placeholder if for any reason the embed read fails.
-		logger.Error("spa init failed", "error", err)
+		// A build without the dashboard bundle (a fresh clone, no `make
+		// web-build`) embeds only dist/.keep: the API still serves, the
+		// dashboard route does not.
+		logger.Error("spa init failed; dashboard not served (run make web-build)", "error", err)
 	} else {
 		mux.Handle("GET /", spa)
 	}

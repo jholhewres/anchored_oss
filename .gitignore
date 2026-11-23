@@ -1,6 +1,11 @@
 # Binaries
 bin/
-dist/
+/dist/
+# The dashboard bundle is built, not tracked; .keep lets go:embed (all:dist)
+# compile from a fresh clone, and web/public/.keep puts it back after each
+# Vite build.
+internal/web/dist/*
+!internal/web/dist/.keep
 *.exe
 *.exe~
 *.dll

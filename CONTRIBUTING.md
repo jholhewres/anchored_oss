@@ -42,7 +42,7 @@ go test -count=1 -race ./...    # unit tests
 make test-integration            # Postgres-backed store tests (//go:build integration)
 ```
 
-`make build` works without Node.js — the committed stub `internal/web/dist/index.html` keeps `go:embed` happy. The dashboard route just renders the stub until you run a real `make web-build`.
+`make build` works without Node.js: only `internal/web/dist/.keep` is tracked, which keeps `go:embed` happy. The API serves as usual; the dashboard route serves nothing until you run `make web-build` (Vite restores `.keep` from `web/public/` on every build).
 
 ## Frontend workflow
 

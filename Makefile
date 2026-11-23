@@ -15,9 +15,10 @@ LDFLAGS = -X $(VERSION_PKG).Version=$(VERSION)
 BINARY = bin/anchored-oss
 
 # Default build: uses whatever SPA artifacts are currently in
-# internal/web/dist/. The committed stub keeps `go build` working without
-# Node.js. For a production bundle run `make build-prod` or build the
-# Docker image (which always rebuilds the frontend).
+# internal/web/dist/. Only dist/.keep is tracked, so `go build` works without
+# Node.js; the dashboard is then not served. For a production bundle run
+# `make build-prod` or build the Docker image (which always rebuilds the
+# frontend).
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/server
 
@@ -65,7 +66,7 @@ web-dev:
 
 web-clean:
 	rm -rf web/node_modules internal/web/dist/assets
-	find internal/web/dist -mindepth 1 -name 'index.html' -prune -o -delete
+	find internal/web/dist -mindepth 1 -name '.keep' -prune -o -delete
 
 db-up:
 	docker compose up -d postgres
