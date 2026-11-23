@@ -206,4 +206,9 @@ func TestCanonicalGitRemote_KeepsTheCLIKey(t *testing.T) {
 	if _, ok := CanonicalGitRemote("https://jdoe@bitbucket.example.com:7990/scm/proj/repo.git"); ok {
 		t.Error("a username with a port was accepted, though its key differs once the username is dropped")
 	}
+	for _, remote := range []string{"https://a@evil.example@github.com/acme/repo.git", "https://a%40evil.example@github.com/acme/repo.git"} {
+		if got, ok := CanonicalGitRemote(remote); ok {
+			t.Errorf("CanonicalGitRemote(%q) = %q; a user holding @ must be refused", remote, got)
+		}
+	}
 }

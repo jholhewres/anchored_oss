@@ -177,9 +177,15 @@ func CanonicalGitRemote(rawURL string) (string, bool) {
 		if parsed.Port() != "" {
 			return "", false
 		}
-		authorityStart := len("https://")
-		at := strings.IndexByte(rawURL[authorityStart:], '@')
-		return "https://" + rawURL[authorityStart+at+1:], true
+		rest := rawURL[len("https://"):]
+		authority, _, _ := strings.Cut(rest, "/")
+		at := strings.LastIndexByte(authority, '@')
+		if strings.ContainsAny(authority[:at], "@%") {
+			// A user holding '@' (raw or encoded) would leave part of
+			// itself in front of the host once dropped.
+			return "", false
+		}
+		return "https://" + rest[at+1:], true
 	}
 	// The conventional SSH user, git, is part of the remote grammar and is
 	// handled by the shared normalization routine.

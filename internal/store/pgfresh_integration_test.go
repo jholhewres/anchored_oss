@@ -24,7 +24,8 @@ func freshPostgresStore(t *testing.T) *PostgresStore {
 	}
 	base, err := url.Parse(dsn)
 	if err != nil {
-		t.Fatalf("ANCHORED_TEST_DSN must be a postgres:// URL for the per-test databases: %v", err)
+		// Not the error itself: it quotes the DSN, password included.
+		t.Fatal("ANCHORED_TEST_DSN must be a postgres:// URL for the per-test databases (it does not parse)")
 	}
 	if base.Scheme != "postgres" && base.Scheme != "postgresql" {
 		t.Fatalf("ANCHORED_TEST_DSN must be a postgres:// URL for the per-test databases, not %q", base.Scheme)

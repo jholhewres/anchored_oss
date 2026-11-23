@@ -26,8 +26,8 @@ export function repositoryError(value: string): string | null {
   const authority = afterScheme.split("/")[0];
   const at = authority.lastIndexOf("@");
   const userinfo = at >= 0 ? authority.slice(0, at) : null;
-  if (userinfo !== null && (userinfo === "" || userinfo.includes(":"))) {
-    return "Repository remotes cannot include a password or an empty user.";
+  if (userinfo !== null && (userinfo === "" || /[:@%]/.test(userinfo))) {
+    return "Repository remotes cannot include a password, an empty user or an @ in the user.";
   }
   if (remote.startsWith("ssh://") && userinfo !== null && userinfo !== "git") {
     return "SSH repository remotes may use only the git user.";
