@@ -115,10 +115,12 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.createByRemoteKey(w, r, orgID, accountID, req)
 		return
 	}
-	if !projectpkg.IsValidGitRemote(req.RepoURL) {
-		jsonError(w, http.StatusBadRequest, "repo_url must be a valid HTTPS or SSH git remote")
+	repoURL, ok := projectpkg.CanonicalGitRemote(req.RepoURL)
+	if !ok {
+		jsonError(w, http.StatusBadRequest, "repo_url must be an HTTPS or SSH git remote without a password")
 		return
 	}
+	req.RepoURL = repoURL
 	// Derive both identifiers from the validated remote. This makes public
 	// project creation unambiguously repository-backed while retaining v1 sync
 	// resolution for clients that still send the legacy key.
@@ -340,10 +342,12 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusBadRequest, "repo_url cannot be empty")
 			return
 		}
-		if !projectpkg.IsValidGitRemote(*req.RepoURL) {
-			jsonError(w, http.StatusBadRequest, "repo_url must be a valid HTTPS or SSH git remote")
+		repoURL, ok := projectpkg.CanonicalGitRemote(*req.RepoURL)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "repo_url must be an HTTPS or SSH git remote without a password")
 			return
 		}
+		*req.RepoURL = repoURL
 	}
 
 	if req.Name != nil && *req.Name == "" {

@@ -86,3 +86,33 @@ func TestProjectCreate_DerivesRemoteAndReturnsEquivalentDuplicate(t *testing.T) 
 		}
 	}
 }
+
+// TestProjectCreate_StoresTheRemoteWithoutItsUsername: an HTTPS clone URL with
+// a bare username is accepted and stored without it; one with a password is
+// refused.
+func TestProjectCreate_StoresTheRemoteWithoutItsUsername(t *testing.T) {
+	st := newProjectTestStore(t)
+	orgID, accountID, _ := seedProject(t, st)
+	h := NewProjectHandler(st, slog.Default())
+
+	create := func(remote string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(`{"name":"Clone","slug":"clone","repo_url":"`+remote+`"}`)).WithContext(adminCtx(orgID, accountID))
+		rec := httptest.NewRecorder()
+		h.Create(rec, req)
+		return rec
+	}
+	if rec := create("https://jdoe:hunter2@bitbucket.org/acme/clone.git"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("remote with a password = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	rec := create("https://jdoe@bitbucket.org/acme/clone.git")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("remote with a bare username = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var created model.Project
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.RepoURL != "https://bitbucket.org/acme/clone.git" {
+		t.Fatalf("stored repo_url = %v, want it without the username", created.RepoURL)
+	}
+}

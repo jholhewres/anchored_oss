@@ -225,9 +225,9 @@ func prepareOnboardingProjects(inputs []onboardingProjectInput) ([]preparedOnboa
 		if previous, exists := seenSlugs[slug]; exists {
 			return nil, http.StatusConflict, "projects[" + strconv.Itoa(i) + "].name duplicates projects[" + strconv.Itoa(previous) + "]"
 		}
-		repoURL := strings.TrimSpace(input.RepoURL)
-		if !projectpkg.IsValidGitRemote(repoURL) {
-			return nil, http.StatusBadRequest, "projects[" + strconv.Itoa(i) + "].repo_url must be a valid HTTPS or SSH git remote"
+		repoURL, ok := projectpkg.CanonicalGitRemote(input.RepoURL)
+		if !ok {
+			return nil, http.StatusBadRequest, "projects[" + strconv.Itoa(i) + "].repo_url must be an HTTPS or SSH git remote without a password"
 		}
 		remoteKey := projectpkg.DeriveRemoteKey(repoURL)
 		if previous, exists := seenRemoteKeys[remoteKey]; exists {

@@ -54,9 +54,12 @@ should never have been granted.
   `project_claim` only when its account is on the org's default team;
   otherwise `403`. The new project is granted to the default team.
 - **`POST /v1/projects` with a `repo_url` the org already has answers `200`
-  with the existing project**, as in v0.6.x. A `repo_url` must be a valid
-  HTTPS or SSH git remote (`400` otherwise); `remote_key` alone is still
-  accepted for released clients.
+  with the existing project**, as in v0.6.x. A `repo_url` must be an HTTPS
+  or SSH git remote written in lowercase, with no password and no control
+  characters (`400` otherwise); `http://` is refused. A bare username in an
+  HTTPS clone URL (`https://jdoe@host/...`) is accepted and dropped before
+  the URL is stored. `remote_key` alone is still accepted for released
+  clients.
 - **Teams and invites stay in their org.** `GET /v1/teams/{id}`,
   `POST /v1/teams/{id}/members`, `DELETE /v1/teams/{id}/members/{account_id}`
   and `DELETE /v1/invites/{id}` answer `404` for another org's team or

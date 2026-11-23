@@ -131,11 +131,32 @@ func TestIsValidGitRemote(t *testing.T) {
 		{"github.com/acme/repo", false},
 		{"https://github.com", false},
 		{"http://github.com/acme/repo", false},
-		{"https://token@example.com/acme/repo", false},
+		{"https://token@example.com/acme/repo", true},
+		{"https://user:secret@example.com/acme/repo", false},
+		{"https://@example.com/acme/repo", false},
+		{"HTTPS://github.com/acme/repo.git", false},
+		{"git@github.com:acme/repo\x00.git", false},
+		{"git:secret@github.com:acme/repo.git", false},
+		{"ssh://alice@github.com/acme/repo.git", false},
 	}
 	for _, tt := range tests {
 		if got := IsValidGitRemote(tt.remote); got != tt.valid {
 			t.Errorf("IsValidGitRemote(%q) = %t, want %t", tt.remote, got, tt.valid)
 		}
+	}
+}
+
+// TestCanonicalGitRemote_DropsTheHTTPSUsername: a clone URL with a bare
+// username is stored without it and derives the same key as the plain one.
+func TestCanonicalGitRemote_DropsTheHTTPSUsername(t *testing.T) {
+	got, ok := CanonicalGitRemote(" https://jdoe@bitbucket.org/acme/repo.git ")
+	if !ok || got != "https://bitbucket.org/acme/repo.git" {
+		t.Fatalf("CanonicalGitRemote = %q, %t; want the URL without its username", got, ok)
+	}
+	if DeriveRemoteKey(got) != DeriveRemoteKey("git@bitbucket.org:acme/repo.git") {
+		t.Fatalf("stored remote derives a different key than the SSH form")
+	}
+	if got, ok := CanonicalGitRemote("git@github.com:acme/repo.git"); !ok || got != "git@github.com:acme/repo.git" {
+		t.Fatalf("scp remote = %q, %t; want it unchanged", got, ok)
 	}
 }

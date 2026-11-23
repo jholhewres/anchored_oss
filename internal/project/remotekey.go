@@ -118,45 +118,67 @@ func DeriveLegacyRemoteKey(rawURL string) string {
 }
 
 // IsValidGitRemote reports whether rawURL is an HTTPS or SSH Git remote with a
-// repository path. It deliberately does not change NormalizeRemoteURL: that
-// normalization is shared with the CLI and must remain byte-identical for sync
-// routing parity.
+// repository path (see CanonicalGitRemote).
 func IsValidGitRemote(rawURL string) bool {
+	_, ok := CanonicalGitRemote(rawURL)
+	return ok
+}
+
+// CanonicalGitRemote validates an HTTPS or SSH Git remote with a repository
+// path and returns the form to store: trimmed, and without the bare username
+// an HTTPS clone URL may carry (https://jdoe@host/...), which identifies a
+// person, not the repository, and derives the same key. It refuses plain
+// http://, a password in any form, schemes not written in lowercase, and
+// control characters. It deliberately does not change NormalizeRemoteURL:
+// that normalization is shared with the CLI and must remain byte-identical
+// for sync routing parity.
+func CanonicalGitRemote(rawURL string) (string, bool) {
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" || strings.ContainsAny(rawURL, " \t\r\n") {
-		return false
+	if rawURL == "" || strings.ContainsFunc(rawURL, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+		return "", false
 	}
 
 	// scp-style SSH remote: git@example.com:group/repository.git.
 	if !strings.Contains(rawURL, "://") {
 		at := strings.IndexByte(rawURL, '@')
 		if at <= 0 {
-			return false
+			return "", false
 		}
 		rest := rawURL[at+1:]
 		if colon := strings.IndexByte(rest, ':'); colon > 0 {
 			host, path := rest[:colon], strings.Trim(rest[colon+1:], "/")
-			return host != "" && path != "" && !strings.ContainsAny(host, "@/:")
+			if host != "" && path != "" && !strings.ContainsAny(host, "@/:") && !strings.Contains(rawURL[:at], ":") {
+				return rawURL, true
+			}
 		}
-		return false
+		return "", false
 	}
 
+	// Git's conventional remote schemes are case-sensitive in the shared
+	// normalization routine, so only the lowercase forms are accepted.
+	if !strings.HasPrefix(rawURL, "https://") && !strings.HasPrefix(rawURL, "ssh://") {
+		return "", false
+	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Hostname() == "" || strings.Trim(parsed.Path, "/") == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return false
+		return "", false
 	}
-	// Git's conventional remote schemes are case-sensitive in the existing
-	// normalization routine, so only accept the forms it can derive correctly.
-	if parsed.Scheme != "https" && parsed.Scheme != "ssh" {
-		return false
+	if parsed.User == nil {
+		return rawURL, true
 	}
-	// Credentials in persisted HTTPS URLs are unsafe and would alter the derived
-	// identity. The conventional SSH user, git, is part of the remote grammar
-	// and is explicitly handled by the shared normalization routine.
+	if _, hasPassword := parsed.User.Password(); hasPassword || parsed.User.Username() == "" {
+		return "", false
+	}
 	if parsed.Scheme == "https" {
-		return parsed.User == nil
+		parsed.User = nil
+		return parsed.String(), true
 	}
-	return parsed.User == nil || (parsed.User.Username() == "git" && !strings.Contains(parsed.User.String(), ":"))
+	// The conventional SSH user, git, is part of the remote grammar and is
+	// handled by the shared normalization routine.
+	if parsed.User.Username() != "git" {
+		return "", false
+	}
+	return rawURL, true
 }
 
 func deriveKey(normalized string) string {

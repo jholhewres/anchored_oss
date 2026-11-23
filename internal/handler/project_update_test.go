@@ -111,7 +111,8 @@ func TestProjectUpdate_InvalidRepoURL(t *testing.T) {
 	}{
 		{name: "empty", body: `{"repo_url":""}`},
 		{name: "http", body: `{"repo_url":"http://git.example.com/team/repo.git"}`},
-		{name: "credentials", body: `{"repo_url":"https://token@git.example.com/team/repo.git"}`},
+		{name: "password", body: `{"repo_url":"https://user:token@git.example.com/team/repo.git"}`},
+		{name: "uppercase scheme", body: `{"repo_url":"HTTPS://git.example.com/team/repo.git"}`},
 		{name: "malformed", body: `{"repo_url":"not-a-remote"}`},
 	}
 
