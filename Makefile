@@ -34,7 +34,7 @@ test:
 #     -e POSTGRES_DB=anchored_oss -p 55433:5432 pgvector/pgvector:pg16
 #   ANCHORED_TEST_DSN=postgres://anchored:anchored@localhost:55433/anchored_oss?sslmode=disable make test-integration
 test-integration:
-	go test -count=1 -tags integration ./internal/store/... ./internal/curation/...
+	go test -count=1 -tags integration $(GOTESTFLAGS) ./internal/store/... ./internal/curation/...
 
 run: build
 	./$(BINARY)

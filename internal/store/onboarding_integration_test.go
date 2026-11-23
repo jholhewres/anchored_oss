@@ -29,11 +29,15 @@ func TestBootstrapOnboardingRollsBackInjectedProjectFailure_Postgres(t *testing.
 	checkBootstrapOnboardingRollsBack(t, st)
 }
 
-// TestBootstrapOnboardingRefusesASecondRun_Postgres: racing first runs, with
+func TestBootstrapOnboardingRefusesASecondRun_Postgres(t *testing.T) {
+	checkBootstrapOnboardingRefusesASecondRun(t, freshPostgresStore(t))
+}
+
+// TestBootstrapOnboardingSerializesRacingFirstRuns_Postgres: racing first runs, with
 // distinct orgs and admins so no unique index decides, end with exactly one
 // organization: the in-transaction count under the advisory lock answers
 // ErrConflict to every other one.
-func TestBootstrapOnboardingRefusesASecondRun_Postgres(t *testing.T) {
+func TestBootstrapOnboardingSerializesRacingFirstRuns_Postgres(t *testing.T) {
 	st := freshPostgresStore(t)
 	const racers = 8
 	errs := make(chan error, racers)

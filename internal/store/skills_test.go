@@ -248,7 +248,7 @@ func checkReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp(t *testing.T
 	const attachedAt = "2001-02-03 04:05:06"
 	execRaw(t, st,
 		`UPDATE project_skills SET created_at = ? WHERE project_id = ? AND skill_id = ?`,
-		`UPDATE project_skills SET created_at = $1 WHERE project_id = $2 AND skill_id = $3`,
+		`UPDATE project_skills SET created_at = $1::timestamp AT TIME ZONE 'UTC' WHERE project_id = $2 AND skill_id = $3`,
 		attachedAt, project.ID, skill.ID)
 	if _, err := st.ReplaceProjectSkills(ctx, orgID, project.ID, []string{skill.ID}); err != nil {
 		t.Fatalf("keep unchanged attachment: %v", err)
@@ -270,16 +270,11 @@ func checkReplaceProjectSkillsPreservesUnchangedAttachmentTimestamp(t *testing.T
 // store method offers.
 func execRaw(t *testing.T, st Store, sqliteQuery, pgQuery string, args ...any) {
 	t.Helper()
-	var err error
-	switch s := st.(type) {
-	case *SQLiteStore:
-		_, err = s.db.Exec(sqliteQuery, args...)
-	case *PostgresStore:
-		_, err = s.db.Exec(pgQuery, args...)
-	default:
-		t.Fatalf("execRaw: unsupported store %T", st)
+	query := sqliteQuery
+	if isPostgres(st) {
+		query = pgQuery
 	}
-	if err != nil {
+	if _, err := rawDB(t, st).Exec(query, args...); err != nil {
 		t.Fatalf("exec raw: %v", err)
 	}
 }

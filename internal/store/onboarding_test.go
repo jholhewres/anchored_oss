@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -26,16 +27,7 @@ func onboardingBootstrapInput() OnboardingBootstrapInput {
 func onboardingTableCount(t *testing.T, st Store, table string) int {
 	t.Helper()
 	var count int
-	var err error
-	switch s := st.(type) {
-	case *SQLiteStore:
-		err = s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count)
-	case *PostgresStore:
-		err = s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count)
-	default:
-		t.Fatalf("onboardingTableCount: unsupported store %T", st)
-	}
-	if err != nil {
+	if err := rawDB(t, st).QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return count
@@ -100,5 +92,30 @@ func checkBootstrapOnboardingRollsBack(t *testing.T, st Store) {
 		if got := onboardingTableCount(t, st, table); got != 0 {
 			t.Errorf("%s rows after rollback = %d, want 0", table, got)
 		}
+	}
+}
+
+// TestSQLiteBootstrapOnboardingRefusesASecondRun: once an organization exists,
+// the store itself answers ErrConflict, whatever the handler checked.
+func TestSQLiteBootstrapOnboardingRefusesASecondRun(t *testing.T) {
+	checkBootstrapOnboardingRefusesASecondRun(t, newSQLiteTestStore(t))
+}
+
+func checkBootstrapOnboardingRefusesASecondRun(t *testing.T, st Store) {
+	t.Helper()
+	if _, err := st.BootstrapOnboarding(context.Background(), onboardingBootstrapInput()); err != nil {
+		t.Fatalf("first bootstrap: %v", err)
+	}
+	second := onboardingBootstrapInput()
+	second.OrgSlug, second.AdminEmail, second.APIKeyHash = "acme-2", "admin2@acme.test", "key-hash-2"
+	for i := range second.Projects {
+		second.Projects[i].Slug += "-2"
+		second.Projects[i].RemoteKey += "-2"
+	}
+	if _, err := st.BootstrapOnboarding(context.Background(), second); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second bootstrap = %v, want ErrConflict", err)
+	}
+	if n := onboardingTableCount(t, st, "organizations"); n != 1 {
+		t.Fatalf("organizations after a second run = %d, want 1", n)
 	}
 }

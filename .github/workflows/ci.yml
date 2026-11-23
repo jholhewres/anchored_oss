@@ -35,8 +35,9 @@ jobs:
       - run: go test -count=1 -race ./...
 
   # Postgres-backed store tests (//go:build integration), including the
-  # Postgres twin of every store rule the SQLite suite checks. The twins skip
-  # without ANCHORED_TEST_DSN, so the job fails when none of them ran.
+  # Postgres twins (*_Postgres) of the SQLite store tests. The twins skip
+  # without ANCHORED_TEST_DSN, so the job fails when one is skipped or none
+  # ran.
   integration:
     runs-on: ubuntu-latest
     services:
@@ -63,7 +64,7 @@ jobs:
       - run: go vet -tags integration ./internal/store/... ./internal/curation/...
       - name: make test-integration
         run: |
-          go test -count=1 -tags integration -v ./internal/store/... ./internal/curation/... | tee integration.log
+          make test-integration GOTESTFLAGS=-v | tee integration.log
           test "${PIPESTATUS[0]}" -eq 0
           if grep -q -- '--- SKIP: .*_Postgres' integration.log; then
             echo "a Postgres twin was skipped"; exit 1

@@ -547,16 +547,11 @@ func defaultTeamID(t *testing.T, st Store, orgID string) string {
 // grant could sit in a pre-v0.7 database; no store method writes one now.
 func plantGrant(t *testing.T, st Store, teamID, projectID string) {
 	t.Helper()
-	var err error
-	switch s := st.(type) {
-	case *SQLiteStore:
-		_, err = s.db.Exec(`INSERT INTO team_project_access (team_id, project_id, role) VALUES (?, ?, 'writer')`, teamID, projectID)
-	case *PostgresStore:
-		_, err = s.db.Exec(`INSERT INTO team_project_access (team_id, project_id, role) VALUES ($1, $2, 'writer')`, teamID, projectID)
-	default:
-		t.Fatalf("plantGrant: unsupported store %T", st)
+	query := `INSERT INTO team_project_access (team_id, project_id, role) VALUES (?, ?, 'writer')`
+	if isPostgres(st) {
+		query = `INSERT INTO team_project_access (team_id, project_id, role) VALUES ($1, $2, 'writer')`
 	}
-	if err != nil {
+	if _, err := rawDB(t, st).Exec(query, teamID, projectID); err != nil {
 		t.Fatalf("plant grant: %v", err)
 	}
 }

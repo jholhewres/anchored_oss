@@ -142,16 +142,11 @@ func checkTeamsScopedToOrg(t *testing.T, st Store, u string) {
 // cross-org holes could, which no store method allows any more.
 func plantTeamMember(t *testing.T, st Store, teamID, accountID string) {
 	t.Helper()
-	var err error
-	switch s := st.(type) {
-	case *SQLiteStore:
-		_, err = s.db.Exec(`INSERT INTO team_members (team_id, account_id) VALUES (?, ?)`, teamID, accountID)
-	case *PostgresStore:
-		_, err = s.db.Exec(`INSERT INTO team_members (team_id, account_id) VALUES ($1, $2)`, teamID, accountID)
-	default:
-		t.Fatalf("plantTeamMember: unsupported store %T", st)
+	query := `INSERT INTO team_members (team_id, account_id) VALUES (?, ?)`
+	if isPostgres(st) {
+		query = `INSERT INTO team_members (team_id, account_id) VALUES ($1, $2)`
 	}
-	if err != nil {
+	if _, err := rawDB(t, st).Exec(query, teamID, accountID); err != nil {
 		t.Fatalf("plant team member: %v", err)
 	}
 }
