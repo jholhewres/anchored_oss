@@ -142,14 +142,14 @@ func (h *ProjectHandler) createByRemoteKey(w http.ResponseWriter, r *http.Reques
 
 // findOrCreateProject is the end of both creation paths. The contract
 // released clients rely on (v0.6.x): when the org already has a project with
-// remoteKey, the answer is 200 with it and the caller gets access to it;
-// otherwise the project is created (201), granted to its creator through the
-// org default team and audited. via, when set, is recorded in the audit.
+// remoteKey, the answer is 200 with it; otherwise the project is created
+// (201), granted to its creator through the org default team and audited.
+// via, when set, is recorded in the audit. Answering with an existing
+// project changes nothing: the route is admin-only and admin reaches every
+// project of its org, while granting it again would open a project an admin
+// had kept off the default team.
 func (h *ProjectHandler) findOrCreateProject(w http.ResponseWriter, r *http.Request, orgID, accountID string, req createProjectRequest, remoteKey, remoteKeyV1, repoURL, via string) {
 	if existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, remoteKey); err == nil {
-		if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, existing.ID); err != nil {
-			h.logger.Error("grant creator access failed", "error", err, "project_id", existing.ID)
-		}
 		jsonResponse(w, http.StatusOK, existing)
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {

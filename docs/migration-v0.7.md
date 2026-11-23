@@ -20,7 +20,8 @@ the exceptions below say so.
 - **Everyone signs in once more.** Migration 025 revokes every key named
   `session`: the old login credential was an admin-scope key with no
   expiry. The next sign-in issues a session scoped to the account's role
-  (`admin` → `admin`, `readonly` → `readonly`, any other role → `sync`).
+  (`admin` → `admin`, `sync` and `member` → `sync`, `readonly` or a role
+  the server does not know → `readonly`).
 - **Role changes take effect at once.** Demoting or removing an account
   revokes its login session and every key above its new role. Renaming an
   account, or saving it with the role it already has, revokes nothing.
@@ -53,8 +54,10 @@ should never have been granted.
 - **Creating a project by claim.** A non-admin key creates a project from a
   `project_claim` only when its account is on the org's default team;
   otherwise `403`. The new project is granted to the default team.
-- **`POST /v1/projects` with a `repo_url` the org already has answers `200`
-  with the existing project**, as in v0.6.x. A `repo_url` must be an HTTPS
+- **`POST /v1/projects` with a `repo_url` (or `remote_key`) the org already
+  has answers `200` with the existing project**, as in v0.6.x, and changes
+  nothing: unlike v0.6.x, it no longer grants that project to the org's
+  default team again. A `repo_url` must be an HTTPS
   or SSH git remote written in lowercase, with no password and no control
   characters (`400` otherwise); `http://` is refused. A bare username in an
   HTTPS clone URL (`https://jdoe@host/...`) is accepted and dropped before

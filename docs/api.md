@@ -569,7 +569,7 @@ Aggregate org counters plus recent push activity (`DashboardStats`):
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/v1/projects` | admin | Create a project (`{name, slug, remote_key?, repo_url?, category?}`). `repo_url` must be an HTTPS or SSH git remote; `remote_key` alone is kept for released clients. Idempotent on the remote: when the org already has the project, `200` with it (`201` when created). Grants the creator via the org default team. |
+| `POST` | `/v1/projects` | admin | Create a project (`{name, slug, remote_key?, repo_url?, category?}`). `repo_url` must be an HTTPS or SSH git remote; `remote_key` alone is kept for released clients. Idempotent on the remote: when the org already has the project, `200` with it and no other change (`201` when created). A created project is granted to its creator via the org default team. |
 | `PATCH` | `/v1/projects/{id}` | admin | Partial update (`{name?, slug?, repo_url?, category?}`); setting `repo_url` recomputes remote keys, clearing it unlinks the repo. |
 | `DELETE` | `/v1/projects/{id}` | admin | Soft-delete → `204`. |
 | `DELETE` | `/v1/projects/{id}/memories` | admin | Bulk-tombstone memories in a time window; requires at least one of `since`/`until` (RFC3339) → `{deleted: <n>}`. |

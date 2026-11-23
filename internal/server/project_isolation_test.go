@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
+	projectpkg "github.com/jholhewres/anchored_oss/internal/project"
 )
 
 // registerForeignAdmin self-registers Mallory, which makes her the admin of a
@@ -391,5 +392,43 @@ func TestStaleCrossOrgMemberIsNotListed(t *testing.T) {
 				t.Fatalf("foreign org's team lists an account of another org: %v", mm)
 			}
 		}
+	}
+}
+
+// TestDuplicateProjectCreateChangesNothing: POST /v1/projects naming a remote
+// the org already has answers 200 with that project and does not grant it to
+// the default team, so a project an admin kept off it stays off.
+func TestDuplicateProjectCreateChangesNothing(t *testing.T) {
+	ts, st, ids := accountLifecycleServer(t, "owner@example.test", "member@example.test")
+	ctx := context.Background()
+	owner, member := ids["owner@example.test"], ids["member@example.test"]
+	orgID, _, err := st.GetAccountOrgMembership(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnsureDefaultTeamMembership(ctx, orgID, member); err != nil {
+		t.Fatal(err)
+	}
+	repo := "https://github.com/acme/kept-off.git"
+	kept, err := st.CreateProject(ctx, orgID, "Kept off", "kept-off", projectpkg.DeriveRemoteKey(repo), projectpkg.DeriveLegacyRemoteKey(repo), repo, owner, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ownerKey, _ := loginKey(t, ts, "owner@example.test")
+	code, minted := call(t, ts, http.MethodPost, "/v1/api-keys", ownerKey, `{"name":"laptop","scope":"sync","account_id":"`+member+`"}`)
+	memberSync, _ := minted["key"].(string)
+	if code != http.StatusCreated || memberSync == "" {
+		t.Fatalf("mint member key = %d %v", code, minted)
+	}
+	if code, body := call(t, ts, http.MethodGet, "/v1/projects/"+kept.ID, memberSync, ""); code != http.StatusForbidden {
+		t.Fatalf("precondition: member reads the kept-off project = %d %v, want 403", code, body)
+	}
+
+	code, body := call(t, ts, http.MethodPost, "/v1/projects", ownerKey, `{"name":"Again","slug":"again","repo_url":"git@github.com:acme/kept-off.git"}`)
+	if code != http.StatusOK || body["id"] != kept.ID {
+		t.Fatalf("duplicate create = %d %v, want 200 with %s", code, body, kept.ID)
+	}
+	if code, body := call(t, ts, http.MethodGet, "/v1/projects/"+kept.ID, memberSync, ""); code != http.StatusForbidden {
+		t.Fatalf("member after a duplicate create = %d %v, want 403 still", code, body)
 	}
 }
