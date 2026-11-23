@@ -36,14 +36,6 @@ func storedSkillHeader(raw []byte, slug, purpose string) (map[string]any, error)
 	return anchoredskill.Header(slug, purpose), nil
 }
 
-func mutableSkillStatus(status string) bool {
-	switch status {
-	case model.SkillStatusDraft, model.SkillStatusActive, model.SkillStatusDeprecated:
-		return true
-	}
-	return false
-}
-
 func scanPGSkill(row interface{ Scan(...any) error }, skill *model.Skill) error {
 	version := &model.SkillVersion{}
 	var frontmatter []byte
@@ -52,6 +44,13 @@ func scanPGSkill(row interface{ Scan(...any) error }, skill *model.Skill) error 
 		&version.ContentHash, &version.CreatedBy, &version.CreatedAt, &skill.ProjectCount); err != nil {
 		return err
 	}
+	return finishSkillVersion(skill, version, frontmatter)
+}
+
+// finishSkillVersion completes a scanned version on either backend: a legacy
+// row serves its body as is; a canonical one renders its SKILL.md from the
+// stored frontmatter and hashes that.
+func finishSkillVersion(skill *model.Skill, version *model.SkillVersion, frontmatter []byte) error {
 	if frontmatter == nil {
 		version.Content = version.Body
 	} else {
@@ -126,7 +125,7 @@ func skillVersionForUpdate(current *model.Skill, upd model.SkillUpdate) (body st
 }
 
 func (s *PostgresStore) CreateSkill(ctx context.Context, skill *model.Skill, content string) error {
-	if !mutableSkillStatus(skill.Status) {
+	if !model.IsMutableSkillStatus(skill.Status) {
 		return ErrInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -194,7 +193,7 @@ func (s *PostgresStore) GetSkill(ctx context.Context, orgID, id string) (*model.
 }
 
 func (s *PostgresStore) UpdateSkill(ctx context.Context, orgID, id, actorID string, upd model.SkillUpdate) (*model.Skill, error) {
-	if upd.Status != nil && !mutableSkillStatus(*upd.Status) {
+	if upd.Status != nil && !model.IsMutableSkillStatus(*upd.Status) {
 		return nil, ErrInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

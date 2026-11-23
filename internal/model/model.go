@@ -298,3 +298,14 @@ type RejectionStat struct {
 	Day       string `json:"day"` // UTC, YYYY-MM-DD
 	Count     int64  `json:"count"`
 }
+
+// IsMutableSkillStatus reports whether status may be written by create or
+// update: draft, active or deprecated. Revoked is reached only through
+// revocation.
+func IsMutableSkillStatus(status string) bool {
+	switch status {
+	case SkillStatusDraft, SkillStatusActive, SkillStatusDeprecated:
+		return true
+	}
+	return false
+}

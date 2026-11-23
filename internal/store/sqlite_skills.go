@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/jholhewres/anchored_oss/internal/model"
-	anchoredskill "github.com/jholhewres/anchored_oss/internal/skill"
 )
 
 const sqliteSkillColumns = `s.id, s.org_id, s.name, s.slug, s.purpose, s.status, COALESCE(s.created_by, ''), s.created_at, s.updated_at,
@@ -23,25 +22,11 @@ func scanSQLiteSkill(row interface{ Scan(...any) error }, skill *model.Skill) er
 		&version.ContentHash, &version.CreatedBy, scanTime(&version.CreatedAt), &skill.ProjectCount); err != nil {
 		return err
 	}
-	if frontmatter == nil {
-		version.Content = version.Body
-	} else {
-		parsed, err := storedSkillHeader(frontmatter, skill.Slug, version.Purpose)
-		if err != nil {
-			return fmt.Errorf("parse skill frontmatter: %w", err)
-		}
-		content, err := anchoredskill.Render(skill.Slug, version.Purpose, parsed, version.Body)
-		if err != nil {
-			return fmt.Errorf("render skill content: %w", err)
-		}
-		version.Frontmatter, version.Content, version.ContentHash = parsed, content, skillHash(content)
-	}
-	skill.CurrentVersion = version
-	return nil
+	return finishSkillVersion(skill, version, frontmatter)
 }
 
 func (s *SQLiteStore) CreateSkill(ctx context.Context, skill *model.Skill, content string) error {
-	if !mutableSkillStatus(skill.Status) {
+	if !model.IsMutableSkillStatus(skill.Status) {
 		return ErrInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -105,7 +90,7 @@ func (s *SQLiteStore) GetSkill(ctx context.Context, orgID, id string) (*model.Sk
 }
 
 func (s *SQLiteStore) UpdateSkill(ctx context.Context, orgID, id, actorID string, upd model.SkillUpdate) (*model.Skill, error) {
-	if upd.Status != nil && !mutableSkillStatus(*upd.Status) {
+	if upd.Status != nil && !model.IsMutableSkillStatus(*upd.Status) {
 		return nil, ErrInvalid
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

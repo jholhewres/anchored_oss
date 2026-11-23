@@ -127,9 +127,25 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	remoteKey := projectpkg.DeriveRemoteKey(req.RepoURL)
 	remoteKeyV1 := projectpkg.DeriveLegacyRemoteKey(req.RepoURL)
 
-	// The contract released clients rely on (v0.6.x): creating a project
-	// whose remote the org already has answers 200 with that project, and the
-	// caller gets access to it, the same as on the remote_key path.
+	h.findOrCreateProject(w, r, orgID, accountID, req, remoteKey, remoteKeyV1, req.RepoURL, "")
+}
+
+// createByRemoteKey keeps the project-creation contract released clients rely
+// on: a project keyed by remote_key alone.
+func (h *ProjectHandler) createByRemoteKey(w http.ResponseWriter, r *http.Request, orgID, accountID string, req createProjectRequest) {
+	if !legacyRemoteKeyRe.MatchString(req.RemoteKey) {
+		jsonError(w, http.StatusBadRequest, "remote_key is not a recognised client key; send repo_url")
+		return
+	}
+	h.findOrCreateProject(w, r, orgID, accountID, req, req.RemoteKey, "", "", "remote_key")
+}
+
+// findOrCreateProject is the end of both creation paths. The contract
+// released clients rely on (v0.6.x): when the org already has a project with
+// remoteKey, the answer is 200 with it and the caller gets access to it;
+// otherwise the project is created (201), granted to its creator through the
+// org default team and audited. via, when set, is recorded in the audit.
+func (h *ProjectHandler) findOrCreateProject(w http.ResponseWriter, r *http.Request, orgID, accountID string, req createProjectRequest, remoteKey, remoteKeyV1, repoURL, via string) {
 	if existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, remoteKey); err == nil {
 		if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, existing.ID); err != nil {
 			h.logger.Error("grant creator access failed", "error", err, "project_id", existing.ID)
@@ -142,51 +158,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, remoteKeyV1, req.RepoURL, accountID, model.NormalizeCategory(req.Category))
-	if err != nil {
-		h.logger.Error("create project failed", "error", err, "org_id", orgID)
-		jsonError(w, http.StatusInternalServerError, "failed to create project")
-		return
-	}
-
-	if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, project.ID); err != nil {
-		h.logger.Error("grant creator access failed", "error", err, "project_id", project.ID)
-		jsonError(w, http.StatusInternalServerError, "failed to grant project access")
-		return
-	}
-
-	if err := h.store.AppendAudit(r.Context(), &model.AuditEntry{
-		OrgID: orgID, ProjectID: project.ID, ActorID: accountID,
-		Action: "project.created", TargetType: "project", TargetID: project.ID,
-		Metadata: map[string]string{"name": project.Name, "slug": project.Slug},
-	}); err != nil {
-		h.logger.Error("audit project.created failed", "error", err, "project_id", project.ID)
-	}
-
-	jsonResponse(w, http.StatusCreated, project)
-}
-
-// createByRemoteKey keeps the project-creation contract released clients rely
-// on: a project keyed by remote_key alone, returned as is (200) when the org
-// already has one with that key.
-func (h *ProjectHandler) createByRemoteKey(w http.ResponseWriter, r *http.Request, orgID, accountID string, req createProjectRequest) {
-	if !legacyRemoteKeyRe.MatchString(req.RemoteKey) {
-		jsonError(w, http.StatusBadRequest, "repo_url must be a valid HTTPS or SSH git remote")
-		return
-	}
-	if existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, req.RemoteKey); err == nil {
-		if err := h.store.EnsureCreatorProjectAccess(r.Context(), orgID, accountID, existing.ID); err != nil {
-			h.logger.Error("grant creator access failed", "error", err, "project_id", existing.ID)
-		}
-		jsonResponse(w, http.StatusOK, existing)
-		return
-	} else if !errors.Is(err, store.ErrNotFound) {
-		h.logger.Error("project by remote_key lookup failed", "error", err, "org_id", orgID)
-		jsonError(w, http.StatusInternalServerError, "failed to check existing project")
-		return
-	}
-
-	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, req.RemoteKey, "", "", accountID, model.NormalizeCategory(req.Category))
+	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, remoteKeyV1, repoURL, accountID, model.NormalizeCategory(req.Category))
 	if err != nil {
 		h.logger.Error("create project failed", "error", err, "org_id", orgID)
 		jsonError(w, http.StatusInternalServerError, "failed to create project")
@@ -197,10 +169,14 @@ func (h *ProjectHandler) createByRemoteKey(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusInternalServerError, "failed to grant project access")
 		return
 	}
+	metadata := map[string]string{"name": project.Name, "slug": project.Slug}
+	if via != "" {
+		metadata["via"] = via
+	}
 	if err := h.store.AppendAudit(r.Context(), &model.AuditEntry{
 		OrgID: orgID, ProjectID: project.ID, ActorID: accountID,
 		Action: "project.created", TargetType: "project", TargetID: project.ID,
-		Metadata: map[string]string{"name": project.Name, "slug": project.Slug, "via": "remote_key"},
+		Metadata: metadata,
 	}); err != nil {
 		h.logger.Error("audit project.created failed", "error", err, "project_id", project.ID)
 	}

@@ -42,15 +42,6 @@ type onboardingProjectInput struct {
 	RepoURL string `json:"repo_url"`
 }
 
-type preparedOnboardingProject struct {
-	name        string
-	slug        string
-	category    string
-	repoURL     string
-	remoteKey   string
-	remoteKeyV1 string
-}
-
 type onboardingRequest struct {
 	Org      onboardingOrgInput       `json:"org"`
 	Admin    onboardingAdminInput     `json:"admin"`
@@ -157,17 +148,6 @@ func (h *OnboardingHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	bootstrapProjects := make([]store.OnboardingProject, 0, len(projects))
-	for _, project := range projects {
-		bootstrapProjects = append(bootstrapProjects, store.OnboardingProject{
-			Name:        project.name,
-			Slug:        project.slug,
-			Category:    project.category,
-			RepoURL:     project.repoURL,
-			RemoteKey:   project.remoteKey,
-			RemoteKeyV1: project.remoteKeyV1,
-		})
-	}
 	result, err := h.store.BootstrapOnboarding(r.Context(), store.OnboardingBootstrapInput{
 		OrgName:           req.Org.Name,
 		OrgSlug:           orgSlug,
@@ -182,7 +162,7 @@ func (h *OnboardingHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		APIKeyPrefix: prefix,
 		APIKeyHash:   hash,
 		APIKeyScope:  "admin",
-		Projects:     bootstrapProjects,
+		Projects:     projects,
 	})
 	if err != nil {
 		h.logger.Error("onboarding bootstrap failed", "error", err)
@@ -202,8 +182,8 @@ func (h *OnboardingHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func prepareOnboardingProjects(inputs []onboardingProjectInput) ([]preparedOnboardingProject, int, string) {
-	projects := make([]preparedOnboardingProject, 0, len(inputs))
+func prepareOnboardingProjects(inputs []onboardingProjectInput) ([]store.OnboardingProject, int, string) {
+	projects := make([]store.OnboardingProject, 0, len(inputs))
 	seenRemoteKeys := make(map[string]int, len(inputs))
 	seenSlugs := make(map[string]int, len(inputs))
 	for i, input := range inputs {
@@ -235,13 +215,13 @@ func prepareOnboardingProjects(inputs []onboardingProjectInput) ([]preparedOnboa
 		}
 		seenSlugs[slug] = i
 		seenRemoteKeys[remoteKey] = i
-		projects = append(projects, preparedOnboardingProject{
-			name:        name,
-			slug:        slug,
-			category:    model.NormalizeCategory(input.Category),
-			repoURL:     repoURL,
-			remoteKey:   remoteKey,
-			remoteKeyV1: projectpkg.DeriveLegacyRemoteKey(repoURL),
+		projects = append(projects, store.OnboardingProject{
+			Name:        name,
+			Slug:        slug,
+			Category:    model.NormalizeCategory(input.Category),
+			RepoURL:     repoURL,
+			RemoteKey:   remoteKey,
+			RemoteKeyV1: projectpkg.DeriveLegacyRemoteKey(repoURL),
 		})
 	}
 	return projects, 0, ""

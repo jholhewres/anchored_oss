@@ -75,14 +75,6 @@ type runtimeSkillResponse struct {
 	Content      string          `json:"content,omitempty"`
 }
 
-func validSkillStatus(status string) bool {
-	switch status {
-	case model.SkillStatusDraft, model.SkillStatusActive, model.SkillStatusDeprecated:
-		return true
-	}
-	return false
-}
-
 func validateSkillFields(name, slug, purpose, content, status string) string {
 	if name == "" {
 		return "name is required"
@@ -105,7 +97,7 @@ func validateSkillFields(name, slug, purpose, content, status string) string {
 	if len(content) > maxSkillContentBytes {
 		return "content exceeds 256 KiB"
 	}
-	if !validSkillStatus(status) {
+	if !model.IsMutableSkillStatus(status) {
 		return "status must be one of: draft, active, deprecated"
 	}
 	return ""
@@ -406,7 +398,7 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Status != nil {
 		*req.Status = strings.TrimSpace(*req.Status)
-		if !validSkillStatus(*req.Status) {
+		if !model.IsMutableSkillStatus(*req.Status) {
 			jsonError(w, http.StatusBadRequest, "status must be one of: draft, active, deprecated; use DELETE to revoke")
 			return
 		}
