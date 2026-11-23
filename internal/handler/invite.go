@@ -86,7 +86,7 @@ func (h *InviteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = "sync"
 	}
-	if !allowedScopes[role] {
+	if !auth.InvitableRole(role) {
 		jsonError(w, http.StatusBadRequest, "role must be one of: sync, readonly, admin")
 		return
 	}
@@ -268,7 +268,7 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if _, err := h.store.CreateAPIKey(r.Context(), inv.OrgID, acc.ID, middleware.SessionAPIKeyName, prefix, keyHash, inv.Role, nil); err != nil {
+	if _, err := h.store.CreateAPIKey(r.Context(), inv.OrgID, acc.ID, auth.SessionKeyName, prefix, keyHash, auth.SessionScopeForRole(inv.Role), nil); err != nil {
 		h.logger.Error("invite: create api key failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return

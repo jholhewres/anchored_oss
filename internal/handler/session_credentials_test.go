@@ -90,7 +90,7 @@ func assertSessionCredential(t *testing.T, st *store.SQLiteStore, rawKey, wantSc
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wantStatus == http.StatusOK && (key.Name != middleware.SessionAPIKeyName || key.Scope != wantScope) {
+	if wantStatus == http.StatusOK && (key.Name != auth.SessionKeyName || key.Scope != wantScope) {
 		t.Fatalf("session credential = name=%q scope=%q", key.Name, key.Scope)
 	}
 	personal := NewPersonalAPIKeyHandler(st, slog.Default())

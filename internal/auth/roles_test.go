@@ -41,4 +41,9 @@ func TestSessionScopeAgreesWithTheRoleCeiling(t *testing.T) {
 	if KnownRole("owner") {
 		t.Error("KnownRole(owner) = true")
 	}
+	for role, want := range map[string]bool{"admin": true, "sync": true, "readonly": true, "member": false, "owner": false} {
+		if got := InvitableRole(role); got != want {
+			t.Errorf("InvitableRole(%q) = %t, want %t", role, got, want)
+		}
+	}
 }

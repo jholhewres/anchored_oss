@@ -64,7 +64,7 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "name, scope, and account_id are required")
 		return
 	}
-	if req.Name == middleware.SessionAPIKeyName {
+	if req.Name == auth.SessionKeyName {
 		jsonError(w, http.StatusBadRequest, "name session is reserved for login credentials")
 		return
 	}

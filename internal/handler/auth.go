@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/jholhewres/anchored_oss/internal/auth"
-	"github.com/jholhewres/anchored_oss/internal/middleware"
 	"github.com/jholhewres/anchored_oss/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -85,7 +84,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.store.CreateAPIKey(r.Context(), orgID, account.ID, middleware.SessionAPIKeyName, prefix, hash, scope, nil); err != nil {
+	if _, err := h.store.CreateAPIKey(r.Context(), orgID, account.ID, auth.SessionKeyName, prefix, hash, scope, nil); err != nil {
 		h.logger.Error("login: failed to store session key", "error", err)
 		jsonError(w, http.StatusInternalServerError, "internal error")
 		return

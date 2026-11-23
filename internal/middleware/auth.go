@@ -15,11 +15,6 @@ import (
 
 type contextKey string
 
-// SessionAPIKeyName is the session key's name (auth.SessionKeyName): the
-// per-account bearer credential a password sign-in mints; a new login revokes
-// the prior one.
-const SessionAPIKeyName = auth.SessionKeyName
-
 const (
 	AccountIDKey  contextKey = "account_id"
 	OrgIDKey      contextKey = "org_id"
@@ -127,7 +122,7 @@ func Auth(st store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
 // allowed to manage that account's own API keys.
 func RequireSessionKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if GetAPIKeyName(r.Context()) != SessionAPIKeyName {
+		if GetAPIKeyName(r.Context()) != auth.SessionKeyName {
 			writeForbidden(w)
 			return
 		}

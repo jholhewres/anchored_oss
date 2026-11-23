@@ -21,6 +21,17 @@ func KnownRole(role string) bool {
 	}
 }
 
+// InvitableRole reports whether role may be given through an invite: the
+// roles whose key scope is the role itself.
+func InvitableRole(role string) bool {
+	switch role {
+	case "admin", "sync", "readonly":
+		return true
+	default:
+		return false
+	}
+}
+
 // SessionScopeForRole is the key scope of a login session for role.
 func SessionScopeForRole(role string) string {
 	switch role {
