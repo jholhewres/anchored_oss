@@ -117,7 +117,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	repoURL, ok := projectpkg.CanonicalGitRemote(req.RepoURL)
 	if !ok {
-		jsonError(w, http.StatusBadRequest, "repo_url must be an HTTPS or SSH git remote without a password")
+		jsonError(w, http.StatusBadRequest, "repo_url must be an https:// or SSH git remote: lowercase scheme, no password, SSH user git, printable characters only")
 		return
 	}
 	req.RepoURL = repoURL
@@ -127,7 +127,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	remoteKey := projectpkg.DeriveRemoteKey(req.RepoURL)
 	remoteKeyV1 := projectpkg.DeriveLegacyRemoteKey(req.RepoURL)
 
-	h.findOrCreateProject(w, r, orgID, accountID, req, remoteKey, remoteKeyV1, req.RepoURL, "")
+	h.findOrCreateProject(w, r, orgID, accountID, req, remoteKey, remoteKeyV1, "")
 }
 
 // createByRemoteKey keeps the project-creation contract released clients rely
@@ -137,7 +137,7 @@ func (h *ProjectHandler) createByRemoteKey(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "remote_key is not a recognised client key; send repo_url")
 		return
 	}
-	h.findOrCreateProject(w, r, orgID, accountID, req, req.RemoteKey, "", "", "remote_key")
+	h.findOrCreateProject(w, r, orgID, accountID, req, req.RemoteKey, "", "remote_key")
 }
 
 // findOrCreateProject is the end of both creation paths. The contract
@@ -148,7 +148,7 @@ func (h *ProjectHandler) createByRemoteKey(w http.ResponseWriter, r *http.Reques
 // project changes nothing: the route is admin-only and admin reaches every
 // project of its org, while granting it again would open a project an admin
 // had kept off the default team.
-func (h *ProjectHandler) findOrCreateProject(w http.ResponseWriter, r *http.Request, orgID, accountID string, req createProjectRequest, remoteKey, remoteKeyV1, repoURL, via string) {
+func (h *ProjectHandler) findOrCreateProject(w http.ResponseWriter, r *http.Request, orgID, accountID string, req createProjectRequest, remoteKey, remoteKeyV1, via string) {
 	if existing, err := h.store.GetProjectByRemoteKey(r.Context(), orgID, remoteKey); err == nil {
 		jsonResponse(w, http.StatusOK, existing)
 		return
@@ -158,7 +158,7 @@ func (h *ProjectHandler) findOrCreateProject(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, remoteKeyV1, repoURL, accountID, model.NormalizeCategory(req.Category))
+	project, err := h.store.CreateProject(r.Context(), orgID, req.Name, req.Slug, remoteKey, remoteKeyV1, req.RepoURL, accountID, model.NormalizeCategory(req.Category))
 	if err != nil {
 		h.logger.Error("create project failed", "error", err, "org_id", orgID)
 		jsonError(w, http.StatusInternalServerError, "failed to create project")
@@ -320,7 +320,7 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		repoURL, ok := projectpkg.CanonicalGitRemote(*req.RepoURL)
 		if !ok {
-			jsonError(w, http.StatusBadRequest, "repo_url must be an HTTPS or SSH git remote without a password")
+			jsonError(w, http.StatusBadRequest, "repo_url must be an https:// or SSH git remote: lowercase scheme, no password, SSH user git, printable characters only")
 			return
 		}
 		*req.RepoURL = repoURL

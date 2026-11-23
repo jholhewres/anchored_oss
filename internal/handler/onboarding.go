@@ -207,7 +207,7 @@ func prepareOnboardingProjects(inputs []onboardingProjectInput) ([]store.Onboard
 		}
 		repoURL, ok := projectpkg.CanonicalGitRemote(input.RepoURL)
 		if !ok {
-			return nil, http.StatusBadRequest, "projects[" + strconv.Itoa(i) + "].repo_url must be an HTTPS or SSH git remote without a password"
+			return nil, http.StatusBadRequest, "projects[" + strconv.Itoa(i) + "].repo_url must be an https:// or SSH git remote: lowercase scheme, no password, SSH user git, printable characters only"
 		}
 		remoteKey := projectpkg.DeriveRemoteKey(repoURL)
 		if previous, exists := seenRemoteKeys[remoteKey]; exists {

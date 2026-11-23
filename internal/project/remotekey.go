@@ -118,13 +118,6 @@ func DeriveLegacyRemoteKey(rawURL string) string {
 	return deriveKey(normalizeRemoteURLLegacy(rawURL))
 }
 
-// IsValidGitRemote reports whether rawURL is an HTTPS or SSH Git remote with a
-// repository path (see CanonicalGitRemote).
-func IsValidGitRemote(rawURL string) bool {
-	_, ok := CanonicalGitRemote(rawURL)
-	return ok
-}
-
 // CanonicalGitRemote validates an HTTPS or SSH Git remote with a repository
 // path and returns the form to store: trimmed, and without the bare username
 // an HTTPS clone URL may carry (https://jdoe@host/...), which identifies a
@@ -177,8 +170,16 @@ func CanonicalGitRemote(rawURL string) (string, bool) {
 		return "", false
 	}
 	if parsed.Scheme == "https" {
-		parsed.User = nil
-		return parsed.String(), true
+		// Dropped as text, so the path stays byte for byte and the key the
+		// CLI derives from its origin still matches. With a port, the
+		// shared normalizer reads user@host:port/ like an scp remote and
+		// derives another key, so that combination is refused.
+		if parsed.Port() != "" {
+			return "", false
+		}
+		authorityStart := len("https://")
+		at := strings.IndexByte(rawURL[authorityStart:], '@')
+		return "https://" + rawURL[authorityStart+at+1:], true
 	}
 	// The conventional SSH user, git, is part of the remote grammar and is
 	// handled by the shared normalization routine.

@@ -117,7 +117,7 @@ func TestDeriveRemoteKeyEmpty(t *testing.T) {
 	}
 }
 
-func TestIsValidGitRemote(t *testing.T) {
+func TestCanonicalGitRemoteAcceptance(t *testing.T) {
 	tests := []struct {
 		remote string
 		valid  bool
@@ -140,8 +140,8 @@ func TestIsValidGitRemote(t *testing.T) {
 		{"ssh://alice@github.com/acme/repo.git", false},
 	}
 	for _, tt := range tests {
-		if got := IsValidGitRemote(tt.remote); got != tt.valid {
-			t.Errorf("IsValidGitRemote(%q) = %t, want %t", tt.remote, got, tt.valid)
+		if _, got := CanonicalGitRemote(tt.remote); got != tt.valid {
+			t.Errorf("CanonicalGitRemote(%q) ok = %t, want %t", tt.remote, got, tt.valid)
 		}
 	}
 }
@@ -179,5 +179,31 @@ func TestCanonicalGitRemote_RefusesInvisibleCharactersAndPersonalSSHUsers(t *tes
 	}
 	if got, ok := CanonicalGitRemote("git@bitbucket.org:acme/réalisé.git"); !ok || got != "git@bitbucket.org:acme/réalisé.git" {
 		t.Errorf("a printable non-ASCII path = %q, %t; want accepted", got, ok)
+	}
+}
+
+// TestCanonicalGitRemote_KeepsTheCLIKey: every accepted remote is stored in a
+// form that derives the same keys as the remote the CLI reads from its
+// origin, so sync finds the project created from it.
+func TestCanonicalGitRemote_KeepsTheCLIKey(t *testing.T) {
+	for _, remote := range []string{
+		"https://jdoe@bitbucket.org/acme/repo.git",
+		"https://jdoe@git.example.com/acme/réalisé.git",
+		"https://jdoe@git.example.com/acme/a|b.git",
+		"https://git.example.com:8443/acme/repo.git",
+		"git@github.com:acme/repo.git",
+		"ssh://git@bitbucket.example.com:7999/acme/repo.git",
+	} {
+		stored, ok := CanonicalGitRemote(remote)
+		if !ok {
+			t.Errorf("CanonicalGitRemote(%q) refused", remote)
+			continue
+		}
+		if DeriveRemoteKey(stored) != DeriveRemoteKey(remote) || DeriveLegacyRemoteKey(stored) != DeriveLegacyRemoteKey(remote) {
+			t.Errorf("stored %q derives other keys than %q", stored, remote)
+		}
+	}
+	if _, ok := CanonicalGitRemote("https://jdoe@bitbucket.example.com:7990/scm/proj/repo.git"); ok {
+		t.Error("a username with a port was accepted, though its key differs once the username is dropped")
 	}
 }

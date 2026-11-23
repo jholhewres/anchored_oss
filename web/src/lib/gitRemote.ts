@@ -19,6 +19,22 @@ export function repositoryError(value: string): string | null {
   if (!remote.startsWith("https://") && !remote.startsWith("ssh://")) {
     return "Use https:// or ssh:// for URL-style remotes.";
   }
+  if (/%(?![0-9A-Fa-f]{2})/.test(remote)) return "Repository remotes cannot contain a malformed % escape.";
+  // Read the user part as text, as the server does: an empty user or any
+  // ":" in it (an empty password too) is refused.
+  const afterScheme = remote.slice(remote.indexOf("://") + 3);
+  const authority = afterScheme.split("/")[0];
+  const at = authority.lastIndexOf("@");
+  const userinfo = at >= 0 ? authority.slice(0, at) : null;
+  if (userinfo !== null && (userinfo === "" || userinfo.includes(":"))) {
+    return "Repository remotes cannot include a password or an empty user.";
+  }
+  if (remote.startsWith("ssh://") && userinfo !== null && userinfo !== "git") {
+    return "SSH repository remotes may use only the git user.";
+  }
+  if (remote.startsWith("https://") && userinfo !== null && /:\d+$/.test(authority)) {
+    return "Drop the username from an HTTPS remote that names a port.";
+  }
   let parsed: URL;
   try {
     parsed = new URL(remote);
@@ -29,16 +45,7 @@ export function repositoryError(value: string): string | null {
     return "Enter a complete Git remote with a host and repository path.";
   }
   if (parsed.search || parsed.hash) return "Repository remotes cannot include query strings or fragments.";
-  // A bare username (https://jdoe@host/...) is accepted; the server drops it
-  // before storing. A password never is.
-  if (parsed.protocol === "https:" && parsed.password) {
-    return "HTTPS repository remotes cannot include a password.";
-  }
-  if (parsed.protocol === "https:" && remote.startsWith("https://@")) {
-    return "Enter a complete Git remote with a host and repository path.";
-  }
-  if (parsed.protocol === "ssh:" && parsed.username && (parsed.username !== "git" || parsed.password)) {
-    return "SSH repository remotes may use only the git user and cannot include a password.";
-  }
+  // A bare HTTPS username (https://jdoe@host/...) is accepted; the server
+  // drops it before storing.
   return null;
 }

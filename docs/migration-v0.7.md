@@ -57,14 +57,16 @@ should never have been granted.
 - **`POST /v1/projects` with a `repo_url` (or `remote_key`) the org already
   has answers `200` with the existing project**, as in v0.6.x, and changes
   nothing: unlike v0.6.x, it no longer grants that project to the org's
-  default team again. A `repo_url` must be an HTTPS
-  or SSH git remote written in lowercase, with no password, no whitespace
-  and no invisible characters (controls, bidi overrides, zero-width
-  spaces), and any SSH user must be `git`, in the `ssh://` and the
-  `git@host:path` forms alike (`400` otherwise); `http://` is refused. A bare username in an
-  HTTPS clone URL (`https://jdoe@host/...`) is accepted and dropped before
-  the URL is stored. `remote_key` alone is still accepted for released
-  clients.
+  default team again.
+- **`repo_url` rules** (project create, update and onboarding; `400`
+  otherwise): an `https://` or SSH remote with a lowercase scheme
+  (`http://` is refused), no password, no whitespace and no invisible
+  characters (controls, bidi overrides, zero-width spaces), and `git` as
+  the only SSH user, in the `ssh://` and `git@host:path` forms alike. A
+  bare username in an HTTPS clone URL (`https://jdoe@host/...`) is accepted
+  and dropped before the URL is stored, so it derives the key the CLI
+  derives; next to a port it is refused. `remote_key` alone is still
+  accepted for released clients.
 - **Teams and invites stay in their org.** `GET /v1/teams/{id}`,
   `POST /v1/teams/{id}/members`, `DELETE /v1/teams/{id}/members/{account_id}`
   and `DELETE /v1/invites/{id}` answer `404` for another org's team or
