@@ -71,8 +71,9 @@ cd web && npm run build   # type-check + bundle the dashboard
 
 Migrations live in `internal/store/migrations.sql.go` (Postgres) and
 `internal/store/sqlite_migrations.go` (SQLite), numbered in step on both
-backends; `schemaVersion` is the highest applied. 025 is the last one on
-`main`. Work on v0.7 runs in parallel, so the next numbers are reserved per
+backends; `schemaVersion` is the highest applied. 025 is the last one the
+v0.7 base (`feat/oss-v0.7`) adds; `main` stops at 021 until it merges. Work
+on v0.7 runs in parallel, so the next numbers are reserved per
 change to keep two branches from taking the same one:
 
 | Migration | Reserved for |

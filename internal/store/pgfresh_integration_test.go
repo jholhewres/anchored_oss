@@ -23,8 +23,11 @@ func freshPostgresStore(t *testing.T) *PostgresStore {
 		t.Skip("ANCHORED_TEST_DSN not set; skipping Postgres twin")
 	}
 	base, err := url.Parse(dsn)
-	if err != nil || (base.Scheme != "postgres" && base.Scheme != "postgresql") {
-		t.Fatalf("ANCHORED_TEST_DSN must be a postgres:// URL for the per-test databases (got %v)", err)
+	if err != nil {
+		t.Fatalf("ANCHORED_TEST_DSN must be a postgres:// URL for the per-test databases: %v", err)
+	}
+	if base.Scheme != "postgres" && base.Scheme != "postgresql" {
+		t.Fatalf("ANCHORED_TEST_DSN must be a postgres:// URL for the per-test databases, not %q", base.Scheme)
 	}
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
