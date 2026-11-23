@@ -58,8 +58,10 @@ should never have been granted.
   has answers `200` with the existing project**, as in v0.6.x, and changes
   nothing: unlike v0.6.x, it no longer grants that project to the org's
   default team again. A `repo_url` must be an HTTPS
-  or SSH git remote written in lowercase, with no password and no control
-  characters (`400` otherwise); `http://` is refused. A bare username in an
+  or SSH git remote written in lowercase, with no password, no whitespace
+  and no invisible characters (controls, bidi overrides, zero-width
+  spaces), and any SSH user must be `git`, in the `ssh://` and the
+  `git@host:path` forms alike (`400` otherwise); `http://` is refused. A bare username in an
   HTTPS clone URL (`https://jdoe@host/...`) is accepted and dropped before
   the URL is stored. `remote_key` alone is still accepted for released
   clients.

@@ -2,17 +2,18 @@
 export function repositoryError(value: string): string | null {
   const remote = value.trim();
   if (!remote) return "A Git repository remote is required.";
-  if (/[\s\x00-\x1f\x7f]/.test(remote)) return "Repository remotes cannot contain spaces or control characters.";
+  if (/[\s\p{C}\p{Z}]/u.test(remote)) return "Repository remotes cannot contain spaces or invisible characters.";
   if (!remote.includes("://")) {
     const at = remote.indexOf("@");
-    if (at <= 0) return "Enter a valid https://, ssh://, or user@host:owner/repo remote.";
+    if (at <= 0) return "Enter a valid https://, ssh://, or git@host:owner/repo remote.";
+    if (remote.slice(0, at) !== "git") return "SSH repository remotes may use only the git user.";
     const rest = remote.slice(at + 1);
     const colon = rest.indexOf(":");
     const host = rest.slice(0, colon);
     const path = rest.slice(colon + 1).replace(/^\/+|\/+$/g, "");
-    return colon > 0 && host && path && !/[\/@:]/.test(host) && !remote.slice(0, at).includes(":")
+    return colon > 0 && host && path && !/[\/@:]/.test(host)
       ? null
-      : "Enter a valid https://, ssh://, or user@host:owner/repo remote.";
+      : "Enter a valid https://, ssh://, or git@host:owner/repo remote.";
   }
 
   if (!remote.startsWith("https://") && !remote.startsWith("ssh://")) {

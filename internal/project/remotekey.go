@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -128,13 +129,16 @@ func IsValidGitRemote(rawURL string) bool {
 // path and returns the form to store: trimmed, and without the bare username
 // an HTTPS clone URL may carry (https://jdoe@host/...), which identifies a
 // person, not the repository, and derives the same key. It refuses plain
-// http://, a password in any form, schemes not written in lowercase, and
-// control characters. It deliberately does not change NormalizeRemoteURL:
+// http://, a password in any form, schemes not written in lowercase, any SSH
+// user but git (in both the ssh:// and the scp form), and any character that
+// is not printable or is whitespace: controls, format characters such as
+// bidi overrides and zero-width spaces, and non-ASCII spaces, so a stored
+// remote reads as the repository it names. It deliberately does not change NormalizeRemoteURL:
 // that normalization is shared with the CLI and must remain byte-identical
 // for sync routing parity.
 func CanonicalGitRemote(rawURL string) (string, bool) {
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" || strings.ContainsFunc(rawURL, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+	if rawURL == "" || strings.ContainsFunc(rawURL, func(r rune) bool { return r == ' ' || !unicode.IsPrint(r) }) {
 		return "", false
 	}
 
@@ -144,10 +148,13 @@ func CanonicalGitRemote(rawURL string) (string, bool) {
 		if at <= 0 {
 			return "", false
 		}
+		if rawURL[:at] != "git" {
+			return "", false
+		}
 		rest := rawURL[at+1:]
 		if colon := strings.IndexByte(rest, ':'); colon > 0 {
 			host, path := rest[:colon], strings.Trim(rest[colon+1:], "/")
-			if host != "" && path != "" && !strings.ContainsAny(host, "@/:") && !strings.Contains(rawURL[:at], ":") {
+			if host != "" && path != "" && !strings.ContainsAny(host, "@/:") {
 				return rawURL, true
 			}
 		}

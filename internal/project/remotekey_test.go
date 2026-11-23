@@ -160,3 +160,24 @@ func TestCanonicalGitRemote_DropsTheHTTPSUsername(t *testing.T) {
 		t.Fatalf("scp remote = %q, %t; want it unchanged", got, ok)
 	}
 }
+
+// TestCanonicalGitRemote_RefusesInvisibleCharactersAndPersonalSSHUsers
+// (attack h2 and h3, run 20261123T002801Z): a stored remote reads as the
+// repository it names, and keeps no personal SSH username.
+func TestCanonicalGitRemote_RefusesInvisibleCharactersAndPersonalSSHUsers(t *testing.T) {
+	for _, remote := range []string{
+		"git@github.com:acme/re\u0085po.git",
+		"git@github.com:acme/re\u202epo.git",
+		"https://github.com/acme/re\u200bpo.git",
+		"https://github.com/acme/re\u00a0po.git",
+		"jdoe@bitbucket.org:acme/repo.git",
+		"git:secret@github.com:acme/repo.git",
+	} {
+		if got, ok := CanonicalGitRemote(remote); ok {
+			t.Errorf("CanonicalGitRemote(%q) = %q, true; want refused", remote, got)
+		}
+	}
+	if got, ok := CanonicalGitRemote("git@bitbucket.org:acme/réalisé.git"); !ok || got != "git@bitbucket.org:acme/réalisé.git" {
+		t.Errorf("a printable non-ASCII path = %q, %t; want accepted", got, ok)
+	}
+}
